@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.modeling import prepare_prequantized_linear_modules, quantize_linear_modules
+from orbitquant.modeling import (
+    dequantize_quantized_linear_modules,
+    prepare_prequantized_linear_modules,
+    quantize_linear_modules,
+)
 from orbitquant.policies import classify_linear_modules
 
 
@@ -112,7 +116,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         return model
 
     def _dequantize(self, model: Any) -> Any:
-        return model
+        return dequantize_quantized_linear_modules(model)
 
 
 def _register_diffusers() -> bool:

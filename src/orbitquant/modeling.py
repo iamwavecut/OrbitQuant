@@ -93,3 +93,66 @@ def prepare_prequantized_linear_modules(
             summary.skipped_modules.append(name)
 
     return summary
+
+
+def _first_tensor_device(module: torch.nn.Module) -> torch.device:
+    for parameter in module.parameters(recurse=False):
+        return parameter.device
+    for buffer in module.buffers(recurse=False):
+        return buffer.device
+    return torch.device("cpu")
+
+
+def _frozen_linear_from_weight(
+    *,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    in_features: int,
+    out_features: int,
+    device: torch.device,
+) -> torch.nn.Linear:
+    replacement = torch.nn.Linear(
+        in_features,
+        out_features,
+        bias=bias is not None,
+        device=device,
+        dtype=torch.float32,
+    )
+    with torch.no_grad():
+        replacement.weight.copy_(weight.to(device=device, dtype=torch.float32))
+        if bias is not None and replacement.bias is not None:
+            replacement.bias.copy_(bias.to(device=device, dtype=torch.float32))
+    replacement.requires_grad_(False)
+    return replacement
+
+
+def dequantize_quantized_linear_modules(model: torch.nn.Module) -> torch.nn.Module:
+    for name, module in list(model.named_modules()):
+        if isinstance(module, OrbitQuantLinear):
+            device = _first_tensor_device(module)
+            rotated_weight = module._dequantize_weight(device=device, dtype=torch.float32)
+            weight = module.rotation.apply_inverse_to_weight(rotated_weight)
+            bias = None if module.bias is None else module.bias.detach()
+            replacement = _frozen_linear_from_weight(
+                weight=weight,
+                bias=bias,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                device=device,
+            )
+            parent, child_name = _parent_and_child(model, name)
+            _set_child(parent, child_name, replacement)
+        elif isinstance(module, RTNInt4Linear):
+            device = _first_tensor_device(module)
+            weight = module._dequantize_weight(device=device, dtype=torch.float32)
+            bias = None if module.bias is None else module.bias.detach()
+            replacement = _frozen_linear_from_weight(
+                weight=weight,
+                bias=bias,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                device=device,
+            )
+            parent, child_name = _parent_and_child(model, name)
+            _set_child(parent, child_name, replacement)
+    return model

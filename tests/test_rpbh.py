@@ -31,6 +31,15 @@ def test_rpbh_folds_weight_with_activation_rotation_identity():
     assert torch.allclose(folded, baseline, atol=1e-5, rtol=1e-5)
 
 
+def test_rpbh_inverse_restores_rotated_activations():
+    x = torch.randn(3, 5, 16)
+    rotation = RPBHRotation(dim=16, seed=19, block_size=8)
+
+    restored = rotation.apply_inverse_to_activations(rotation.apply_to_activations(x))
+
+    assert torch.allclose(restored, x, atol=1e-5, rtol=1e-5)
+
+
 def test_rpbh_paper_block_size_uses_largest_power_of_two_divisor():
     rotation = RPBHRotation(dim=24, seed=0, block_size="paper")
 

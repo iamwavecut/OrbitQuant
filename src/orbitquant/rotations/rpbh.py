@@ -84,3 +84,22 @@ class RPBHRotation:
         if weight.shape[-1] != self.dim:
             raise ValueError(f"expected in_features {self.dim}, got {weight.shape[-1]}")
         return self.apply_to_activations(weight)
+
+    def apply_inverse_to_activations(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[-1] != self.dim:
+            raise ValueError(f"expected last dimension {self.dim}, got {x.shape[-1]}")
+
+        signs = self.signs.to(device=x.device, dtype=x.dtype)
+        inverse_permutation = self.inverse_permutation.to(device=x.device)
+        y = x.reshape(*x.shape[:-1], self.num_blocks, self.block_size)
+        y = fwht(y) * self.normalization
+        y = y.reshape(*x.shape)
+        y = y * signs
+        return y.index_select(dim=-1, index=inverse_permutation)
+
+    def apply_inverse_to_weight(self, weight: torch.Tensor) -> torch.Tensor:
+        if weight.ndim != 2:
+            raise ValueError("weight must be a rank-2 tensor")
+        if weight.shape[-1] != self.dim:
+            raise ValueError(f"expected in_features {self.dim}, got {weight.shape[-1]}")
+        return self.apply_inverse_to_activations(weight)

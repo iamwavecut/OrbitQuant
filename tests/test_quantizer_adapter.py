@@ -151,3 +151,27 @@ def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(restored.transformer_blocks[0]["attn"]["to_q"](x)).all()
     assert torch.isfinite(restored.transformer_blocks[0]["modulation"](x)).all()
+
+
+def test_quantizer_dequantize_restores_torch_linear_modules_for_debugging():
+    torch.manual_seed(1)
+    model = TinyQuantizerTransformer()
+    model.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    quantizer = OrbitQuantizer(OrbitQuantConfig(block_size=8), pre_quantized=False)
+
+    quantizer._process_model_before_weight_loading(model)
+    quantizer._process_model_after_weight_loading(model)
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(model.transformer_blocks[0]["modulation"], RTNInt4Linear)
+
+    dequantized = quantizer._dequantize(model)
+
+    orbit_layer = dequantized.transformer_blocks[0]["attn"]["to_q"]
+    adaln_layer = dequantized.transformer_blocks[0]["modulation"]
+    assert isinstance(orbit_layer, torch.nn.Linear)
+    assert isinstance(adaln_layer, torch.nn.Linear)
+    assert orbit_layer.weight.requires_grad is False
+    assert adaln_layer.weight.requires_grad is False
+    x = torch.randn(2, 3, 16)
+    assert torch.isfinite(orbit_layer(x)).all()
+    assert torch.isfinite(adaln_layer(x)).all()
