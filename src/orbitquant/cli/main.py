@@ -6,6 +6,8 @@ import json
 import torch
 
 from orbitquant import __version__
+from orbitquant.artifacts import save_orbitquant_artifact
+from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.native_runner import (
     apply_quantization_to_pipeline,
@@ -15,6 +17,34 @@ from orbitquant.eval.native_runner import (
 )
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.hub import inspect_model_metadata
+from orbitquant.modeling import quantize_linear_modules
+
+
+def _torch_dtype(name: str) -> torch.dtype:
+    return {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }[name]
+
+
+def _parse_block_size(value: str) -> int | str:
+    if value == "paper":
+        return value
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("block size must be 'paper' or an integer") from exc
+
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +56,27 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser.add_argument("--model-id", required=True)
     inspect_parser.add_argument("--revision")
     subparsers.add_parser("native-suites", help="list native eval suites")
+
+    quantize_parser = subparsers.add_parser("quantize", help="quantize a Diffusers component")
+    quantize_parser.add_argument("--model-id", required=True)
+    quantize_parser.add_argument("--revision")
+    quantize_parser.add_argument("--output", required=True)
+    quantize_parser.add_argument("--component", default="transformer")
+    quantize_parser.add_argument("--target-policy", default="auto")
+    quantize_parser.add_argument("--weight-bits", type=int, default=4)
+    quantize_parser.add_argument("--activation-bits", type=int, default=4)
+    quantize_parser.add_argument("--rotation-seed", type=int, default=0)
+    quantize_parser.add_argument("--block-size", type=_parse_block_size, default="paper")
+    quantize_parser.add_argument(
+        "--runtime-mode",
+        default="dequant_bf16",
+        choices=["dequant_bf16", "debug_no_quant", "debug_no_activation_quant"],
+    )
+    quantize_parser.add_argument("--device", default="auto")
+    quantize_parser.add_argument(
+        "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
+    )
+
     generate_parser = subparsers.add_parser("generate", help="run native generation suite")
     generate_parser.add_argument("--suite", required=True)
     generate_parser.add_argument("--prompt", required=True)
@@ -54,6 +105,52 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "native-suites":
         payload = [suite.__dict__ for suite in list_native_suites()]
         print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "quantize":
+        from diffusers import DiffusionPipeline
+
+        device = _resolve_device(args.device)
+        config = OrbitQuantConfig(
+            weight_bits=args.weight_bits,
+            activation_bits=args.activation_bits,
+            target_policy=args.target_policy,
+            rotation_seed=args.rotation_seed,
+            block_size=args.block_size,
+            runtime_mode=args.runtime_mode,
+        )
+        load_kwargs = {"torch_dtype": _torch_dtype(args.dtype)}
+        if args.revision is not None:
+            load_kwargs["revision"] = args.revision
+        pipeline = DiffusionPipeline.from_pretrained(args.model_id, **load_kwargs)
+        pipeline.to(device)
+        try:
+            component = getattr(pipeline, args.component)
+        except AttributeError as exc:
+            raise ValueError(f"pipeline has no component {args.component!r}") from exc
+        summary = quantize_linear_modules(component, config)
+        metadata = inspect_model_metadata(args.model_id, revision=args.revision)
+        manifest = save_orbitquant_artifact(
+            component,
+            args.output,
+            config=config,
+            source_model_id=args.model_id,
+            source_revision=metadata.get("sha") or args.revision or "unknown",
+            source_license=metadata.get("license") or "unknown",
+            summary=summary,
+        )
+        print(
+            json.dumps(
+                {
+                    "artifact_dir": args.output,
+                    "component": args.component,
+                    "source_revision": manifest.source_revision,
+                    "source_license": manifest.source_license,
+                    "quantized_modules": summary.quantized_modules,
+                    "adaln_modules": summary.adaln_modules,
+                    "skipped_modules": summary.skipped_modules,
+                }
+            )
+        )
         return 0
     if args.command == "generate":
         suite = get_native_suite(args.suite)
@@ -90,14 +187,9 @@ def main(argv: list[str] | None = None) -> int:
 
         from diffusers import DiffusionPipeline
 
-        dtype = {
-            "bfloat16": torch.bfloat16,
-            "float16": torch.float16,
-            "float32": torch.float32,
-        }[args.dtype]
         pipeline = DiffusionPipeline.from_pretrained(
             suite.model_id,
-            torch_dtype=dtype,
+            torch_dtype=_torch_dtype(args.dtype),
         )
         pipeline.to(args.device)
         quantization_summary = None

@@ -1,3 +1,10 @@
+import json
+import sys
+from types import SimpleNamespace
+
+import torch
+
+import orbitquant.cli.main as cli_main
 from orbitquant.cli.main import main
 
 
@@ -82,3 +89,79 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
     assert '"weight_bits": 4' in output
     assert '"activation_bits": 6' in output
     assert '"target_policy": "wan"' in output
+
+
+def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, tmp_path):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+            self.device = None
+
+        def to(self, device):
+            self.device = device
+            return self
+
+    pipeline = TinyPipeline()
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/model"
+            assert kwargs["revision"] == "main"
+            assert kwargs["torch_dtype"] is torch.float32
+            return pipeline
+
+    monkeypatch.setitem(
+        sys.modules, "diffusers", SimpleNamespace(DiffusionPipeline=FakeDiffusionPipeline)
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "inspect_model_metadata",
+        lambda model_id, revision=None: {
+            "sha": "abc123",
+            "license": "apache-2.0",
+        },
+    )
+
+    assert (
+        main(
+            [
+                "quantize",
+                "--model-id",
+                "example/model",
+                "--revision",
+                "main",
+                "--output",
+                str(tmp_path),
+                "--component",
+                "transformer",
+                "--target-policy",
+                "generic_dit",
+                "--weight-bits",
+                "4",
+                "--activation-bits",
+                "4",
+                "--block-size",
+                "4",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["artifact_dir"] == str(tmp_path)
+    assert output["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
+    assert (tmp_path / "model.safetensors").exists()
+    assert (tmp_path / "orbitquant_manifest.json").exists()
+    assert (tmp_path / "SHA256SUMS").exists()

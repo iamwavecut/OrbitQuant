@@ -20,6 +20,30 @@ runtime as optimized low-bit inference until the CUDA/MPS kernel work lands.
 - Native eval settings for FLUX.2 Klein, FLUX.1-schnell, Z-Image-Turbo, and
   Wan2.1-T2V-1.3B.
 
+## CLI
+
+Create a compact quantized transformer component artifact:
+
+```bash
+orbitquant quantize \
+  --model-id black-forest-labs/FLUX.2-klein-4B \
+  --component transformer \
+  --target-policy flux2 \
+  --weight-bits 4 \
+  --activation-bits 4 \
+  --output ./artifacts/flux2-klein-w4a4
+```
+
+Run a native-resolution generation check:
+
+```bash
+orbitquant generate \
+  --suite flux2-native \
+  --prompt "A small red cube on a white table" \
+  --output ./artifacts/native-smoke/flux2 \
+  --bit-setting W4A4
+```
+
 ## License
 
 The code in this repository is Apache-2.0. Quantized model artifacts must record
