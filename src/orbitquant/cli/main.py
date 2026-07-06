@@ -9,6 +9,7 @@ import torch
 
 from orbitquant import __version__
 from orbitquant.artifacts import (
+    create_artifact_image_comparisons,
     record_artifact_asset,
     record_artifact_metrics,
     save_orbitquant_artifact,
@@ -87,7 +88,7 @@ def _record_generated_artifact(
     prompt_record: dict[str, Any] | None,
     seed: int,
     bit_setting: str | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], list[str]]:
     if _path_is_relative_to(result.output_path, artifact_path):
         record_artifact_asset(artifact_path, result.output_path)
     if _path_is_relative_to(result.metadata_path, artifact_path):
@@ -100,7 +101,7 @@ def _record_generated_artifact(
         metrics["generated_frames"] = suite.frames
     if result.metadata["peak_vram_bytes"] is not None:
         metrics["peak_vram_bytes"] = result.metadata["peak_vram_bytes"]
-    return record_artifact_metrics(
+    metrics_record = record_artifact_metrics(
         artifact_path,
         split=split,
         metrics=metrics,
@@ -119,6 +120,7 @@ def _record_generated_artifact(
             "metadata_path": str(result.metadata_path),
         },
     )
+    return metrics_record, create_artifact_image_comparisons(artifact_path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -375,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
                 quantization_summary=None,
                 quantization_label=variant,
             )
-            metrics = _record_generated_artifact(
+            metrics, comparisons = _record_generated_artifact(
                 artifact_path,
                 result,
                 split=args.split,
@@ -390,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                     "output_path": str(result.output_path),
                     "metadata_path": str(result.metadata_path),
                     "metrics": metrics,
+                    "comparisons": comparisons,
                     "prompt_record": prompt_record,
                     "seed": seed,
                 }
@@ -536,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         artifact_metrics = None
         if artifact_path is not None:
-            artifact_metrics = _record_generated_artifact(
+            artifact_metrics, artifact_comparisons = _record_generated_artifact(
                 artifact_path,
                 result,
                 split=args.split,
@@ -553,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
                     "metadata_path": str(result.metadata_path),
                     "artifact": None if artifact_path is None else str(artifact_path),
                     "artifact_metrics": artifact_metrics,
+                    "artifact_comparisons": []
+                    if artifact_path is None
+                    else artifact_comparisons,
                 }
             )
         )

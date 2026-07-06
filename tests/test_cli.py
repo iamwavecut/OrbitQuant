@@ -356,6 +356,82 @@ def test_cli_generate_with_artifact_original_split_skips_quantized_component(
     assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
 
 
+def test_cli_generate_creates_comparison_when_original_pair_exists(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        color = "red"
+
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), self.color)])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            return TinyPipeline()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+
+    common_args = [
+        "generate",
+        "--suite",
+        "flux2-native",
+        "--prompt",
+        "A native prompt",
+        "--artifact",
+        str(tmp_path),
+        "--seed",
+        "4",
+        "--device",
+        "cpu",
+        "--dtype",
+        "float32",
+    ]
+    assert main([*common_args, "--split", "original"]) == 0
+    capsys.readouterr()
+    TinyPipeline.color = "blue"
+    assert main(common_args) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    comparison = "assets/original_vs_orbitquant_flux2-native_seed4_W4A4_prompt.webp"
+    assert comparison in manifest["checksums"]
+    assert (tmp_path / comparison).is_file()
+    assert output["artifact_comparisons"] == [comparison]
+
+
 def test_cli_generate_pack_dry_run_lists_prompt_seed_jobs(capsys, tmp_path):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(

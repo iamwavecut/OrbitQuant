@@ -1,9 +1,11 @@
 import json
 
 import torch
+from PIL import Image
 from safetensors.torch import load_file
 
 from orbitquant.artifacts import (
+    create_artifact_image_comparisons,
     load_orbitquant_artifact,
     record_artifact_asset,
     record_artifact_metrics,
@@ -280,6 +282,95 @@ def test_record_artifact_asset_adds_asset_to_manifest_and_validation(tmp_path):
         assert "checksum mismatch for assets/flux2-native_seed0_W4A4.png" in str(exc)
     else:
         raise AssertionError("validate_orbitquant_artifact accepted a corrupted asset")
+
+
+def test_create_artifact_image_comparisons_pairs_original_and_orbitquant_outputs(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    original_path = tmp_path / "assets" / "flux2-native_seed3_original_simple-object.png"
+    orbitquant_path = tmp_path / "assets" / "flux2-native_seed3_W4A4_simple-object.png"
+    Image.new("RGB", (16, 16), "red").save(original_path)
+    Image.new("RGB", (16, 16), "blue").save(orbitquant_path)
+    record_artifact_asset(tmp_path, original_path)
+    record_artifact_asset(tmp_path, orbitquant_path)
+    record_artifact_metrics(
+        tmp_path,
+        split="original",
+        metrics={"generated_samples": 1},
+        metadata={
+            "suite": "flux2-native",
+            "seed": 3,
+            "bit_setting": "original",
+            "prompt_record": {"id": "simple-object"},
+            "output_path": str(original_path),
+        },
+    )
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={"generated_samples": 1},
+        metadata={
+            "suite": "flux2-native",
+            "seed": 3,
+            "bit_setting": "W4A4",
+            "prompt_record": {"id": "simple-object"},
+            "output_path": str(orbitquant_path),
+        },
+    )
+
+    comparisons = create_artifact_image_comparisons(tmp_path)
+
+    result = validate_orbitquant_artifact(tmp_path)
+    assert comparisons == [
+        "assets/original_vs_orbitquant_flux2-native_seed3_W4A4_simple-object.webp"
+    ]
+    comparison_path = tmp_path / comparisons[0]
+    assert comparison_path.is_file()
+    assert result["checksums"][comparisons[0]] == sha256_file(comparison_path)
+    with Image.open(comparison_path) as sheet:
+        assert sheet.size[0] == 32
+
+
+def test_create_artifact_image_comparisons_skips_unpaired_outputs(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    original_path = tmp_path / "assets" / "flux2-native_seed3_original_simple-object.png"
+    Image.new("RGB", (16, 16), "red").save(original_path)
+    record_artifact_asset(tmp_path, original_path)
+    record_artifact_metrics(
+        tmp_path,
+        split="original",
+        metrics={"generated_samples": 1},
+        metadata={
+            "suite": "flux2-native",
+            "seed": 3,
+            "bit_setting": "original",
+            "prompt_record": {"id": "simple-object"},
+            "output_path": str(original_path),
+        },
+    )
+
+    assert create_artifact_image_comparisons(tmp_path) == []
 
 
 def test_load_orbitquant_artifact_uses_prequantized_skeletons(tmp_path, monkeypatch):
