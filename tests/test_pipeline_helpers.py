@@ -100,6 +100,34 @@ def test_load_quantized_pipeline_component_restores_saved_component_artifact(tmp
     assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
 
 
+def test_load_quantized_pipeline_component_rejects_component_mismatch(tmp_path):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="denoiser")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="denoiser",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    restored_pipeline = TinyPipeline()
+    try:
+        load_quantized_pipeline_component(
+            restored_pipeline, tmp_path, component="transformer"
+        )
+    except ValueError as exc:
+        assert "component mismatch" in str(exc)
+        assert "denoiser" in str(exc)
+        assert "transformer" in str(exc)
+    else:
+        raise AssertionError("component mismatch was accepted")
+
+
 def test_quantize_pipeline_fails_loud_for_missing_component():
     pipeline = TinyPipeline()
     config = OrbitQuantConfig(block_size=4)
