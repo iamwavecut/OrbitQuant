@@ -38,6 +38,79 @@ def test_cli_generate_requires_prompt_and_output():
         raise AssertionError("generate accepted missing prompt/output arguments")
 
 
+def test_cli_record_metrics_imports_nested_json_into_artifact(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="flux")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="black-forest-labs/FLUX.1-schnell",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    metrics_path = tmp_path / "geneval.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "overall": 0.71,
+                "per_task": {
+                    "single_object": 0.92,
+                    "counting": 0.47,
+                },
+                "notes": "ignored",
+            }
+        )
+    )
+
+    assert (
+        main(
+            [
+                "record-metrics",
+                "--artifact",
+                str(tmp_path),
+                "--split",
+                "orbitquant",
+                "--metrics-json",
+                str(metrics_path),
+                "--metric-prefix",
+                "geneval",
+                "--suite",
+                "flux1-schnell-native",
+                "--seed",
+                "0",
+                "--bit-setting",
+                "W4A4",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    record = json.loads((tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text())
+    csv_text = (tmp_path / "benchmark" / "orbitquant.metrics.csv").read_text()
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    assert output["metrics"] == {
+        "geneval_overall": 0.71,
+        "geneval_per_task_counting": 0.47,
+        "geneval_per_task_single_object": 0.92,
+    }
+    assert record["metrics"] == output["metrics"]
+    assert record["metadata"] == {
+        "suite": "flux1-schnell-native",
+        "seed": 0,
+        "bit_setting": "W4A4",
+        "metrics_source": str(metrics_path),
+    }
+    assert "geneval_per_task_single_object,0.92" in csv_text
+    assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
+
+
 def test_cli_generate_dry_run_prints_native_request(capsys, tmp_path):
     assert (
         main(

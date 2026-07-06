@@ -17,6 +17,7 @@ from orbitquant.artifacts import (
 )
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
+from orbitquant.eval.metrics import load_metric_json
 from orbitquant.eval.native_runner import (
     apply_quantization_to_pipeline,
     build_pipeline_kwargs,
@@ -177,6 +178,19 @@ def main(argv: list[str] | None = None) -> int:
     report_parser.add_argument("--output", required=True)
     report_parser.add_argument("--date")
 
+    record_metrics_parser = subparsers.add_parser(
+        "record-metrics", help="import external eval metrics into an artifact"
+    )
+    record_metrics_parser.add_argument("--artifact", required=True)
+    record_metrics_parser.add_argument(
+        "--split", required=True, choices=["original", "orbitquant"]
+    )
+    record_metrics_parser.add_argument("--metrics-json", required=True)
+    record_metrics_parser.add_argument("--metric-prefix")
+    record_metrics_parser.add_argument("--suite", required=True)
+    record_metrics_parser.add_argument("--seed", type=int, required=True)
+    record_metrics_parser.add_argument("--bit-setting", required=True)
+
     generate_parser = subparsers.add_parser("generate", help="run native generation suite")
     generate_parser.add_argument("--suite", required=True)
     generate_parser.add_argument("--prompt")
@@ -313,6 +327,30 @@ def main(argv: list[str] | None = None) -> int:
                     "tables": {key: str(value) for key, value in result.table_paths.items()},
                     "artifact_count": len(args.artifact),
                     "row_count": len(result.rows),
+                }
+            )
+        )
+        return 0
+    if args.command == "record-metrics":
+        metrics = load_metric_json(args.metrics_json, metric_prefix=args.metric_prefix)
+        record = record_artifact_metrics(
+            args.artifact,
+            split=args.split,
+            metrics=metrics,
+            metadata={
+                "suite": args.suite,
+                "seed": args.seed,
+                "bit_setting": args.bit_setting,
+                "metrics_source": args.metrics_json,
+            },
+        )
+        print(
+            json.dumps(
+                {
+                    "artifact": args.artifact,
+                    "split": args.split,
+                    "metrics": record["metrics"],
+                    "metadata": record["metadata"],
                 }
             )
         )
