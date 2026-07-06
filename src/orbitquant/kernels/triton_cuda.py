@@ -71,6 +71,33 @@ def _dequantize_packed_weight_kernel(
     tl.store(output_ptr + offsets, centroids * norms, mask=mask)
 
 
+@triton.jit
+def _pack_lowbit_kernel(
+    values_ptr,
+    packed_ptr,
+    packed_length: tl.constexpr,
+    value_count: tl.constexpr,
+    bits: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    byte_offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = byte_offsets < packed_length
+    packed = tl.zeros((block_size,), dtype=tl.uint32)
+    byte_bit_starts = byte_offsets * 8
+    for bit_id in tl.static_range(0, 8):
+        global_bit = byte_bit_starts + bit_id
+        value_offsets = global_bit // bits
+        value_bit_offsets = global_bit % bits
+        values = tl.load(
+            values_ptr + value_offsets,
+            mask=mask & (value_offsets < value_count),
+            other=0,
+        )
+        source_bits = (values.to(tl.uint32) >> value_bit_offsets) & 1
+        packed |= source_bits << bit_id
+    tl.store(packed_ptr + byte_offsets, packed.to(tl.uint8), mask=mask)
+
+
 def quantize_rotated_activations_with_triton(
     rotated: torch.Tensor,
     norms: torch.Tensor,
@@ -138,3 +165,32 @@ def dequantize_packed_weight_with_triton(
         block_size=block_size,
     )
     return output.reshape(out_features, in_features)
+
+
+def pack_lowbit_with_triton(values: torch.Tensor, *, bits: int) -> torch.Tensor:
+    if bits <= 0 or bits > 8:
+        raise ValueError("bits must be in [1, 8]")
+    if not values.is_cuda:
+        raise RuntimeError("triton_cuda pack requires CUDA tensors")
+    max_value = (1 << bits) - 1
+    flat_raw = values.detach().flatten()
+    if flat_raw.numel() and (int(flat_raw.min()) < 0 or int(flat_raw.max()) > max_value):
+        raise ValueError(f"all values must fit in {bits} bits")
+    flat = flat_raw.to(dtype=torch.uint8).contiguous()
+    packed_length = (flat.numel() * bits + 7) // 8
+    packed = torch.empty(packed_length, device=flat.device, dtype=torch.uint8)
+    if packed_length == 0:
+        return packed
+
+    triton, _ = _load_triton()
+    block_size = 256
+    grid = (triton.cdiv(packed_length, block_size),)
+    _pack_lowbit_kernel[grid](
+        flat,
+        packed,
+        packed_length=packed_length,
+        value_count=flat.numel(),
+        bits=bits,
+        block_size=block_size,
+    )
+    return packed

@@ -58,15 +58,20 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["cpu"]["available"] is True
     assert capabilities["cpu"]["optimized"] is False
     assert capabilities["cpu"]["weight_dequant_optimized"] is False
+    assert capabilities["cpu"]["weight_pack_optimized"] is False
     assert capabilities["cpu"]["implementation"] == "torch_reference"
     assert capabilities["mps"]["available"] is True
     assert capabilities["mps"]["optimized"] is False
     assert capabilities["mps"]["weight_dequant_optimized"] is False
+    assert capabilities["mps"]["weight_pack_optimized"] is False
     assert capabilities["mps"]["implementation"] == "torch_reference_mps"
     assert capabilities["triton_cuda"]["available"] is True
     assert capabilities["triton_cuda"]["optimized"] is True
-    assert capabilities["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert capabilities["triton_cuda"]["optimized_stage"] == (
+        "codebook_lookup_rescale,packed_weight_dequant,lowbit_pack"
+    )
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is True
+    assert capabilities["triton_cuda"]["weight_pack_optimized"] is True
     assert capabilities["triton_cuda"]["full_fusion"] is False
 
 
@@ -82,10 +87,12 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["implementation"] == "metal_codebook_rescale"
     assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale"
     assert capabilities["mps"]["weight_dequant_optimized"] is True
+    assert capabilities["mps"]["weight_pack_optimized"] is False
     assert capabilities["mps"]["full_fusion"] is False
     assert capabilities["triton_cuda"]["available"] is False
     assert capabilities["triton_cuda"]["optimized"] is False
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is False
+    assert capabilities["triton_cuda"]["weight_pack_optimized"] is False
 
 
 def test_backend_selection_accepts_injected_availability_for_gpu_paths():
@@ -248,6 +255,22 @@ def test_triton_weight_dequant_kernel_matches_reference_for_supported_bits(bits)
     )
 
     assert torch.allclose(actual.cpu(), expected)
+
+
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+def test_triton_lowbit_pack_keeps_packed_tensor_on_cuda_and_matches_reference(bits):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    values_cpu = (torch.arange(0, 1027, dtype=torch.uint8) * 3) % (2**bits)
+    expected = pack_lowbit(values_cpu, bits=bits)
+
+    packed = pack_lowbit(values_cpu.to("cuda"), bits=bits)
+    unpacked = unpack_lowbit(packed, bits=bits, length=values_cpu.numel())
+
+    assert packed.is_cuda
+    assert torch.equal(packed.cpu(), expected)
+    assert torch.equal(unpacked, values_cpu)
 
 
 def test_triton_cuda_backend_matches_reference_without_full_reference_fallback(monkeypatch):

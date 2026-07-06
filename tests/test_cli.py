@@ -38,16 +38,19 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
                 "available": True,
                 "optimized": False,
                 "weight_dequant_optimized": False,
+                "weight_pack_optimized": False,
             },
             "mps": {
                 "implementation": "metal_codebook_rescale",
                 "optimized_stage": "codebook_lookup_rescale",
                 "weight_dequant_optimized": True,
+                "weight_pack_optimized": False,
                 "full_fusion": False,
             },
             "triton_cuda": {
-                "optimized_stage": "codebook_lookup_rescale",
+                "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant,lowbit_pack",
                 "weight_dequant_optimized": True,
+                "weight_pack_optimized": True,
                 "full_fusion": False,
             },
         },
@@ -59,12 +62,17 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["cpu"]["available"] is True
     assert payload["cpu"]["optimized"] is False
     assert payload["cpu"]["weight_dequant_optimized"] is False
+    assert payload["cpu"]["weight_pack_optimized"] is False
     assert payload["mps"]["implementation"] == "metal_codebook_rescale"
     assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale"
     assert payload["mps"]["weight_dequant_optimized"] is True
+    assert payload["mps"]["weight_pack_optimized"] is False
     assert payload["mps"]["full_fusion"] is False
-    assert payload["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert payload["triton_cuda"]["optimized_stage"] == (
+        "codebook_lookup_rescale,packed_weight_dequant,lowbit_pack"
+    )
     assert payload["triton_cuda"]["weight_dequant_optimized"] is True
+    assert payload["triton_cuda"]["weight_pack_optimized"] is True
     assert payload["triton_cuda"]["full_fusion"] is False
 
 

@@ -5,9 +5,7 @@ import torch
 _CHUNK_VALUES = 4_000_000
 
 
-def pack_lowbit(values: torch.Tensor, bits: int) -> torch.Tensor:
-    if bits <= 0 or bits > 8:
-        raise ValueError("bits must be in [1, 8]")
+def _pack_lowbit_cpu(values: torch.Tensor, bits: int) -> torch.Tensor:
     max_value = (1 << bits) - 1
     values_cpu_raw = values.detach().to(device="cpu").flatten()
     if values_cpu_raw.numel() and (
@@ -30,6 +28,20 @@ def pack_lowbit(values: torch.Tensor, bits: int) -> torch.Tensor:
         packed.scatter_add_(0, byte_offsets, source_bits.flatten())
 
     return packed.to(dtype=torch.uint8)
+
+
+def pack_lowbit(values: torch.Tensor, bits: int) -> torch.Tensor:
+    if bits <= 0 or bits > 8:
+        raise ValueError("bits must be in [1, 8]")
+    if values.is_cuda:
+        try:
+            from orbitquant.kernels.triton_cuda import pack_lowbit_with_triton
+        except Exception:
+            pass
+        else:
+            return pack_lowbit_with_triton(values, bits=bits)
+
+    return _pack_lowbit_cpu(values, bits)
 
 
 def unpack_lowbit(packed: torch.Tensor, bits: int, length: int) -> torch.Tensor:

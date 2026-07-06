@@ -185,8 +185,9 @@ Current artifacts include:
 
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
 The current `triton_cuda` path keeps norm and RPBH rotation in PyTorch but uses
-real Triton kernels for codebook lookup, norm rescale, and packed weight
-dequantization. On Apple Silicon, `mps` uses Metal shaders for the same
+real Triton kernels for codebook lookup, norm rescale, packed weight
+dequantization, and offline low-bit weight packing. On Apple Silicon, `mps` uses
+Metal shaders for the same runtime
 lookup/rescale and packed weight dequant stages when `torch.mps.compile_shader`
 is available. Otherwise it falls back to the reference PyTorch path on MPS
 tensors. Full fused norm+RPBH+lookup+matmul kernels are still separate work.
@@ -202,7 +203,9 @@ orbitquant kernel-info
 `torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
 as partial optimization because activation norm/RPBH and matmul are not fused
 today. The `weight_dequant_optimized` field records whether packed weight
-dequantization avoids the CPU unpack path for that backend.
+dequantization avoids the CPU unpack path for that backend. The
+`weight_pack_optimized` field records whether artifact creation can pack low-bit
+weight indices without a CPU round-trip.
 
 ## License
 
