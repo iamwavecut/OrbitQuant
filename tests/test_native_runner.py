@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 from torch import nn
@@ -9,6 +10,7 @@ from orbitquant.eval.native_runner import (
     apply_quantization_to_pipeline,
     build_pipeline_kwargs,
     build_quantization_config_for_suite,
+    extract_video_frames,
     output_path_for_suite,
     parse_bit_setting,
     run_native_generation,
@@ -19,6 +21,11 @@ from orbitquant.layers import OrbitQuantLinear
 class FakeImageOutput:
     def __init__(self):
         self.images = [Image.new("RGB", (16, 16), "red")]
+
+
+class FakeVideoOutput:
+    def __init__(self):
+        self.frames = np.zeros((1, 2, 8, 8, 3), dtype=np.uint8)
 
 
 class FakeImagePipeline:
@@ -104,6 +111,12 @@ def test_apply_quantization_to_pipeline_targets_transformer_component():
 
     assert summary.quantized_modules == ["transformer_blocks.0"]
     assert isinstance(pipeline.transformer.transformer_blocks[0], OrbitQuantLinear)
+
+
+def test_extract_video_frames_accepts_numpy_frame_batches():
+    frames = extract_video_frames(FakeVideoOutput())
+
+    assert frames.shape == (2, 8, 8, 3)
 
 
 def test_run_native_generation_saves_image_and_metadata(tmp_path):

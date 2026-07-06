@@ -116,6 +116,15 @@ def _extract_image(output: Any) -> Any:
     return images[0]
 
 
+def extract_video_frames(output: Any) -> Any:
+    frames = getattr(output, "frames", None)
+    if frames is None:
+        raise ValueError("pipeline output does not contain frames")
+    if isinstance(frames, (list, tuple)) and len(frames) == 0:
+        raise ValueError("pipeline output does not contain frames")
+    return frames[0]
+
+
 def _metadata_path(output_path: Path) -> Path:
     return output_path.with_suffix(output_path.suffix + ".json")
 
@@ -152,10 +161,7 @@ def run_native_generation(
             raise RuntimeError(
                 "diffusers video export utilities are required for video suites"
             ) from exc
-        frames = getattr(output, "frames", None)
-        if not frames:
-            raise ValueError("pipeline output does not contain frames")
-        export_to_video(frames[0], str(output_path))
+        export_to_video(extract_video_frames(output), str(output_path))
     else:
         image = _extract_image(output)
         image.save(output_path)
