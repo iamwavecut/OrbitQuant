@@ -4,9 +4,27 @@ from typing import Any
 
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.modeling import quantize_linear_modules
+from orbitquant.policies import classify_linear_modules
 
 
-class OrbitQuantizer:
+def _hf_base_classes() -> tuple[type, ...]:
+    bases: list[type] = []
+    try:
+        from diffusers.quantizers.base import DiffusersQuantizer
+
+        bases.append(DiffusersQuantizer)
+    except Exception:
+        pass
+    try:
+        from transformers.quantizers import HfQuantizer
+
+        bases.append(HfQuantizer)
+    except Exception:
+        pass
+    return tuple(bases) or (object,)
+
+
+class OrbitQuantizer(*_hf_base_classes()):
     """Small standalone HF-style quantizer adapter.
 
     When Diffusers/Transformers are installed, ``register_hf_quantizers`` also
@@ -18,14 +36,45 @@ class OrbitQuantizer:
     requires_calibration = False
     required_packages = None
 
-    def __init__(self, quantization_config: OrbitQuantConfig | dict[str, Any]) -> None:
+    use_keep_in_fp32_modules = True
+
+    def __init__(
+        self, quantization_config: OrbitQuantConfig | dict[str, Any], **kwargs: Any
+    ) -> None:
         if isinstance(quantization_config, dict):
             quantization_config = OrbitQuantConfig.from_dict(quantization_config)
         self.quantization_config = quantization_config
-        self.pre_quantized = False
+        self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
+        self.pre_quantized = kwargs.pop("pre_quantized", False)
 
     def is_serializable(self, *args: Any, **kwargs: Any) -> bool:
         return True
+
+    def _param_action(self, model: Any, param_name: str) -> str | None:
+        if not param_name.endswith(".weight"):
+            return None
+        module_name = param_name.removesuffix(".weight")
+        decisions = classify_linear_modules(model, self.quantization_config)
+        decision = decisions.get(module_name)
+        return None if decision is None else decision.action
+
+    def param_needs_quantization(
+        self, model: Any, param_name: str, *args: Any, **kwargs: Any
+    ) -> bool:
+        return self._param_action(model, param_name) in {"orbitquant", "adaln_int4_rtn"}
+
+    def check_if_quantized_param(
+        self,
+        model: Any,
+        param_value: Any,
+        param_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
+        return self.param_needs_quantization(model, param_name)
+
+    def check_quantized_param(self, *args: Any, **kwargs: Any) -> bool:
+        return self.check_if_quantized_param(*args, **kwargs)
 
     @property
     def is_trainable(self) -> bool:
