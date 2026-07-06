@@ -52,6 +52,41 @@ Validate an artifact before publishing or moving it:
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
 
+Prepare a native GPU run on an RTX PRO 6000 96GB pod:
+
+```bash
+hf auth whoami
+orbitquant native-plan --output-root ./artifacts/native --seeds 0
+orbitquant native-script \
+  --output-root ./artifacts/native \
+  --seeds 0 \
+  --device cuda \
+  --dtype bfloat16 \
+  --activation-kernel-backend triton_cuda \
+  > run-native.sh
+bash run-native.sh
+```
+
+`native-script` emits a preflight block (`hf auth whoami`, `hf env`, CUDA,
+package-version, disk, and `hf models info` access checks) before quantizing and
+running native `generate-pack` jobs. The generated matrix uses the native
+settings in this repository: FLUX/Z-Image at 1024x1024 and Wan at 832x480,
+81 frames, 50 steps, CFG 5.0. It does not create range smoke jobs.
+
+After external GenEval or VBench runs finish, import their JSON metrics into the
+artifact so reports and checksums stay consistent:
+
+```bash
+orbitquant record-metrics \
+  --artifact ./artifacts/native/flux1-schnell-native-w4a4 \
+  --split orbitquant \
+  --metrics-json ./geneval-flux1-w4a4.json \
+  --metric-prefix geneval \
+  --suite flux1-schnell-native \
+  --seed 0 \
+  --bit-setting W4A4
+```
+
 ## Python API
 
 ```python
