@@ -44,6 +44,12 @@ orbitquant generate \
   --bit-setting W4A4
 ```
 
+Validate an artifact before publishing or moving it:
+
+```bash
+orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
+```
+
 ## License
 
 The code in this repository is Apache-2.0. Quantized model artifacts must record

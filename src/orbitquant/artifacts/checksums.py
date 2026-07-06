@@ -23,3 +23,17 @@ def write_sha256sums(root: str | Path, output: str | Path | None = None) -> Path
         lines.append(f"{sha256_file(path)}  {rel.as_posix()}")
     output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return output_path
+
+
+def validate_checksums(root: str | Path, checksums: dict[str, str]) -> None:
+    root_path = Path(root)
+    for relative_path, expected in checksums.items():
+        path = root_path / relative_path
+        if not path.is_file():
+            raise RuntimeError(f"artifact checksum target missing: {relative_path}")
+        actual = sha256_file(path)
+        if actual != expected:
+            raise RuntimeError(
+                f"artifact checksum mismatch for {relative_path}: "
+                f"expected {expected}, got {actual}"
+            )

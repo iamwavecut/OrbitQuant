@@ -6,7 +6,7 @@ import json
 import torch
 
 from orbitquant import __version__
-from orbitquant.artifacts import save_orbitquant_artifact
+from orbitquant.artifacts import save_orbitquant_artifact, validate_orbitquant_artifact
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.native_runner import (
@@ -76,6 +76,11 @@ def main(argv: list[str] | None = None) -> int:
     quantize_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
     )
+
+    validate_parser = subparsers.add_parser(
+        "validate-artifact", help="validate an OrbitQuant artifact"
+    )
+    validate_parser.add_argument("--artifact", required=True)
 
     generate_parser = subparsers.add_parser("generate", help="run native generation suite")
     generate_parser.add_argument("--suite", required=True)
@@ -151,6 +156,9 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
         )
+        return 0
+    if args.command == "validate-artifact":
+        print(json.dumps(validate_orbitquant_artifact(args.artifact)))
         return 0
     if args.command == "generate":
         suite = get_native_suite(args.suite)

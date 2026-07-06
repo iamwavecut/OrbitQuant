@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import torch
 
 import orbitquant.cli.main as cli_main
+from orbitquant.artifacts import save_orbitquant_artifact
 from orbitquant.cli.main import main
+from orbitquant.config import OrbitQuantConfig
+from orbitquant.modeling import quantize_linear_modules
 
 
 def test_cli_version_prints_version(capsys):
@@ -165,3 +168,29 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
     assert (tmp_path / "model.safetensors").exists()
     assert (tmp_path / "orbitquant_manifest.json").exists()
     assert (tmp_path / "SHA256SUMS").exists()
+
+
+def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert main(["validate-artifact", "--artifact", str(tmp_path)]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["valid"] is True
+    assert output["source_model_id"] == "example/model"
+    assert output["tensor_count"] > 0
+    assert output["quantized_module_count"] == 1
