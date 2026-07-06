@@ -174,6 +174,28 @@ class OrbitQuantLinear(nn.Module):
         if self.packed_weight_indices is None or self.row_norms is None:
             raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
 
+        if device.type == "mps":
+            try:
+                from orbitquant.kernels.mps import (
+                    dequantize_packed_weight_with_mps,
+                    mps_metal_available,
+                )
+            except Exception:
+                mps_metal_available = None
+            if mps_metal_available is not None and mps_metal_available():
+                weight = dequantize_packed_weight_with_mps(
+                    self.packed_weight_indices,
+                    self.row_norms,
+                    self.weight_codebook,
+                    bits=self.weight_bits,
+                    out_features=self.out_features,
+                    in_features=self.in_features,
+                )
+                dequantized = weight.to(dtype=dtype)
+                self._dequantized_weight_cache = dequantized.detach()
+                self._dequantized_weight_cache_key = cache_key
+                return dequantized
+
         flat = unpack_lowbit(
             self.packed_weight_indices,
             bits=self.weight_bits,

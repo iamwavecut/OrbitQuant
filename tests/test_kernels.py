@@ -10,6 +10,7 @@ from orbitquant.kernels import (
     quantize_activations_kernel,
     select_backend,
 )
+from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation
 
 
@@ -56,13 +57,16 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
 
     assert capabilities["cpu"]["available"] is True
     assert capabilities["cpu"]["optimized"] is False
+    assert capabilities["cpu"]["weight_dequant_optimized"] is False
     assert capabilities["cpu"]["implementation"] == "torch_reference"
     assert capabilities["mps"]["available"] is True
     assert capabilities["mps"]["optimized"] is False
+    assert capabilities["mps"]["weight_dequant_optimized"] is False
     assert capabilities["mps"]["implementation"] == "torch_reference_mps"
     assert capabilities["triton_cuda"]["available"] is True
     assert capabilities["triton_cuda"]["optimized"] is True
     assert capabilities["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert capabilities["triton_cuda"]["weight_dequant_optimized"] is False
     assert capabilities["triton_cuda"]["full_fusion"] is False
 
 
@@ -77,6 +81,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["optimized"] is True
     assert capabilities["mps"]["implementation"] == "metal_codebook_rescale"
     assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert capabilities["mps"]["weight_dequant_optimized"] is True
     assert capabilities["mps"]["full_fusion"] is False
 
 
@@ -180,6 +185,36 @@ def test_mps_codebook_kernel_matches_bucketize_boundary_semantics():
     actual = quantize_rotated_activations_with_mps(rotated, norms, codebook)
 
     assert torch.equal(actual.cpu(), expected.cpu())
+
+
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+def test_mps_weight_dequant_kernel_matches_reference_for_supported_bits(bits):
+    if not dispatch_module._mps_metal_available():
+        pytest.skip("MPS Metal shader backend is not available")
+
+    from orbitquant.kernels.mps import dequantize_packed_weight_with_mps
+
+    out_features = 5
+    in_features = 16
+    codebook = get_codebook(dim=in_features, bits=bits)
+    indices = (torch.arange(out_features * in_features, dtype=torch.uint8) % (2**bits)).reshape(
+        out_features, in_features
+    )
+    packed = pack_lowbit(indices, bits=bits)
+    row_norms = torch.linspace(0.5, 1.5, out_features, dtype=torch.float32)
+    unpacked = unpack_lowbit(packed, bits=bits, length=indices.numel()).reshape_as(indices)
+    expected = row_norms[:, None] * codebook.centroids[unpacked.to(torch.long)]
+
+    actual = dequantize_packed_weight_with_mps(
+        packed,
+        row_norms,
+        codebook,
+        bits=bits,
+        out_features=out_features,
+        in_features=in_features,
+    )
+
+    assert torch.allclose(actual.cpu(), expected)
 
 
 def test_triton_cuda_backend_matches_reference_without_full_reference_fallback(monkeypatch):

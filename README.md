@@ -162,10 +162,10 @@ Current artifacts include:
 The current `triton_cuda` path keeps norm and RPBH rotation in PyTorch but uses
 a real Triton kernel for codebook lookup and norm rescale. On Apple Silicon,
 `mps` uses a Metal shader for the same codebook lookup/rescale stage when
-`torch.mps.compile_shader` is available, otherwise it falls back to the
-reference PyTorch path on MPS tensors. Full fused norm+RPBH+lookup kernels are
-still separate work. The reference PyTorch path remains the correctness
-baseline.
+`torch.mps.compile_shader` is available, and also uses Metal for packed weight
+dequantization. Otherwise it falls back to the reference PyTorch path on MPS
+tensors. Full fused norm+RPBH+lookup+matmul kernels are still separate work.
+The reference PyTorch path remains the correctness baseline.
 
 Inspect backend availability and optimization status on the current machine:
 
@@ -176,7 +176,8 @@ orbitquant kernel-info
 `kernel-info` reports whether `mps` is using `metal_codebook_rescale` or the
 `torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
 as partial optimization because only the codebook lookup and norm rescale stage
-is fused today.
+is fused today. The `weight_dequant_optimized` field records whether packed
+weight dequantization avoids the CPU unpack path for that backend.
 
 ## License
 

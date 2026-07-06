@@ -1,5 +1,7 @@
+import pytest
 import torch
 
+import orbitquant.kernels.dispatch as dispatch_module
 import orbitquant.layers as layers_module
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
@@ -88,3 +90,24 @@ def test_orbit_linear_caches_dequantized_weight(monkeypatch):
     quantized.clear_dequantized_cache()
     quantized(x)
     assert calls == 2
+
+
+def test_orbit_linear_mps_weight_dequant_uses_kernel_without_cpu_unpack(monkeypatch):
+    if not dispatch_module._mps_metal_available():
+        pytest.skip("MPS Metal shader backend is not available")
+
+    torch.manual_seed(3)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    expected = quantized._dequantize_weight(device=torch.device("cpu"), dtype=torch.float32)
+    quantized.clear_dequantized_cache()
+
+    def fail_unpack(*args, **kwargs):
+        raise AssertionError("MPS weight dequant should not call CPU unpack_lowbit")
+
+    monkeypatch.setattr(layers_module, "unpack_lowbit", fail_unpack)
+
+    actual = quantized._dequantize_weight(device=torch.device("mps"), dtype=torch.float32)
+
+    assert torch.allclose(actual.cpu(), expected)

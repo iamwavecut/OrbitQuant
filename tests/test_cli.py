@@ -37,14 +37,17 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
             "cpu": {
                 "available": True,
                 "optimized": False,
+                "weight_dequant_optimized": False,
             },
             "mps": {
                 "implementation": "metal_codebook_rescale",
                 "optimized_stage": "codebook_lookup_rescale",
+                "weight_dequant_optimized": True,
                 "full_fusion": False,
             },
             "triton_cuda": {
                 "optimized_stage": "codebook_lookup_rescale",
+                "weight_dequant_optimized": False,
                 "full_fusion": False,
             },
         },
@@ -55,10 +58,13 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     payload = json.loads(capsys.readouterr().out)
     assert payload["cpu"]["available"] is True
     assert payload["cpu"]["optimized"] is False
+    assert payload["cpu"]["weight_dequant_optimized"] is False
     assert payload["mps"]["implementation"] == "metal_codebook_rescale"
     assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert payload["mps"]["weight_dequant_optimized"] is True
     assert payload["mps"]["full_fusion"] is False
     assert payload["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert payload["triton_cuda"]["weight_dequant_optimized"] is False
     assert payload["triton_cuda"]["full_fusion"] is False
 
 

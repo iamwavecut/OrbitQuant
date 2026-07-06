@@ -46,9 +46,9 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             "## Limitations",
             "",
             "The initial runtime may dequantize packed weights before BF16 matmul. "
-            "Disk artifacts are compact; current CUDA/MPS kernels only optimize the "
-            "activation codebook lookup/rescale stage, and full fused low-bit kernels "
-            "are separate work.",
+            "Disk artifacts are compact; current CUDA/MPS kernels optimize selected "
+            "activation codebook lookup/rescale stages, MPS also optimizes packed "
+            "weight dequantization, and full fused low-bit kernels are separate work.",
             "",
         ]
     )

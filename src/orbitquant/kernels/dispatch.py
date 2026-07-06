@@ -41,6 +41,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized": False,
             "full_fusion": False,
             "optimized_stage": None,
+            "weight_dequant_optimized": False,
             "device_types": ["cpu"],
             "implementation": "torch_reference",
             "notes": "Correctness baseline using the reference PyTorch path.",
@@ -50,11 +51,12 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized": mps_optimized,
             "full_fusion": False,
             "optimized_stage": "codebook_lookup_rescale" if mps_optimized else None,
+            "weight_dequant_optimized": mps_optimized,
             "device_types": ["mps"],
             "implementation": "metal_codebook_rescale" if mps_optimized else "torch_reference_mps",
             "notes": (
                 "Norm and RPBH rotation still run in PyTorch; a Metal shader "
-                "handles codebook lookup and norm rescale."
+                "handles codebook lookup, norm rescale, and packed weight dequant."
                 if mps_optimized
                 else (
                     "Runs the reference PyTorch path on MPS tensors; native Metal "
@@ -67,6 +69,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized": True,
             "full_fusion": False,
             "optimized_stage": "codebook_lookup_rescale",
+            "weight_dequant_optimized": False,
             "device_types": ["cuda"],
             "implementation": "triton_codebook_rescale",
             "notes": (
