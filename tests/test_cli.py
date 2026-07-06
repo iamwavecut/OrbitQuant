@@ -289,6 +289,57 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
     assert '"target_policy": "wan"' in output
 
 
+def test_cli_validate_generation_reports_valid_native_output(capsys, tmp_path):
+    output_path = tmp_path / "flux2-native_seed5_W4A4_simple-object.png"
+    Image.new("RGB", (16, 16), "red").save(output_path)
+    output_path.with_suffix(".png.json").write_text(
+        json.dumps(
+            {
+                "suite": "flux2-native",
+                "model_id": "black-forest-labs/FLUX.2-klein-4B",
+                "prompt": "A native image",
+                "seed": 5,
+                "height": 1024,
+                "width": 1024,
+                "frames": None,
+                "steps": 4,
+                "guidance": 1.0,
+                "quantization": {
+                    "config": {
+                        "weight_bits": 4,
+                        "activation_bits": 4,
+                    }
+                },
+            }
+        )
+        + "\n"
+    )
+
+    assert (
+        main(
+            [
+                "validate-generation",
+                "--suite",
+                "flux2-native",
+                "--output",
+                str(output_path),
+                "--seed",
+                "5",
+                "--bit-setting",
+                "W4A4",
+                "--prompt",
+                "A native image",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is True
+    assert payload["suite"] == "flux2-native"
+    assert payload["bit_setting"] == "W4A4"
+
+
 def test_cli_generate_dry_run_uses_artifact_source_and_default_assets_output(capsys, tmp_path):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(

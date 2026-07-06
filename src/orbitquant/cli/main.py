@@ -221,6 +221,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     validate_parser.add_argument("--artifact", required=True)
 
+    validate_generation_parser = subparsers.add_parser(
+        "validate-generation", help="validate a native generation output and metadata pair"
+    )
+    validate_generation_parser.add_argument("--suite", required=True)
+    validate_generation_parser.add_argument("--output", required=True)
+    validate_generation_parser.add_argument("--metadata")
+    validate_generation_parser.add_argument("--seed", type=int, required=True)
+    validate_generation_parser.add_argument("--bit-setting", required=True)
+    validate_generation_parser.add_argument("--prompt")
+    validate_generation_parser.add_argument("--model-id")
+
     report_parser = subparsers.add_parser("report", help="write a native eval report")
     report_parser.add_argument("--artifact", action="append", required=True)
     report_parser.add_argument("--output", required=True)
@@ -394,6 +405,28 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate-artifact":
         print(json.dumps(validate_orbitquant_artifact(args.artifact)))
+        return 0
+    if args.command == "validate-generation":
+        suite = get_native_suite(args.suite)
+        output_path = Path(args.output)
+        metadata_path = (
+            _metadata_path_for_output(output_path)
+            if args.metadata is None
+            else Path(args.metadata)
+        )
+        print(
+            json.dumps(
+                validate_native_generation_output(
+                    output_path,
+                    metadata_path,
+                    suite,
+                    seed=args.seed,
+                    bit_setting=args.bit_setting,
+                    prompt=args.prompt,
+                    model_id=args.model_id,
+                )
+            )
+        )
         return 0
     if args.command == "report":
         result = generate_native_eval_report(
