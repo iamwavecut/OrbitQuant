@@ -77,7 +77,14 @@ def _triton_cuda_quantize_activations(
     codebook: LloydMaxCodebook,
     eps: float,
 ) -> torch.Tensor:
-    return _reference_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
+    from orbitquant.kernels.triton_cuda import quantize_rotated_activations_with_triton
+
+    original_dtype = x.dtype
+    work = x.to(torch.float32)
+    norms = work.norm(dim=-1, keepdim=True).clamp_min(eps)
+    rotated = rotation.apply_to_activations(work / norms)
+    quantized = quantize_rotated_activations_with_triton(rotated, norms, codebook)
+    return quantized.to(original_dtype)
 
 
 def quantize_activations_kernel(

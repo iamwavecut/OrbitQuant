@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 import orbitquant.kernels.dispatch as dispatch_module
@@ -77,3 +78,25 @@ def test_triton_cuda_dispatch_uses_backend_function_with_reference_equivalent_ou
 
     assert torch.allclose(actual, expected)
     assert calls == [x.shape]
+
+
+def test_triton_cuda_backend_matches_reference_without_full_reference_fallback(monkeypatch):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(0)
+    x = torch.randn(4, 5, 16, device="cuda", dtype=torch.float32)
+    rotation = RPBHRotation(dim=16, seed=3, block_size=8)
+    codebook = get_codebook(dim=16, bits=4)
+    expected = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
+
+    def fail_reference(*args, **kwargs):
+        raise AssertionError("triton_cuda backend should not call the full reference path")
+
+    monkeypatch.setattr(dispatch_module, "_reference_quantize_activations", fail_reference)
+
+    actual = quantize_activations_kernel(
+        x, rotation=rotation, codebook=codebook, eps=1e-12, backend="triton_cuda"
+    )
+
+    assert torch.allclose(actual, expected)
