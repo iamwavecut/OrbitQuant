@@ -73,6 +73,31 @@ def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model
     assert restored_state[packed_key].dtype == torch.uint8
 
 
+def test_load_orbitquant_artifact_uses_prequantized_skeletons(tmp_path, monkeypatch):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    def fail_from_linear(cls, *args, **kwargs):
+        raise AssertionError("artifact load should not requantize source Linear weights")
+
+    monkeypatch.setattr(OrbitQuantLinear, "from_linear", classmethod(fail_from_linear))
+
+    restored = TinyArtifactModel()
+    load_orbitquant_artifact(restored, tmp_path)
+
+    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+
+
 def test_load_orbitquant_artifact_rejects_checksum_mismatch(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)
