@@ -3,6 +3,7 @@ import json
 import pytest
 import torch
 
+from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.quantizer import register_hf_quantizers
@@ -34,7 +35,8 @@ class TinyTransformersModel(transformers.PreTrainedModel):
                                     config.hidden_size, config.hidden_size
                                 )
                             }
-                        )
+                        ),
+                        "modulation": torch.nn.Linear(config.hidden_size, config.hidden_size),
                     }
                 )
             ]
@@ -58,7 +60,44 @@ def test_transformers_pretrained_from_pretrained_quantizes_on_load(tmp_path):
     )
 
     assert isinstance(loaded.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(loaded.transformer_blocks[0]["modulation"], RTNInt4Linear)
     assert isinstance(loaded.proj_out, torch.nn.Linear)
+    x = torch.randn(2, 3, 16)
+    assert torch.isfinite(loaded(x)).all()
+
+
+def test_transformers_pretrained_streams_full_precision_weight_into_packed_tensors(
+    tmp_path,
+    monkeypatch,
+):
+    register_hf_quantizers()
+    model = TinyTransformersModel(TinyTransformersConfig())
+    model.save_pretrained(tmp_path)
+
+    def fail_post_load_quantization(*args, **kwargs):
+        raise AssertionError("Transformers load fell back to post-load quantization")
+
+    monkeypatch.setattr(
+        "orbitquant.quantizer.quantize_linear_modules",
+        fail_post_load_quantization,
+    )
+
+    loaded, loading_info = TinyTransformersModel.from_pretrained(
+        tmp_path,
+        quantization_config=OrbitQuantConfig(block_size=8),
+        output_loading_info=True,
+    )
+
+    quantized = loaded.transformer_blocks[0]["attn"]["to_q"]
+    modulation = loaded.transformer_blocks[0]["modulation"]
+    assert not loading_info["missing_keys"]
+    assert not loading_info["unexpected_keys"]
+    assert isinstance(quantized, OrbitQuantLinear)
+    assert isinstance(modulation, RTNInt4Linear)
+    assert quantized.packed_weight_indices is not None
+    assert quantized.row_norms is not None
+    assert modulation.packed_weight is not None
+    assert modulation.scales is not None
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(loaded(x)).all()
 
@@ -83,6 +122,7 @@ def test_transformers_pretrained_save_pretrained_round_trips_pre_quantized_model
 
     assert saved_config["quantization_config"]["quant_method"] == "orbitquant"
     assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(restored.transformer_blocks[0]["modulation"], RTNInt4Linear)
     assert isinstance(restored.proj_out, torch.nn.Linear)
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(restored(x)).all()

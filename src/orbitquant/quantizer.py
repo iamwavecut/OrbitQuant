@@ -100,6 +100,9 @@ class OrbitQuantizer(*_hf_base_classes()):
         if not hasattr(self, "modules_to_not_convert"):
             self.modules_to_not_convert = modules_to_not_convert
         self._transformers_postload_quantization = False
+        self._transformers_streaming_quantization = False
+        self._transformers_orbit_module_names: list[str] = []
+        self._transformers_adaln_module_names: list[str] = []
 
     def is_serializable(self, *args: Any, **kwargs: Any) -> bool:
         return True
@@ -205,6 +208,31 @@ class OrbitQuantizer(*_hf_base_classes()):
             return state_or_model.state_dict(), {}
         return state_or_model, {}
 
+    def get_weight_conversions(self) -> list[Any]:
+        if not self._transformers_streaming_quantization:
+            return []
+        from transformers.core_model_loading import WeightConverter
+
+        from orbitquant.transformers_ops import OrbitQuantWeightQuantize
+
+        conversions = [
+            WeightConverter(
+                source_patterns=f"{name}.weight",
+                target_patterns=f"{name}.packed_weight_indices",
+                operations=[OrbitQuantWeightQuantize(self)],
+            )
+            for name in self._transformers_orbit_module_names
+        ]
+        conversions.extend(
+            WeightConverter(
+                source_patterns=f"{name}.weight",
+                target_patterns=f"{name}.packed_weight",
+                operations=[OrbitQuantWeightQuantize(self)],
+            )
+            for name in self._transformers_adaln_module_names
+        )
+        return conversions
+
     @property
     def is_trainable(self) -> bool:
         return False
@@ -218,13 +246,26 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_postload_quantization = (
             not self.pre_quantized and "checkpoint_files" in kwargs
         )
-        if self.pre_quantized:
+        self._transformers_streaming_quantization = self._transformers_postload_quantization
+        self._transformers_orbit_module_names = []
+        self._transformers_adaln_module_names = []
+        if self._transformers_streaming_quantization:
+            decisions = classify_linear_modules(model, self.quantization_config)
+            self._transformers_orbit_module_names = [
+                name for name, decision in decisions.items() if decision.action == "orbitquant"
+            ]
+            self._transformers_adaln_module_names = [
+                name for name, decision in decisions.items() if decision.action == "adaln_int4_rtn"
+            ]
+        if self.pre_quantized or self._transformers_streaming_quantization:
             prepare_prequantized_linear_modules(model, self.quantization_config)
         return model
 
     def _process_model_after_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
-        if not self.pre_quantized:
+        if not self.pre_quantized and not self._transformers_streaming_quantization:
             quantize_linear_modules(model, self.quantization_config)
+        if self._transformers_streaming_quantization and hasattr(model, "_weight_conversions"):
+            delattr(model, "_weight_conversions")
         return model
 
     def _dequantize(self, model: Any) -> Any:
