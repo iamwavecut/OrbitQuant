@@ -143,6 +143,7 @@ def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_pat
     assert "else\norbitquant quantize --suite flux2-native" in script
     assert "\nfi\norbitquant validate-artifact --artifact" in script
     assert "\norbitquant generate-pack --suite flux2-native" in script
+    assert "--resume-existing" in script
 
 
 def test_cli_generate_requires_prompt_and_output():
@@ -844,6 +845,66 @@ def test_cli_generate_pack_runs_jobs_once_per_prompt_seed_and_records_artifacts(
     assert "assets/flux2-native_seed3_W4A4_counting.png" in manifest["checksums"]
     assert len(metrics_rows) == 2
     assert json.loads(metrics_rows[0])["metadata"]["prompt_record"]["id"] == "simple-object"
+
+
+def test_cli_generate_pack_resume_existing_skips_completed_outputs(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    output_path = tmp_path / "assets" / "flux2-native_seed3_W4A4_simple-object.png"
+    Image.new("RGB", (16, 16), "green").save(output_path)
+    output_path.with_suffix(".png.json").write_text('{"status":"complete"}\n')
+    monkeypatch.setattr(
+        cli_main,
+        "load_pipeline_for_suite",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("completed resume jobs must not load a pipeline")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-id",
+                "simple-object",
+                "--seeds",
+                "3",
+                "--resume-existing",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["job_count"] == 1
+    assert output["run_count"] == 0
+    assert output["skipped_count"] == 1
+    assert output["skipped_outputs"] == [str(output_path)]
 
 
 def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, tmp_path):

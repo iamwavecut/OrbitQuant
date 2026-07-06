@@ -177,6 +177,8 @@ def build_native_run_script(
                 ]
                 if prompt_limit is not None:
                     command.extend(["--prompt-limit", str(prompt_limit)])
+                if resume:
+                    command.append("--resume-existing")
                 lines.append(_cmd(command))
             lines.append(
                 _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir])

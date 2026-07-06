@@ -24,6 +24,7 @@ from orbitquant.eval.native_runner import (
     build_pipeline_kwargs,
     build_quantization_config_for_suite,
     load_pipeline_for_suite,
+    output_path_for_suite,
     run_native_generation,
     target_policy_for_suite,
 )
@@ -78,6 +79,26 @@ def _parse_seed_list(value: str) -> list[int]:
     if not seeds:
         raise argparse.ArgumentTypeError("at least one seed is required")
     return seeds
+
+
+def _metadata_path_for_output(output_path: Path) -> Path:
+    return output_path.with_suffix(output_path.suffix + ".json")
+
+
+def _expected_generation_output_path(
+    output_dir: Path,
+    *,
+    suite: Any,
+    seed: int,
+    variant: str,
+) -> Path:
+    return output_path_for_suite(
+        output_dir,
+        suite_name=suite.name,
+        seed=seed,
+        media_type="video" if suite.frames is not None else "image",
+        variant=variant,
+    )
 
 
 def _record_generated_artifact(
@@ -264,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     generate_pack_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
     )
+    generate_pack_parser.add_argument("--resume-existing", action="store_true")
     generate_pack_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
@@ -434,6 +456,24 @@ def main(argv: list[str] | None = None) -> int:
             prompt_ids=args.prompt_id,
             prompt_limit=args.prompt_limit,
         )
+        pending_jobs = []
+        skipped_outputs = []
+        for job in jobs:
+            prompt_record = job["prompt_record"]
+            seed = int(job["seed"])
+            variant = f"{bit_setting}_{prompt_record['id']}"
+            expected_output_path = _expected_generation_output_path(
+                output_dir, suite=suite, seed=seed, variant=variant
+            )
+            expected_metadata_path = _metadata_path_for_output(expected_output_path)
+            if (
+                args.resume_existing
+                and expected_output_path.is_file()
+                and expected_metadata_path.is_file()
+            ):
+                skipped_outputs.append(str(expected_output_path))
+            else:
+                pending_jobs.append(job)
         if args.dry_run:
             print(
                 json.dumps(
@@ -446,9 +486,27 @@ def main(argv: list[str] | None = None) -> int:
                         "bit_setting": bit_setting,
                         "split": args.split,
                         "job_count": len(jobs),
+                        "run_count": len(pending_jobs),
+                        "skipped_count": len(skipped_outputs),
+                        "skipped_outputs": skipped_outputs,
                         "jobs": jobs,
                     },
                     indent=2,
+                )
+            )
+            return 0
+
+        if not pending_jobs:
+            print(
+                json.dumps(
+                    {
+                        "artifact": str(artifact_path),
+                        "job_count": len(jobs),
+                        "run_count": 0,
+                        "skipped_count": len(skipped_outputs),
+                        "skipped_outputs": skipped_outputs,
+                        "outputs": [],
+                    }
                 )
             )
             return 0
@@ -466,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
                 component=args.component,
             )
         outputs = []
-        for job in jobs:
+        for job in pending_jobs:
             prompt_record = job["prompt_record"]
             seed = int(job["seed"])
             variant = f"{bit_setting}_{prompt_record['id']}"
@@ -507,6 +565,9 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "artifact": str(artifact_path),
                     "job_count": len(jobs),
+                    "run_count": len(outputs),
+                    "skipped_count": len(skipped_outputs),
+                    "skipped_outputs": skipped_outputs,
                     "outputs": outputs,
                 }
             )

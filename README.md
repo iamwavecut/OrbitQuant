@@ -73,8 +73,8 @@ package-version, disk, and `hf models info` access checks) before quantizing and
 running native `generate-pack` jobs. The generated matrix uses the native
 settings in this repository: FLUX/Z-Image at 1024x1024 and Wan at 832x480,
 81 frames, 50 steps, CFG 5.0. It does not create range smoke jobs. With
-`--resume`, the script skips quantization for existing valid artifacts and still
-runs native generation/validation for downstream completion.
+`--resume`, the script skips quantization for existing valid artifacts and adds
+`generate-pack --resume-existing` so completed sample outputs are not regenerated.
 
 After external GenEval or VBench runs finish, import their JSON metrics into the
 artifact so reports and checksums stay consistent:
