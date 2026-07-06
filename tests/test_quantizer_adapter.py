@@ -1,6 +1,8 @@
 import torch
 
+from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.layers import OrbitQuantLinear
 from orbitquant.quantizer import OrbitQuantizer, register_hf_quantizers
 
 
@@ -79,3 +81,31 @@ def test_quantizer_reports_target_weight_parameters_only():
     )
     assert not quantizer.param_needs_quantization(model, "proj_out.weight")
     assert not quantizer.param_needs_quantization(model, "transformer_blocks.0.attn.to_q.bias")
+
+
+def test_pre_quantized_quantizer_prepares_empty_quantized_module_skeletons():
+    model = TinyQuantizerTransformer()
+    model.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    quantizer = OrbitQuantizer(OrbitQuantConfig(block_size=8), pre_quantized=True)
+
+    quantizer._process_model_before_weight_loading(model)
+
+    orbit_layer = model.transformer_blocks[0]["attn"]["to_q"]
+    adaln_layer = model.transformer_blocks[0]["modulation"]
+    assert isinstance(orbit_layer, OrbitQuantLinear)
+    assert isinstance(adaln_layer, RTNInt4Linear)
+    assert orbit_layer.packed_weight_indices.numel() == 128
+    assert orbit_layer.row_norms.shape == (16,)
+    assert adaln_layer.packed_weight.numel() == 1024
+    assert adaln_layer.scales.shape == (32, 1)
+
+
+def test_on_the_fly_quantizer_quantizes_after_weight_loading_only():
+    model = TinyQuantizerTransformer()
+    quantizer = OrbitQuantizer(OrbitQuantConfig(block_size=8), pre_quantized=False)
+
+    quantizer._process_model_before_weight_loading(model)
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], torch.nn.Linear)
+
+    quantizer._process_model_after_weight_loading(model)
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)

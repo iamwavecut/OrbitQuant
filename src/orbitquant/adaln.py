@@ -8,6 +8,10 @@ from orbitquant.config import OrbitQuantConfig
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 
 
+def _packed_length(value_count: int, bits: int) -> int:
+    return (value_count * bits + 7) // 8
+
+
 class RTNInt4Linear(nn.Module):
     """Symmetric INT4 round-to-nearest linear used for AdaLN modulation weights."""
 
@@ -57,6 +61,33 @@ class RTNInt4Linear(nn.Module):
             module_name=module_name,
             packed_weight=packed,
             scales=scales.to(torch.bfloat16),
+            bias=bias,
+        )
+
+    @classmethod
+    def empty_from_linear(
+        cls, layer: nn.Linear, *, config: OrbitQuantConfig, module_name: str
+    ) -> RTNInt4Linear:
+        group_size = config.adaln_group_size
+        num_groups = (layer.in_features + group_size - 1) // group_size
+        packed = torch.empty(
+            _packed_length(layer.out_features * num_groups * group_size, 4),
+            dtype=torch.uint8,
+            device=layer.weight.device,
+        )
+        scales = torch.empty(
+            layer.out_features, num_groups, dtype=torch.bfloat16, device=layer.weight.device
+        )
+        bias = None
+        if layer.bias is not None:
+            bias = torch.zeros(layer.out_features, dtype=layer.bias.dtype, device=layer.bias.device)
+        return cls(
+            in_features=layer.in_features,
+            out_features=layer.out_features,
+            group_size=group_size,
+            module_name=module_name,
+            packed_weight=packed,
+            scales=scales,
             bias=bias,
         )
 

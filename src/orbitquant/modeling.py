@@ -62,3 +62,34 @@ def quantize_linear_modules(
             summary.skipped_modules.append(name)
 
     return summary
+
+
+def prepare_prequantized_linear_modules(
+    model: torch.nn.Module, config: OrbitQuantConfig
+) -> QuantizationSummary:
+    decisions = classify_linear_modules(model, config)
+    modules = dict(model.named_modules())
+    summary = QuantizationSummary()
+
+    for name, decision in decisions.items():
+        module = modules[name]
+        if not isinstance(module, torch.nn.Linear):
+            continue
+        if decision.action == "orbitquant":
+            replacement = OrbitQuantLinear.empty_from_linear(
+                module, config=config, module_name=name
+            )
+            parent, child_name = _parent_and_child(model, name)
+            _set_child(parent, child_name, replacement)
+            summary.quantized_modules.append(name)
+        elif decision.action == "adaln_int4_rtn":
+            replacement = RTNInt4Linear.empty_from_linear(
+                module, config=config, module_name=name
+            )
+            parent, child_name = _parent_and_child(model, name)
+            _set_child(parent, child_name, replacement)
+            summary.adaln_modules.append(name)
+        else:
+            summary.skipped_modules.append(name)
+
+    return summary

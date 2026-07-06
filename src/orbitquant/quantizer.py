@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.modeling import quantize_linear_modules
+from orbitquant.modeling import prepare_prequantized_linear_modules, quantize_linear_modules
 from orbitquant.policies import classify_linear_modules
 
 
@@ -91,10 +91,13 @@ class OrbitQuantizer(*_hf_base_classes()):
 
     def _process_model_before_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
         model.quantization_config = self.quantization_config
+        if self.pre_quantized:
+            prepare_prequantized_linear_modules(model, self.quantization_config)
         return model
 
     def _process_model_after_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
-        quantize_linear_modules(model, self.quantization_config)
+        if not self.pre_quantized:
+            quantize_linear_modules(model, self.quantization_config)
         return model
 
     def _dequantize(self, model: Any) -> Any:

@@ -11,6 +11,10 @@ from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation
 
 
+def _packed_length(value_count: int, bits: int) -> int:
+    return (value_count * bits + 7) // 8
+
+
 class OrbitQuantLinear(nn.Module):
     """Linear layer with OrbitQuant-packed rotated weights.
 
@@ -106,6 +110,47 @@ class OrbitQuantLinear(nn.Module):
             packed_weight_indices=packed,
             row_norms=row_norms.to(torch.bfloat16),
             debug_weight=None,
+        )
+
+    @classmethod
+    def empty_from_linear(
+        cls,
+        layer: nn.Linear,
+        *,
+        config: OrbitQuantConfig,
+        module_name: str,
+    ) -> OrbitQuantLinear:
+        bias = None
+        if layer.bias is not None:
+            bias = torch.zeros(layer.out_features, dtype=layer.bias.dtype, device=layer.bias.device)
+        debug_weight = None
+        packed_weight_indices = None
+        row_norms = None
+        if config.runtime_mode == "debug_no_quant":
+            debug_weight = torch.empty(
+                layer.out_features,
+                layer.in_features,
+                dtype=layer.weight.dtype,
+                device=layer.weight.device,
+            )
+        else:
+            packed_weight_indices = torch.empty(
+                _packed_length(layer.out_features * layer.in_features, config.weight_bits),
+                dtype=torch.uint8,
+                device=layer.weight.device,
+            )
+            row_norms = torch.empty(
+                layer.out_features, dtype=torch.bfloat16, device=layer.weight.device
+            )
+        return cls(
+            in_features=layer.in_features,
+            out_features=layer.out_features,
+            config=config,
+            module_name=module_name,
+            bias=bias,
+            packed_weight_indices=packed_weight_indices,
+            row_norms=row_norms,
+            debug_weight=debug_weight,
         )
 
     def clear_dequantized_cache(self) -> None:
