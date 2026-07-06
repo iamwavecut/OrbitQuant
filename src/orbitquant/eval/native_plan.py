@@ -104,6 +104,7 @@ def build_native_run_script(
     device: str = "cuda",
     dtype: str = "bfloat16",
     activation_kernel_backend: str = "auto",
+    resume: bool = False,
 ) -> str:
     selected_suites = list_native_suites() if suites is None else suites
     selected_seeds = [0] if seeds is None else seeds
@@ -119,32 +120,43 @@ def build_native_run_script(
             weight_bits, activation_bits = _bits(bit_setting)
             artifact_dir = str(Path(output_root) / _artifact_name(suite.name, bit_setting))
             lines.append(f"# {suite.name} {bit_setting}")
-            lines.append(
-                _cmd(
+            quantize_command = _cmd(
+                [
+                    "orbitquant",
+                    "quantize",
+                    "--suite",
+                    suite.name,
+                    "--target-policy",
+                    target_policy_for_suite(suite),
+                    "--weight-bits",
+                    weight_bits,
+                    "--activation-bits",
+                    activation_bits,
+                    "--activation-kernel-backend",
+                    activation_kernel_backend,
+                    "--device",
+                    device,
+                    "--dtype",
+                    dtype,
+                    "--output",
+                    artifact_dir,
+                ]
+            )
+            validate_command = _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir])
+            if resume:
+                lines.extend(
                     [
-                        "orbitquant",
-                        "quantize",
-                        "--suite",
-                        suite.name,
-                        "--target-policy",
-                        target_policy_for_suite(suite),
-                        "--weight-bits",
-                        weight_bits,
-                        "--activation-bits",
-                        activation_bits,
-                        "--activation-kernel-backend",
-                        activation_kernel_backend,
-                        "--device",
-                        device,
-                        "--dtype",
-                        dtype,
-                        "--output",
-                        artifact_dir,
+                        f"if {validate_command} >/dev/null 2>&1; then",
+                        f"echo 'Skipping existing valid artifact: {artifact_dir}'",
+                        "else",
+                        quantize_command,
+                        "fi",
                     ]
                 )
-            )
+            else:
+                lines.append(quantize_command)
             lines.append(
-                _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir])
+                validate_command
             )
             for split in ("original", "orbitquant"):
                 command = [

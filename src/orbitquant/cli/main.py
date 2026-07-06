@@ -166,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
+    native_script_parser.add_argument("--resume", action="store_true")
 
     quantize_parser = subparsers.add_parser("quantize", help="quantize a Diffusers component")
     quantize_parser.add_argument("--model-id")
@@ -304,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                 device=args.device,
                 dtype=args.dtype,
                 activation_kernel_backend=args.activation_kernel_backend,
+                resume=args.resume,
             )
         )
         return 0

@@ -119,6 +119,32 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "range" not in script.lower()
 
 
+def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "native-script",
+                "--suite",
+                "flux2-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--seeds",
+                "0",
+                "--resume",
+            ]
+        )
+        == 0
+    )
+
+    script = capsys.readouterr().out
+    artifact_dir = tmp_path / "artifacts" / "flux2-native-w4a4"
+    assert f"if orbitquant validate-artifact --artifact {artifact_dir}" in script
+    assert f"echo 'Skipping existing valid artifact: {artifact_dir}'" in script
+    assert "else\norbitquant quantize --suite flux2-native" in script
+    assert "\nfi\norbitquant validate-artifact --artifact" in script
+    assert "\norbitquant generate-pack --suite flux2-native" in script
+
+
 def test_cli_generate_requires_prompt_and_output():
     try:
         main(["generate", "--suite", "flux2-native"])

@@ -7,5 +7,6 @@ def test_readme_documents_native_gpu_pod_workflow():
     assert "RTX PRO 6000" in readme
     assert "orbitquant native-plan" in readme
     assert "orbitquant native-script" in readme
+    assert "--resume" in readme
     assert "hf auth whoami" in readme
     assert "orbitquant record-metrics" in readme
