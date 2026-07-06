@@ -10,9 +10,32 @@ from orbitquant.artifacts.checksums import validate_checksums
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.config import OrbitQuantConfig
 
+_REQUIRED_ARTIFACT_FILES = (
+    "README.md",
+    "SHA256SUMS",
+    "model.safetensors",
+    "quantization_config.json",
+    "orbitquant_manifest.json",
+    "orbitquant_codebooks.safetensors",
+    "orbitquant_rotations.safetensors",
+    "prompts.json",
+    "benchmark/summary.json",
+)
+
+
+def _validate_required_files(artifact_path: Path) -> None:
+    missing = [
+        relative_path
+        for relative_path in _REQUIRED_ARTIFACT_FILES
+        if not (artifact_path / relative_path).is_file()
+    ]
+    if missing:
+        raise RuntimeError(f"required artifact file missing: {missing}")
+
 
 def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
     artifact_path = Path(artifact_dir)
+    _validate_required_files(artifact_path)
     config = OrbitQuantConfig.from_dict(
         json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
     )
@@ -51,5 +74,6 @@ def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
         "quantized_module_count": len(manifest.quantized_modules),
         "adaln_module_count": len(manifest.adaln_modules),
         "skipped_module_count": len(manifest.skipped_modules),
+        "required_files": list(_REQUIRED_ARTIFACT_FILES),
         "checksums": manifest.checksums,
     }
