@@ -264,6 +264,9 @@ def test_cli_generate_with_artifact_loads_component_and_records_metrics(
     assert record["metrics"]["generated_samples"] == 1
     assert record["metrics"]["wall_time_seconds"] >= 0.0
     assert record["metadata"]["output_path"] == output["output_path"]
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    assert "assets/flux2-native_seed3_W4A4.png" in manifest["checksums"]
+    assert "assets/flux2-native_seed3_W4A4.png.json" in manifest["checksums"]
     assert restored.device == "cpu"
 
 

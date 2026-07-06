@@ -8,6 +8,7 @@ import torch
 
 from orbitquant import __version__
 from orbitquant.artifacts import (
+    record_artifact_asset,
     record_artifact_metrics,
     save_orbitquant_artifact,
     validate_orbitquant_artifact,
@@ -52,6 +53,14 @@ def _resolve_device(device: str) -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -308,6 +317,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         artifact_metrics = None
         if artifact_path is not None:
+            if _path_is_relative_to(result.output_path, artifact_path):
+                record_artifact_asset(artifact_path, result.output_path)
+            if _path_is_relative_to(result.metadata_path, artifact_path):
+                record_artifact_asset(artifact_path, result.metadata_path)
             metrics = {
                 "generated_samples": 1,
                 "wall_time_seconds": result.metadata["wall_time_seconds"],
