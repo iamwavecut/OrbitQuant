@@ -447,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
                     "tables": {key: str(value) for key, value in result.table_paths.items()},
                     "artifact_count": len(args.artifact),
                     "row_count": len(result.rows),
+                    "missing_required_metric_count": len(result.missing_required_metrics),
                 }
             )
         )

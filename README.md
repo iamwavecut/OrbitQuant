@@ -102,6 +102,10 @@ orbitquant record-metrics \
   --bit-setting W4A4
 ```
 
+Native reports also write `tables/missing_required_metrics.csv` and print
+`missing_required_metric_count` from `orbitquant report`. For paper targets,
+this flags missing GenEval/VBench fields separately from completed metric rows.
+
 ## Python API
 
 ```python

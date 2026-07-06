@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from orbitquant.artifacts import validate_orbitquant_artifact
+from orbitquant.eval.native_settings import list_native_suites
 
 _PAPER_TARGETS = {
     "black-forest-labs/FLUX.1-schnell",
@@ -21,12 +22,36 @@ _PERF_METRICS = {
     "peak_vram_gb",
     "wall_time_seconds",
 }
+_REQUIRED_METRICS_BY_SUITE = {
+    "flux1-schnell-native": ("geneval_overall",),
+    "z-image-native": ("geneval_overall",),
+    "wan-native": (
+        "vbench_imaging_quality",
+        "vbench_aesthetic_quality",
+        "vbench_motion_smoothness",
+        "vbench_dynamic_degree",
+        "vbench_background_consistency",
+        "vbench_subject_consistency",
+        "vbench_scene",
+        "vbench_overall_consistency",
+    ),
+}
+_SUITE_BY_MODEL_ID = {suite.model_id: suite for suite in list_native_suites()}
 
 
 @dataclass(frozen=True)
 class NativeEvalReportResult:
     report_path: Path
     table_paths: dict[str, Path]
+    rows: list[dict[str, Any]]
+    missing_required_metrics: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class _ArtifactEval:
+    artifact_dir: Path
+    validation: dict[str, Any]
+    bits: str
     rows: list[dict[str, Any]]
 
 
@@ -52,7 +77,7 @@ def _metric_family(row: dict[str, Any]) -> str:
     return "image"
 
 
-def _artifact_rows(artifact_dir: Path) -> list[dict[str, Any]]:
+def _artifact_eval(artifact_dir: Path) -> _ArtifactEval:
     validation = validate_orbitquant_artifact(artifact_dir)
     bits = f"W{validation['weight_bits']}A{validation['activation_bits']}"
     rows = []
@@ -75,7 +100,11 @@ def _artifact_rows(artifact_dir: Path) -> list[dict[str, Any]]:
                 "metadata": metadata,
             }
             rows.append(row)
-    return rows
+    return _ArtifactEval(artifact_dir=artifact_dir, validation=validation, bits=bits, rows=rows)
+
+
+def _artifact_rows(artifact_dir: Path) -> list[dict[str, Any]]:
+    return _artifact_eval(artifact_dir).rows
 
 
 def _write_metric_table(path: Path, rows: list[dict[str, Any]], *, family: str) -> None:
@@ -189,6 +218,93 @@ def _write_asset_table(path: Path, rows: list[dict[str, Any]]) -> None:
                 )
 
 
+def _suite_names_for_artifact(artifact: _ArtifactEval) -> list[str]:
+    row_suites = sorted({row["suite"] for row in artifact.rows if row["suite"]})
+    if row_suites:
+        return row_suites
+    suite = _SUITE_BY_MODEL_ID.get(artifact.validation["source_model_id"])
+    return [] if suite is None else [suite.name]
+
+
+def _metrics_for_suite(
+    rows: list[dict[str, Any]], *, split: str, suite: str, allow_blank_suite: bool
+) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for row in rows:
+        row_suite = row["suite"]
+        if row["split"] != split:
+            continue
+        if row_suite != suite and not (allow_blank_suite and not row_suite):
+            continue
+        metrics.update(row["metrics"])
+    return metrics
+
+
+def _missing_required_metrics(artifacts: list[_ArtifactEval]) -> list[dict[str, Any]]:
+    missing = []
+    for artifact in artifacts:
+        allow_blank_suite = not any(row["suite"] for row in artifact.rows)
+        for suite in _suite_names_for_artifact(artifact):
+            required_metrics = _REQUIRED_METRICS_BY_SUITE.get(suite, ())
+            if not required_metrics:
+                continue
+            for split in ("original", "orbitquant"):
+                metrics = _metrics_for_suite(
+                    artifact.rows,
+                    split=split,
+                    suite=suite,
+                    allow_blank_suite=allow_blank_suite,
+                )
+                for metric in required_metrics:
+                    if metric in metrics:
+                        continue
+                    missing.append(
+                        {
+                            "artifact_dir": str(artifact.artifact_dir),
+                            "source_model_id": artifact.validation["source_model_id"],
+                            "target_group": _target_group(
+                                artifact.validation["source_model_id"]
+                            ),
+                            "bits": artifact.bits,
+                            "split": split,
+                            "suite": suite,
+                            "metric": metric,
+                        }
+                    )
+    return missing
+
+
+def _write_missing_required_metric_table(
+    path: Path, missing_metrics: list[dict[str, Any]]
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "target_group",
+                "model_id",
+                "bits",
+                "split",
+                "suite",
+                "metric",
+                "artifact_dir",
+            ]
+        )
+        for missing in missing_metrics:
+            writer.writerow(
+                [
+                    missing["target_group"],
+                    missing["source_model_id"],
+                    missing["bits"],
+                    missing["split"],
+                    missing["suite"],
+                    missing["metric"],
+                    missing["artifact_dir"],
+                ]
+            )
+
+
 def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
         "| Group | Model | Bits | Split | Suite | Metrics |",
@@ -213,6 +329,29 @@ def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _missing_markdown_table(missing_metrics: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "| Group | Model | Bits | Split | Suite | Missing Metric |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for missing in missing_metrics:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    missing["target_group"],
+                    f"`{missing['source_model_id']}`",
+                    f"`{missing['bits']}`",
+                    missing["split"],
+                    missing["suite"],
+                    missing["metric"],
+                ]
+            )
+            + " |"
+        )
+    return lines
+
+
 def generate_native_eval_report(
     artifact_dirs: list[str | Path],
     output_dir: str | Path,
@@ -225,17 +364,23 @@ def generate_native_eval_report(
     output_path.mkdir(parents=True, exist_ok=True)
     tables_dir = output_path / "tables"
     rows: list[dict[str, Any]] = []
+    artifacts: list[_ArtifactEval] = []
     for artifact_dir in artifact_dirs:
-        rows.extend(_artifact_rows(Path(artifact_dir)))
+        artifact = _artifact_eval(Path(artifact_dir))
+        artifacts.append(artifact)
+        rows.extend(artifact.rows)
 
     image_table = tables_dir / "image_geneval.csv"
     video_table = tables_dir / "video_vbench.csv"
     perf_table = tables_dir / "perf.csv"
     asset_table = tables_dir / "assets.csv"
+    missing_table = tables_dir / "missing_required_metrics.csv"
+    missing_required_metrics = _missing_required_metrics(artifacts)
     _write_metric_table(image_table, rows, family="image")
     _write_metric_table(video_table, rows, family="video")
     _write_perf_table(perf_table, rows)
     _write_asset_table(asset_table, rows)
+    _write_missing_required_metric_table(missing_table, missing_required_metrics)
 
     date_label = report_date or date.today().strftime("%Y%m%d")
     report_path = output_path / f"orbitquant-native-eval-{date_label}.md"
@@ -252,12 +397,21 @@ def generate_native_eval_report(
         "",
         *(_markdown_table(extra_rows) if extra_rows else ["No extra target metrics recorded."]),
         "",
+        "## Missing Required Metrics",
+        "",
+        *(
+            _missing_markdown_table(missing_required_metrics)
+            if missing_required_metrics
+            else ["No required paper-target metrics are missing."]
+        ),
+        "",
         "## Tables",
         "",
         f"- Image GenEval: `{image_table.relative_to(output_path).as_posix()}`",
         f"- Video VBench: `{video_table.relative_to(output_path).as_posix()}`",
         f"- Performance: `{perf_table.relative_to(output_path).as_posix()}`",
         f"- Generated Assets: `{asset_table.relative_to(output_path).as_posix()}`",
+        f"- Missing Required Metrics: `{missing_table.relative_to(output_path).as_posix()}`",
         "",
     ]
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
@@ -268,6 +422,8 @@ def generate_native_eval_report(
             "video_vbench": video_table,
             "perf": perf_table,
             "assets": asset_table,
+            "missing_required_metrics": missing_table,
         },
         rows=rows,
+        missing_required_metrics=missing_required_metrics,
     )
