@@ -100,6 +100,11 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
 
     script = capsys.readouterr().out
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "hf auth whoami" in script
+    assert "hf env" in script
+    assert "torch.cuda.is_available()" in script
+    assert "shutil.disk_usage" in script
+    assert "hf models info Wan-AI/Wan2.1-T2V-1.3B-Diffusers --format json >/dev/null" in script
     assert script.count("orbitquant quantize") == 2
     assert "--suite wan-native" in script
     assert "--weight-bits 4 --activation-bits 6" in script

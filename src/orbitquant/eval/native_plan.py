@@ -55,6 +55,46 @@ def _cmd(parts: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
+def _preflight_lines(suites: list[NativeSuite]) -> list[str]:
+    model_ids = sorted({suite.model_id for suite in suites})
+    lines = [
+        "# Preflight",
+        "hf auth whoami",
+        "hf env",
+        "python - <<'PY'",
+        "import importlib.metadata as metadata",
+        "import shutil",
+        "import sys",
+        "import torch",
+        "",
+        "def version(package):",
+        "    try:",
+        "        return metadata.version(package)",
+        "    except metadata.PackageNotFoundError:",
+        "        return 'not-installed'",
+        "",
+        "print('python=' + sys.version.replace('\\n', ' '))",
+        "print('torch=' + torch.__version__)",
+        "print('diffusers=' + version('diffusers'))",
+        "print('transformers=' + version('transformers'))",
+        "print('accelerate=' + version('accelerate'))",
+        "print('cuda_available=' + str(torch.cuda.is_available()))",
+        "if not torch.cuda.is_available():",
+        "    raise SystemExit('CUDA is required for native GPU evaluation')",
+        "print('cuda_device=' + torch.cuda.get_device_name(0))",
+        "print('disk_free_bytes=' + str(shutil.disk_usage('.').free))",
+        "PY",
+        "",
+        "# Model access",
+    ]
+    lines.extend(
+        _cmd(["hf", "models", "info", model_id, "--format", "json"]) + " >/dev/null"
+        for model_id in model_ids
+    )
+    lines.append("")
+    return lines
+
+
 def build_native_run_script(
     *,
     suites: list[NativeSuite] | None = None,
@@ -73,6 +113,7 @@ def build_native_run_script(
         "set -euo pipefail",
         "",
     ]
+    lines.extend(_preflight_lines(selected_suites))
     for suite in selected_suites:
         for bit_setting in suite.bit_settings:
             weight_bits, activation_bits = _bits(bit_setting)
