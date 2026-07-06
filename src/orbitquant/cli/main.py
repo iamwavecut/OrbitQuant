@@ -21,6 +21,7 @@ from orbitquant.eval.native_runner import (
     run_native_generation,
 )
 from orbitquant.eval.native_settings import get_native_suite
+from orbitquant.eval.prompts import select_prompt_record
 from orbitquant.hub import inspect_model_metadata
 from orbitquant.modeling import quantize_linear_modules
 from orbitquant.pipeline import load_quantized_pipeline_component
@@ -95,7 +96,9 @@ def main(argv: list[str] | None = None) -> int:
 
     generate_parser = subparsers.add_parser("generate", help="run native generation suite")
     generate_parser.add_argument("--suite", required=True)
-    generate_parser.add_argument("--prompt", required=True)
+    generate_parser.add_argument("--prompt")
+    generate_parser.add_argument("--prompt-id")
+    generate_parser.add_argument("--prompt-index", type=int)
     generate_parser.add_argument("--output")
     generate_parser.add_argument("--artifact")
     generate_parser.add_argument("--component", default="transformer")
@@ -220,6 +223,26 @@ def main(argv: list[str] | None = None) -> int:
             model_id = artifact_validation["source_model_id"]
         else:
             model_id = suite.model_id
+        prompt = args.prompt
+        prompt_record = None
+        if args.prompt_id is not None or args.prompt_index is not None:
+            if prompt is not None:
+                raise ValueError("generate accepts either --prompt or a prompt selector, not both")
+            if artifact_path is None:
+                raise ValueError("prompt selection requires --artifact")
+            prompt_payload = json.loads(
+                (artifact_path / "prompts.json").read_text(encoding="utf-8")
+            )
+            prompt_record = select_prompt_record(
+                prompt_payload,
+                prompt_id=args.prompt_id,
+                prompt_index=args.prompt_index,
+            )
+            prompt = prompt_record["prompt"]
+        if prompt is None:
+            raise ValueError(
+                "generate requires --prompt unless a prompt selector is used with --artifact"
+            )
         if artifact_validation is None and args.bit_setting is not None:
             bit_setting = args.bit_setting.upper()
             quantization_config = build_quantization_config_for_suite(
@@ -230,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
                 activation_kernel_backend=args.activation_kernel_backend,
             )
         kwargs = build_pipeline_kwargs(
-            suite, prompt=args.prompt, seed=args.seed, device=args.device
+            suite, prompt=prompt, seed=args.seed, device=args.device
         )
         if args.dry_run:
             payload = {
@@ -239,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
                 "artifact": None if artifact_path is None else str(artifact_path),
                 "component": args.component,
                 "output": str(output_dir),
+                "prompt_record": prompt_record,
                 "device": args.device,
                 "dtype": args.dtype,
                 "quantization_config": None
@@ -274,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         result = run_native_generation(
             pipeline,
             suite,
-            prompt=args.prompt,
+            prompt=prompt,
             seed=args.seed,
             output_dir=output_dir,
             device=args.device,
@@ -298,7 +322,8 @@ def main(argv: list[str] | None = None) -> int:
                 metrics=metrics,
                 metadata={
                     "suite": suite.name,
-                    "prompt": args.prompt,
+                    "prompt": prompt,
+                    "prompt_record": prompt_record,
                     "seed": args.seed,
                     "height": suite.height,
                     "width": suite.width,

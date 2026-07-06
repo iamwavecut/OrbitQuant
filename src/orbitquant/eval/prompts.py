@@ -115,3 +115,25 @@ def default_prompt_payload(target_policy: str) -> dict[str, Any]:
         "target_policy": target_policy,
         "prompts": deepcopy(IMAGE_VISUAL_PROMPTS),
     }
+
+
+def select_prompt_record(
+    payload: dict[str, Any],
+    *,
+    prompt_id: str | None = None,
+    prompt_index: int | None = None,
+) -> dict[str, Any]:
+    if (prompt_id is None) == (prompt_index is None):
+        raise ValueError("provide exactly one prompt selector")
+    prompts = list(payload.get("prompts", []))
+    if prompt_id is not None:
+        for record in prompts:
+            if record.get("id") == prompt_id:
+                return deepcopy(record)
+        raise ValueError(f"prompt id not found: {prompt_id}")
+    assert prompt_index is not None
+    if prompt_index < 0 or prompt_index >= len(prompts):
+        raise ValueError(
+            f"prompt index out of range: {prompt_index}; available prompts: {len(prompts)}"
+        )
+    return deepcopy(prompts[prompt_index])

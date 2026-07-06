@@ -31,8 +31,8 @@ def test_cli_native_suites_lists_no_range_smoke_settings(capsys):
 def test_cli_generate_requires_prompt_and_output():
     try:
         main(["generate", "--suite", "flux2-native"])
-    except SystemExit as exc:
-        assert exc.code != 0
+    except (SystemExit, ValueError) as exc:
+        assert "prompt" in str(exc) or "output" in str(exc) or getattr(exc, "code", 0) != 0
     else:
         raise AssertionError("generate accepted missing prompt/output arguments")
 
@@ -139,6 +139,49 @@ def test_cli_generate_dry_run_uses_artifact_source_and_default_assets_output(cap
     assert output["output"] == str(tmp_path / "assets")
     assert output["quantization_config"]["weight_bits"] == 4
     assert output["quantization_config"]["activation_bits"] == 4
+
+
+def test_cli_generate_dry_run_selects_prompt_from_artifact_pack(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-id",
+                "english-text-rendering",
+                "--device",
+                "cpu",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["prompt_record"]["id"] == "english-text-rendering"
+    assert (
+        output["pipeline_kwargs"]["prompt"]
+        == 'A clean street sign with the exact text "ORBIT QUANT"'
+    )
 
 
 def test_cli_generate_with_artifact_loads_component_and_records_metrics(
