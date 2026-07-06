@@ -1,17 +1,117 @@
-IMAGE_PROMPTS = [
-    "A red ceramic mug on a wooden desk, soft daylight, shallow depth of field",
-    "Two robots playing chess in a quiet library",
-    "Five glass marbles arranged in a straight line on white paper",
-    "A blue cube to the left of a yellow sphere",
-    'A street sign with the exact text "ORBIT QUANT"',
-    'A handwritten note in Cyrillic that says "КВАНТОВАНИЕ"',
-    "A reflective chrome teapot surrounded by orange flowers",
-    "A crowded train platform at sunset, documentary photo style",
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+IMAGE_VISUAL_PROMPTS = [
+    {
+        "id": "simple-object",
+        "category": "simple_object",
+        "prompt": "A red ceramic mug on a wooden desk, soft daylight, shallow depth of field",
+    },
+    {
+        "id": "two-object-composition",
+        "category": "two_object_composition",
+        "prompt": "Two robots playing chess in a quiet library, one silver and one matte black",
+    },
+    {
+        "id": "counting",
+        "category": "counting",
+        "prompt": "Five glass marbles arranged in a straight line on white paper",
+    },
+    {
+        "id": "color-binding",
+        "category": "color_binding",
+        "prompt": "A blue cube beside a yellow sphere and a green pyramid on a gray table",
+    },
+    {
+        "id": "spatial-relationship",
+        "category": "spatial_relationship",
+        "prompt": "A blue cube to the left of a yellow sphere, both centered in the frame",
+    },
+    {
+        "id": "long-prompt",
+        "category": "long_prompt",
+        "prompt": (
+            "A precise editorial photo of a compact robotics workbench with labeled tools, "
+            "a small oscilloscope, coiled cables, a half-assembled drone, and a warm desk lamp; "
+            "the scene should remain readable without clutter"
+        ),
+    },
+    {
+        "id": "english-text-rendering",
+        "category": "text_rendering",
+        "prompt": 'A clean street sign with the exact text "ORBIT QUANT"',
+    },
+    {
+        "id": "cyrillic-text-rendering",
+        "category": "text_rendering",
+        "prompt": 'A handwritten note in Cyrillic that says "КВАНТОВАНИЕ"',
+    },
+    {
+        "id": "style-heavy",
+        "category": "style",
+        "prompt": (
+            "A crowded train platform at sunset, documentary photo style, high dynamic range, "
+            "natural grain, realistic faces, detailed architecture"
+        ),
+    },
+    {
+        "id": "occlusion-reflection",
+        "category": "occlusion_reflection",
+        "prompt": (
+            "A reflective chrome teapot partly hidden behind orange flowers, with the room "
+            "visible as a coherent reflection on the metal"
+        ),
+    },
 ]
 
-VIDEO_PROMPTS = [
-    "A slow camera pan across a quiet mountain lake at sunrise",
-    "A red sports car driving through rain at night, reflections on the road",
-    "A person walking across a snowy field while the camera stays fixed",
-    "A small boat moving steadily across calm water, consistent background",
+VIDEO_VISUAL_PROMPTS = [
+    {
+        "id": "simple-motion",
+        "category": "simple_motion",
+        "prompt": "A small boat moving steadily across calm water, consistent background",
+    },
+    {
+        "id": "subject-consistency",
+        "category": "subject_consistency",
+        "prompt": (
+            "A person in a red coat walking across a snowy field while the camera stays fixed"
+        ),
+    },
+    {
+        "id": "camera-movement",
+        "category": "camera_movement",
+        "prompt": "A slow camera pan across a quiet mountain lake at sunrise",
+    },
+    {
+        "id": "scene-consistency",
+        "category": "scene_consistency",
+        "prompt": "A red sports car driving through rain at night, reflections on the road",
+    },
+    {
+        "id": "text-rendering",
+        "category": "text_rendering",
+        "prompt": 'A neon sign with the exact text "ORBIT" while the camera slowly moves forward',
+    },
 ]
+
+IMAGE_PROMPTS = [item["prompt"] for item in IMAGE_VISUAL_PROMPTS]
+VIDEO_PROMPTS = [item["prompt"] for item in VIDEO_VISUAL_PROMPTS]
+
+
+def default_prompt_payload(target_policy: str) -> dict[str, Any]:
+    normalized_policy = target_policy.lower()
+    if normalized_policy == "wan":
+        return {
+            "prompt_pack": "video_visual_v1",
+            "media_type": "video",
+            "target_policy": target_policy,
+            "prompts": deepcopy(VIDEO_VISUAL_PROMPTS),
+        }
+    return {
+        "prompt_pack": "image_visual_v1",
+        "media_type": "image",
+        "target_policy": target_policy,
+        "prompts": deepcopy(IMAGE_VISUAL_PROMPTS),
+    }

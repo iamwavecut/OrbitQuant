@@ -11,6 +11,7 @@ from orbitquant.artifacts.checksums import sha256_file, write_sha256sums
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.eval.prompts import default_prompt_payload
 from orbitquant.layers import OrbitQuantLinear
 
 
@@ -77,7 +78,10 @@ def save_orbitquant_artifact(
     config_path = output_path / "quantization_config.json"
     config_path.write_text(json.dumps(config.to_dict(), indent=2) + "\n", encoding="utf-8")
     prompts_path = output_path / "prompts.json"
-    prompts_path.write_text(json.dumps({"prompts": []}, indent=2) + "\n", encoding="utf-8")
+    prompts_path.write_text(
+        json.dumps(default_prompt_payload(config.target_policy), indent=2) + "\n",
+        encoding="utf-8",
+    )
     benchmark_path = output_path / "benchmark" / "summary.json"
     benchmark_path.parent.mkdir(parents=True, exist_ok=True)
     benchmark_summary = {

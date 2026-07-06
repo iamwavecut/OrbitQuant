@@ -73,7 +73,22 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
     rotation_tensors = load_file(tmp_path / "orbitquant_rotations.safetensors")
     assert any(name.endswith("packed_weight_indices") for name in tensors)
-    assert prompts == {"prompts": []}
+    assert prompts["prompt_pack"] == "image_visual_v1"
+    assert prompts["media_type"] == "image"
+    assert len(prompts["prompts"]) >= 10
+    assert {item["id"] for item in prompts["prompts"]} >= {
+        "simple-object",
+        "two-object-composition",
+        "counting",
+        "color-binding",
+        "spatial-relationship",
+        "long-prompt",
+        "english-text-rendering",
+        "cyrillic-text-rendering",
+        "style-heavy",
+        "occlusion-reflection",
+    }
+    assert any("КВАНТОВАНИЕ" in item["prompt"] for item in prompts["prompts"])
     assert benchmark_summary["status"] == "not_run"
     assert benchmark_summary["source_model_id"] == "example/model"
     assert (tmp_path / "benchmark" / "original.metrics.jsonl").read_text() == ""
