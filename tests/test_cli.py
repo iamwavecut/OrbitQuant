@@ -51,3 +51,34 @@ def test_cli_generate_dry_run_prints_native_request(capsys, tmp_path):
     assert "black-forest-labs/FLUX.2-klein-4B" in output
     assert '"height": 1024' in output
     assert '"width": 1024' in output
+
+
+def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "wan-native",
+                "--prompt",
+                "A native prompt",
+                "--output",
+                str(tmp_path),
+                "--seed",
+                "9",
+                "--device",
+                "cpu",
+                "--bit-setting",
+                "W4A6",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"height": 480' in output
+    assert '"width": 832' in output
+    assert '"weight_bits": 4' in output
+    assert '"activation_bits": 6' in output
+    assert '"target_policy": "wan"' in output

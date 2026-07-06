@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
 
+from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
+from orbitquant.modeling import QuantizationSummary, quantize_linear_modules
+
+_BIT_SETTING_RE = re.compile(r"^W(?P<weight>\d+)A(?P<activation>\d+)$")
+_TARGET_POLICY_BY_SUITE = {
+    "flux2-native": "flux2",
+    "flux1-schnell-native": "flux",
+    "z-image-native": "z_image",
+    "wan-native": "wan",
+}
 
 
 @dataclass(frozen=True)
@@ -41,15 +52,61 @@ def build_pipeline_kwargs(
     return kwargs
 
 
+def parse_bit_setting(bit_setting: str) -> tuple[int, int]:
+    match = _BIT_SETTING_RE.match(bit_setting)
+    if match is None:
+        raise ValueError("bit_setting must use the form W<weight_bits>A<activation_bits>")
+    return int(match.group("weight")), int(match.group("activation"))
+
+
+def build_quantization_config_for_suite(
+    suite: NativeSuite,
+    bit_setting: str,
+    *,
+    rotation_seed: int = 0,
+    runtime_mode: str = "dequant_bf16",
+) -> OrbitQuantConfig:
+    normalized = bit_setting.upper()
+    if normalized not in suite.bit_settings:
+        raise ValueError(
+            f"bit setting {normalized!r} is not listed for native suite {suite.name!r}"
+        )
+    weight_bits, activation_bits = parse_bit_setting(normalized)
+    return OrbitQuantConfig(
+        weight_bits=weight_bits,
+        activation_bits=activation_bits,
+        rotation_seed=rotation_seed,
+        runtime_mode=runtime_mode,
+        target_policy=_TARGET_POLICY_BY_SUITE.get(suite.name, "auto"),
+    )
+
+
+def apply_quantization_to_pipeline(
+    pipeline: Any, suite: NativeSuite, config: OrbitQuantConfig
+) -> QuantizationSummary:
+    transformer = getattr(pipeline, "transformer", None)
+    if transformer is None:
+        raise ValueError(
+            f"native suite {suite.name!r} expects a pipeline with a transformer component"
+        )
+    return quantize_linear_modules(transformer, config)
+
+
 def output_path_for_suite(
-    output_dir: str | Path, *, suite_name: str, seed: int, media_type: str
+    output_dir: str | Path,
+    *,
+    suite_name: str,
+    seed: int,
+    media_type: str,
+    variant: str | None = None,
 ) -> Path:
     suffixes = {"image": ".png", "video": ".mp4"}
     try:
         suffix = suffixes[media_type]
     except KeyError as exc:
         raise ValueError(f"unknown media_type {media_type!r}") from exc
-    return Path(output_dir) / f"{suite_name}_seed{seed}{suffix}"
+    variant_suffix = "" if variant is None else f"_{variant}"
+    return Path(output_dir) / f"{suite_name}_seed{seed}{variant_suffix}{suffix}"
 
 
 def _extract_image(output: Any) -> Any:
@@ -71,12 +128,19 @@ def run_native_generation(
     seed: int,
     output_dir: str | Path,
     device: str | torch.device,
+    quantization_config: OrbitQuantConfig | None = None,
+    quantization_summary: QuantizationSummary | None = None,
+    quantization_label: str | None = None,
 ) -> NativeGenerationResult:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
     is_video = suite.frames is not None
     output_path = output_path_for_suite(
-        output_root, suite_name=suite.name, seed=seed, media_type="video" if is_video else "image"
+        output_root,
+        suite_name=suite.name,
+        seed=seed,
+        media_type="video" if is_video else "image",
+        variant=quantization_label,
     )
     kwargs = build_pipeline_kwargs(suite, prompt=prompt, seed=seed, device=device)
     output = pipeline(**kwargs)
@@ -108,6 +172,18 @@ def run_native_generation(
         "steps": suite.steps,
         "guidance": suite.guidance,
         "bit_settings": suite.bit_settings,
+        "quantization": None
+        if quantization_config is None
+        else {
+            "config": quantization_config.to_dict(),
+            "summary": None
+            if quantization_summary is None
+            else {
+                "quantized_modules": quantization_summary.quantized_modules,
+                "adaln_modules": quantization_summary.adaln_modules,
+                "skipped_modules": quantization_summary.skipped_modules,
+            },
+        },
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return NativeGenerationResult(output_path=output_path, metadata_path=metadata_path)
