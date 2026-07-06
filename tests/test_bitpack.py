@@ -14,6 +14,16 @@ def test_lowbit_pack_unpack_round_trips_supported_widths():
         assert torch.equal(unpacked, values)
 
 
+def test_lowbit_pack_unpack_round_trips_large_vectorized_path():
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    values = torch.randint(0, 8, (100_003,), generator=generator, dtype=torch.uint8)
+
+    packed = pack_lowbit(values, bits=3)
+    unpacked = unpack_lowbit(packed, bits=3, length=values.numel())
+
+    assert torch.equal(unpacked, values)
+
+
 def test_lowbit_unpack_rejects_values_that_do_not_fit_bits():
     values = torch.tensor([0, 1, 2, 4], dtype=torch.uint8)
 
