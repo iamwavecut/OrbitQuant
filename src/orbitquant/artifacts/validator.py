@@ -13,6 +13,7 @@ from orbitquant.config import OrbitQuantConfig
 _REQUIRED_ARTIFACT_FILES = (
     "README.md",
     "SHA256SUMS",
+    "model_index.json",
     "model.safetensors",
     "quantization_config.json",
     "orbitquant_manifest.json",

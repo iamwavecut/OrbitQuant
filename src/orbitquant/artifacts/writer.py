@@ -55,6 +55,34 @@ def _rotation_tensors(model: torch.nn.Module) -> dict[str, torch.Tensor]:
     return tensors
 
 
+def _model_index_payload(
+    *,
+    config: OrbitQuantConfig,
+    source_model_id: str,
+    source_revision: str,
+    source_license: str,
+) -> dict[str, Any]:
+    return {
+        "_class_name": "OrbitQuantComponentArtifact",
+        "artifact_format": "orbitquant-v1",
+        "quant_method": "orbitquant",
+        "source_model_id": source_model_id,
+        "source_revision": source_revision,
+        "source_license": source_license,
+        "component": "transformer",
+        "weight_name": "model.safetensors",
+        "quantization_config": "quantization_config.json",
+        "manifest": "orbitquant_manifest.json",
+        "codebooks": "orbitquant_codebooks.safetensors",
+        "rotations": "orbitquant_rotations.safetensors",
+        "weight_bits": config.weight_bits,
+        "activation_bits": config.activation_bits,
+        "target_policy": config.target_policy,
+        "runtime_mode": config.runtime_mode,
+        "activation_kernel_backend": config.activation_kernel_backend,
+    }
+
+
 def save_orbitquant_artifact(
     model: torch.nn.Module,
     output_dir: str | Path,
@@ -77,6 +105,20 @@ def save_orbitquant_artifact(
     save_file(_rotation_tensors(model), rotation_path)
     config_path = output_path / "quantization_config.json"
     config_path.write_text(json.dumps(config.to_dict(), indent=2) + "\n", encoding="utf-8")
+    model_index_path = output_path / "model_index.json"
+    model_index_path.write_text(
+        json.dumps(
+            _model_index_payload(
+                config=config,
+                source_model_id=source_model_id,
+                source_revision=source_revision,
+                source_license=source_license,
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     prompts_path = output_path / "prompts.json"
     prompts_path.write_text(
         json.dumps(default_prompt_payload(config.target_policy), indent=2) + "\n",
@@ -113,6 +155,7 @@ def save_orbitquant_artifact(
         "orbitquant_codebooks.safetensors": sha256_file(codebook_path),
         "orbitquant_rotations.safetensors": sha256_file(rotation_path),
         "quantization_config.json": sha256_file(config_path),
+        "model_index.json": sha256_file(model_index_path),
         "prompts.json": sha256_file(prompts_path),
         "benchmark/summary.json": sha256_file(benchmark_path),
         "benchmark/original.metrics.jsonl": sha256_file(original_metrics_jsonl_path),

@@ -42,11 +42,21 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     )
 
     manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    model_index = json.loads((tmp_path / "model_index.json").read_text())
     tensors = load_file(tmp_path / "model.safetensors")
 
     assert manifest["artifact_format"] == "orbitquant-v1"
+    assert model_index["_class_name"] == "OrbitQuantComponentArtifact"
+    assert model_index["quant_method"] == "orbitquant"
+    assert model_index["source_model_id"] == "example/model"
+    assert model_index["source_revision"] == "abc123"
+    assert model_index["component"] == "transformer"
+    assert model_index["weight_name"] == "model.safetensors"
+    assert model_index["quantization_config"] == "quantization_config.json"
+    assert model_index["manifest"] == "orbitquant_manifest.json"
     assert manifest["source_model_id"] == "example/model"
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
+    assert "model_index.json" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
     assert "prompts.json" in {path.name for path in tmp_path.iterdir()}
     assert (tmp_path / "benchmark" / "summary.json").is_file()
@@ -59,6 +69,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     )
     assert "orbitquant_codebooks.safetensors" in manifest["checksums"]
     assert "orbitquant_rotations.safetensors" in manifest["checksums"]
+    assert "model_index.json" in manifest["checksums"]
     assert "prompts.json" in manifest["checksums"]
     assert "benchmark/summary.json" in manifest["checksums"]
     assert (tmp_path / "benchmark" / "original.metrics.jsonl").is_file()
@@ -149,6 +160,7 @@ def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path
     assert "benchmark/original.metrics.csv" in result["required_files"]
     assert "benchmark/orbitquant.metrics.csv" in result["required_files"]
     assert "assets/.gitkeep" in result["required_files"]
+    assert "model_index.json" in result["required_files"]
 
 
 def test_record_artifact_metrics_keeps_manifest_and_sha256sums_valid(tmp_path):
