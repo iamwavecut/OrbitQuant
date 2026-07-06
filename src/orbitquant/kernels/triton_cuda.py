@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from orbitquant.codebooks import LloydMaxCodebook
+from orbitquant.rotations import RPBHRotation
 
 
 def _load_triton():
@@ -96,6 +97,84 @@ def _pack_lowbit_kernel(
         source_bits = (values.to(tl.uint32) >> value_bit_offsets) & 1
         packed |= source_bits << bit_id
     tl.store(packed_ptr + byte_offsets, packed.to(tl.uint8), mask=mask)
+
+
+@triton.jit
+def _permute_sign_weight_kernel(
+    weight_ptr,
+    permutation_ptr,
+    signs_ptr,
+    work_ptr,
+    total: tl.constexpr,
+    in_features: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = offsets < total
+    rows = offsets // in_features
+    cols = offsets % in_features
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
+    values = tl.load(
+        weight_ptr + rows * in_features + source_cols,
+        mask=mask,
+        other=0.0,
+    ).to(tl.float32)
+    tl.store(work_ptr + offsets, values * signs, mask=mask)
+
+
+@triton.jit
+def _fwht_stage_weight_kernel(
+    work_ptr,
+    total_pairs: tl.constexpr,
+    in_features: tl.constexpr,
+    num_blocks: tl.constexpr,
+    orbit_block_size: tl.constexpr,
+    stage_width: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    pair_offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = pair_offsets < total_pairs
+    pairs_per_orbit_block: tl.constexpr = orbit_block_size // 2
+    row_block = pair_offsets // pairs_per_orbit_block
+    pair_in_orbit_block = pair_offsets % pairs_per_orbit_block
+    rows = row_block // num_blocks
+    orbit_blocks = row_block % num_blocks
+    groups = pair_in_orbit_block // stage_width
+    inner = pair_in_orbit_block % stage_width
+    left_cols = orbit_blocks * orbit_block_size + groups * (stage_width * 2) + inner
+    right_cols = left_cols + stage_width
+    left_offsets = rows * in_features + left_cols
+    right_offsets = rows * in_features + right_cols
+    left = tl.load(work_ptr + left_offsets, mask=mask, other=0.0).to(tl.float32)
+    right = tl.load(work_ptr + right_offsets, mask=mask, other=0.0).to(tl.float32)
+    tl.store(work_ptr + left_offsets, left + right, mask=mask)
+    tl.store(work_ptr + right_offsets, left - right, mask=mask)
+
+
+@triton.jit
+def _quantize_rotated_weight_indices_kernel(
+    work_ptr,
+    row_norms_ptr,
+    boundaries_ptr,
+    indices_ptr,
+    total: tl.constexpr,
+    in_features: tl.constexpr,
+    levels: tl.constexpr,
+    inv_sqrt_block: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = offsets < total
+    rows = offsets // in_features
+    norms = tl.load(row_norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
+    values = tl.load(work_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    values = values * inv_sqrt_block / norms
+    indices = tl.zeros((block_size,), dtype=tl.int32)
+    for idx in tl.static_range(0, levels - 1):
+        boundary = tl.load(boundaries_ptr + idx)
+        indices += (values > boundary).to(tl.int32)
+    tl.store(indices_ptr + offsets, indices.to(tl.uint8), mask=mask)
 
 
 def quantize_rotated_activations_with_triton(
@@ -194,3 +273,71 @@ def pack_lowbit_with_triton(values: torch.Tensor, *, bits: int) -> torch.Tensor:
         block_size=block_size,
     )
     return packed
+
+
+def quantize_weight_indices_with_triton(
+    weight: torch.Tensor,
+    row_norms: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook: LloydMaxCodebook,
+) -> torch.Tensor:
+    if not weight.is_cuda:
+        raise RuntimeError("triton_cuda weight quantization requires CUDA tensors")
+    if weight.ndim != 2:
+        raise ValueError("weight must be a rank-2 tensor")
+    if weight.shape[-1] != rotation.dim:
+        raise ValueError(f"expected in_features {rotation.dim}, got {weight.shape[-1]}")
+
+    triton, _ = _load_triton()
+    out_features, in_features = weight.shape
+    total = out_features * in_features
+    weight_fp32 = weight.to(dtype=torch.float32).contiguous()
+    norms = row_norms.to(device=weight.device, dtype=torch.float32).contiguous()
+    permutation = rotation.permutation.to(device=weight.device, dtype=torch.int64).contiguous()
+    signs = rotation.signs.to(device=weight.device, dtype=torch.int8).contiguous()
+    boundaries = codebook.boundaries.to(device=weight.device, dtype=torch.float32).contiguous()
+    work = torch.empty(total, device=weight.device, dtype=torch.float32)
+    indices = torch.empty(total, device=weight.device, dtype=torch.uint8)
+    if total == 0:
+        return indices.reshape(out_features, in_features)
+
+    element_block_size = 256
+    _permute_sign_weight_kernel[(triton.cdiv(total, element_block_size),)](
+        weight_fp32,
+        permutation,
+        signs,
+        work,
+        total=total,
+        in_features=in_features,
+        block_size=element_block_size,
+    )
+
+    orbit_block_size = int(rotation.block_size)
+    num_blocks = int(rotation.num_blocks)
+    total_pairs = out_features * num_blocks * (orbit_block_size // 2)
+    stage_width = 1
+    while stage_width < orbit_block_size:
+        _fwht_stage_weight_kernel[(triton.cdiv(total_pairs, element_block_size),)](
+            work,
+            total_pairs=total_pairs,
+            in_features=in_features,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+        stage_width *= 2
+
+    _quantize_rotated_weight_indices_kernel[(triton.cdiv(total, element_block_size),)](
+        work,
+        norms,
+        boundaries,
+        indices,
+        total=total,
+        in_features=in_features,
+        levels=codebook.centroids.numel(),
+        inv_sqrt_block=float(rotation.normalization),
+        block_size=element_block_size,
+    )
+    return indices.reshape(out_features, in_features)

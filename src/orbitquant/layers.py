@@ -15,6 +15,28 @@ def _packed_length(value_count: int, bits: int) -> int:
     return (value_count * bits + 7) // 8
 
 
+def _quantize_weight_indices(
+    weight: torch.Tensor,
+    row_norms: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook,
+) -> torch.Tensor:
+    if weight.is_cuda:
+        from orbitquant.kernels.triton_cuda import quantize_weight_indices_with_triton
+
+        return quantize_weight_indices_with_triton(
+            weight,
+            row_norms,
+            rotation=rotation,
+            codebook=codebook,
+        )
+
+    rotated_weight = rotation.apply_to_weight(weight)
+    unit_weight = rotated_weight / row_norms[:, None]
+    return codebook.quantize_indices(unit_weight)
+
+
 class OrbitQuantLinear(nn.Module):
     """Linear layer with OrbitQuant-packed rotated weights.
 
@@ -82,9 +104,9 @@ class OrbitQuantLinear(nn.Module):
         rotation = RPBHRotation(
             dim=layer.in_features, seed=config.rotation_seed, block_size=config.block_size
         )
-        rotated_weight = rotation.apply_to_weight(weight)
 
         if config.runtime_mode == "debug_no_quant":
+            rotated_weight = rotation.apply_to_weight(weight)
             return cls(
                 in_features=layer.in_features,
                 out_features=layer.out_features,
@@ -96,10 +118,14 @@ class OrbitQuantLinear(nn.Module):
                 debug_weight=rotated_weight,
             )
 
-        row_norms = rotated_weight.norm(dim=-1).clamp_min(config.activation_eps)
-        unit_weight = rotated_weight / row_norms[:, None]
+        row_norms = weight.norm(dim=-1).clamp_min(config.activation_eps)
         codebook = get_codebook(layer.in_features, config.weight_bits)
-        weight_indices = codebook.quantize_indices(unit_weight)
+        weight_indices = _quantize_weight_indices(
+            weight,
+            row_norms,
+            rotation=rotation,
+            codebook=codebook,
+        )
         packed = pack_lowbit(weight_indices, bits=config.weight_bits)
 
         return cls(

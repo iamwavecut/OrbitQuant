@@ -43,6 +43,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized_stage": None,
             "weight_dequant_optimized": False,
             "weight_pack_optimized": False,
+            "weight_quant_optimized": False,
             "device_types": ["cpu"],
             "implementation": "torch_reference",
             "notes": "Correctness baseline using the reference PyTorch path.",
@@ -54,6 +55,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized_stage": "codebook_lookup_rescale" if mps_optimized else None,
             "weight_dequant_optimized": mps_optimized,
             "weight_pack_optimized": False,
+            "weight_quant_optimized": False,
             "device_types": ["mps"],
             "implementation": "metal_codebook_rescale" if mps_optimized else "torch_reference_mps",
             "notes": (
@@ -70,14 +72,19 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "available": bool(available["triton_cuda"]),
             "optimized": bool(available["triton_cuda"]),
             "full_fusion": False,
-            "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant,lowbit_pack",
+            "optimized_stage": (
+                "codebook_lookup_rescale,packed_weight_dequant,"
+                "lowbit_pack,weight_rotation_fwht_quant"
+            ),
             "weight_dequant_optimized": bool(available["triton_cuda"]),
             "weight_pack_optimized": bool(available["triton_cuda"]),
+            "weight_quant_optimized": bool(available["triton_cuda"]),
             "device_types": ["cuda"],
             "implementation": "triton_codebook_rescale",
             "notes": (
-                "Norm and RPBH rotation still run in PyTorch; Triton handles codebook "
-                "lookup, norm rescale, packed weight dequant, and offline low-bit pack."
+                "Activation norm and RPBH rotation still run in PyTorch; Triton handles "
+                "runtime codebook lookup, packed weight dequant, offline low-bit pack, "
+                "and offline weight RPBH/FWHT codebook indexing."
             ),
         },
     }
