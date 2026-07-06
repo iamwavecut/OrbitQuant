@@ -6,7 +6,7 @@ from torch.nn import functional as F
 
 from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.functional import quantize_activations
+from orbitquant.kernels import quantize_activations_kernel
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation
 
@@ -131,7 +131,7 @@ class OrbitQuantLinear(nn.Module):
             norms = work.norm(dim=-1, keepdim=True).clamp_min(self.activation_eps)
             rotated_x = (self.rotation.apply_to_activations(work / norms) * norms).to(x.dtype)
         else:
-            rotated_x = quantize_activations(
+            rotated_x = quantize_activations_kernel(
                 x,
                 rotation=self.rotation,
                 codebook=self.activation_codebook,
