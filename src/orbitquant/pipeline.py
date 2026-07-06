@@ -54,6 +54,7 @@ def save_quantized_pipeline_component(
         source_revision=source_revision,
         source_license=source_license,
         summary=summary,
+        component=component,
     )
 
 

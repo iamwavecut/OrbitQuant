@@ -387,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
             source_revision=metadata.get("sha") or args.revision or "unknown",
             source_license=metadata.get("license") or "unknown",
             summary=summary,
+            component=args.component,
         )
         print(
             json.dumps(

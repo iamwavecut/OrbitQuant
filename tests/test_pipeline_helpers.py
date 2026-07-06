@@ -1,3 +1,5 @@
+import json
+
 import torch
 
 from orbitquant import OrbitQuantConfig
@@ -13,6 +15,10 @@ class TinyPipeline:
     def __init__(self):
         self.transformer = torch.nn.Module()
         self.transformer.transformer_blocks = torch.nn.ModuleList(
+            [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+        )
+        self.denoiser = torch.nn.Module()
+        self.denoiser.transformer_blocks = torch.nn.ModuleList(
             [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
         )
 
@@ -46,6 +52,26 @@ def test_save_quantized_pipeline_component_writes_artifact(tmp_path):
     assert manifest.source_model_id == "example/model"
     assert (tmp_path / "model.safetensors").is_file()
     assert (tmp_path / "orbitquant_manifest.json").is_file()
+
+
+def test_save_quantized_pipeline_component_records_component_in_model_index(tmp_path):
+    pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(pipeline, config, component="denoiser")
+
+    save_quantized_pipeline_component(
+        pipeline,
+        tmp_path,
+        config=config,
+        component="denoiser",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    model_index = json.loads((tmp_path / "model_index.json").read_text())
+    assert model_index["component"] == "denoiser"
 
 
 def test_load_quantized_pipeline_component_restores_saved_component_artifact(tmp_path):

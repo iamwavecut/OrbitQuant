@@ -61,6 +61,7 @@ def _model_index_payload(
     source_model_id: str,
     source_revision: str,
     source_license: str,
+    component: str,
 ) -> dict[str, Any]:
     return {
         "_class_name": "OrbitQuantComponentArtifact",
@@ -69,7 +70,7 @@ def _model_index_payload(
         "source_model_id": source_model_id,
         "source_revision": source_revision,
         "source_license": source_license,
-        "component": "transformer",
+        "component": component,
         "weight_name": "model.safetensors",
         "quantization_config": "quantization_config.json",
         "manifest": "orbitquant_manifest.json",
@@ -92,6 +93,7 @@ def save_orbitquant_artifact(
     source_revision: str,
     source_license: str,
     summary: Any,
+    component: str = "transformer",
 ) -> OrbitQuantManifest:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -113,6 +115,7 @@ def save_orbitquant_artifact(
                 source_model_id=source_model_id,
                 source_revision=source_revision,
                 source_license=source_license,
+                component=component,
             ),
             indent=2,
         )
