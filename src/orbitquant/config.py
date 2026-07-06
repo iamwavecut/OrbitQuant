@@ -20,6 +20,12 @@ _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
 _SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}
 
 
+class _QuantMethodName(str):
+    @property
+    def value(self) -> str:
+        return str(self)
+
+
 @dataclass
 class OrbitQuantConfig(QuantizationConfigMixin):
     """Serializable OrbitQuant configuration.
@@ -57,6 +63,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError(f"activation_bits must be one of {sorted(_SUPPORTED_BITS)}")
         if self.quant_method != "orbitquant":
             raise ValueError("quant_method must be 'orbitquant'")
+        self.quant_method = _QuantMethodName(self.quant_method)
         if self.rotation != "rpbh":
             raise ValueError("only RPBH rotation is implemented")
         if self.codebook != "lloyd_max":
