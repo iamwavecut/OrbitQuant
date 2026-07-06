@@ -6,15 +6,18 @@ from orbitquant.eval.prompts import (
     default_prompt_payload,
     select_prompt_record,
 )
+from orbitquant.eval.report import NativeEvalReportResult, generate_native_eval_report
 
 __all__ = [
     "IMAGE_PROMPTS",
+    "NativeEvalReportResult",
     "VIDEO_PROMPTS",
     "NativeSuite",
     "create_image_comparison_sheet",
     "create_video_contact_sheet",
     "default_prompt_payload",
     "get_native_suite",
+    "generate_native_eval_report",
     "list_native_suites",
     "select_prompt_record",
 ]

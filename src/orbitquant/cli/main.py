@@ -23,6 +23,7 @@ from orbitquant.eval.native_runner import (
 )
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.eval.prompts import select_prompt_record
+from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import inspect_model_metadata
 from orbitquant.modeling import quantize_linear_modules
 from orbitquant.pipeline import load_quantized_pipeline_component
@@ -102,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         "validate-artifact", help="validate an OrbitQuant artifact"
     )
     validate_parser.add_argument("--artifact", required=True)
+
+    report_parser = subparsers.add_parser("report", help="write a native eval report")
+    report_parser.add_argument("--artifact", action="append", required=True)
+    report_parser.add_argument("--output", required=True)
+    report_parser.add_argument("--date")
 
     generate_parser = subparsers.add_parser("generate", help="run native generation suite")
     generate_parser.add_argument("--suite", required=True)
@@ -190,6 +196,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate-artifact":
         print(json.dumps(validate_orbitquant_artifact(args.artifact)))
+        return 0
+    if args.command == "report":
+        result = generate_native_eval_report(
+            args.artifact,
+            args.output,
+            report_date=args.date,
+        )
+        print(
+            json.dumps(
+                {
+                    "report_path": str(result.report_path),
+                    "tables": {key: str(value) for key, value in result.table_paths.items()},
+                    "artifact_count": len(args.artifact),
+                    "row_count": len(result.rows),
+                }
+            )
+        )
         return 0
     if args.command == "generate":
         suite = get_native_suite(args.suite)
