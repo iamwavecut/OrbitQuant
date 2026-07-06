@@ -17,6 +17,7 @@ except Exception:
 _SUPPORTED_BITS = {2, 3, 4, 6, 8}
 _SUPPORTED_RUNTIME_MODES = {"dequant_bf16", "debug_no_quant", "debug_no_activation_quant"}
 _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
+_SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}
 
 
 @dataclass
@@ -67,6 +68,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
                 "activation_kernel_backend must be one of "
                 f"{sorted(_SUPPORTED_ACTIVATION_KERNEL_BACKENDS)}"
             )
+        if self.target_policy not in _SUPPORTED_TARGET_POLICIES:
+            raise ValueError(f"target_policy must be one of {sorted(_SUPPORTED_TARGET_POLICIES)}")
         if self.adaln_group_size <= 0:
             raise ValueError("adaln_group_size must be positive")
 

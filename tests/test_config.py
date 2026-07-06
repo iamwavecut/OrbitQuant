@@ -36,3 +36,12 @@ def test_orbit_quant_config_rejects_invalid_activation_kernel_backend():
         assert "activation_kernel_backend" in str(exc)
     else:
         raise AssertionError("invalid activation_kernel_backend was accepted")
+
+
+def test_orbit_quant_config_rejects_unknown_target_policy():
+    try:
+        OrbitQuantConfig(target_policy="flxu")
+    except ValueError as exc:
+        assert "target_policy" in str(exc)
+    else:
+        raise AssertionError("unknown target_policy was accepted")
