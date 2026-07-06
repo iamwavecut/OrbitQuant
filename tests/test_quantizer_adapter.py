@@ -106,6 +106,12 @@ def test_on_the_fly_quantizer_quantizes_after_weight_loading_only():
 
     quantizer._process_model_before_weight_loading(model)
     assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], torch.nn.Linear)
+    assert not quantizer.check_if_quantized_param(
+        model,
+        model.transformer_blocks[0]["attn"]["to_q"].weight,
+        "transformer_blocks.0.attn.to_q.weight",
+        {},
+    )
 
     quantizer._process_model_after_weight_loading(model)
     assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)

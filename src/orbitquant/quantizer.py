@@ -76,10 +76,21 @@ class OrbitQuantizer(*_hf_base_classes()):
         *args: Any,
         **kwargs: Any,
     ) -> bool:
+        if not self.pre_quantized:
+            return False
         return self.param_needs_quantization(model, param_name)
 
     def check_quantized_param(self, *args: Any, **kwargs: Any) -> bool:
         return self.check_if_quantized_param(*args, **kwargs)
+
+    def create_quantized_param(self, *args: Any, **kwargs: Any) -> None:
+        msg = (
+            "OrbitQuant does not create quantized tensors during HF streaming "
+            "weight loading. Use pre_quantized=True to load packed OrbitQuant "
+            "buffers into prepared module skeletons, or pre_quantized=False to "
+            "load full precision weights and quantize after loading."
+        )
+        raise RuntimeError(msg)
 
     @property
     def is_trainable(self) -> bool:
