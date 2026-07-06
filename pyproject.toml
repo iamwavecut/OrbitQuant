@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orbitquant"
+version = "0.1.0"
+description = "Clean-room OrbitQuant implementation for diffusion transformers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "WaveCut" }]
+dependencies = [
+  "huggingface_hub>=0.33",
+  "numpy>=2.0",
+  "packaging>=24.0",
+  "safetensors>=0.5",
+  "torch>=2.5",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+hf = [
+  "accelerate>=1.8",
+  "diffusers>=0.35",
+  "transformers>=4.53",
+]
+eval = [
+  "imageio>=2.37",
+  "imageio-ffmpeg>=0.6",
+  "pillow>=11.0",
+]
+dev = [
+  "pytest>=8.4",
+  "pytest-xdist>=3.8",
+  "ruff>=0.12",
+]
+
+[project.scripts]
+orbitquant = "orbitquant.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orbitquant"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
