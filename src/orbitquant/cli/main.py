@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 import torch
 
 from orbitquant import __version__
-from orbitquant.artifacts import save_orbitquant_artifact, validate_orbitquant_artifact
+from orbitquant.artifacts import (
+    record_artifact_metrics,
+    save_orbitquant_artifact,
+    validate_orbitquant_artifact,
+)
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.native_runner import (
@@ -18,6 +23,7 @@ from orbitquant.eval.native_runner import (
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.hub import inspect_model_metadata
 from orbitquant.modeling import quantize_linear_modules
+from orbitquant.pipeline import load_quantized_pipeline_component
 
 
 def _torch_dtype(name: str) -> torch.dtype:
@@ -90,7 +96,9 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser = subparsers.add_parser("generate", help="run native generation suite")
     generate_parser.add_argument("--suite", required=True)
     generate_parser.add_argument("--prompt", required=True)
-    generate_parser.add_argument("--output", required=True)
+    generate_parser.add_argument("--output")
+    generate_parser.add_argument("--artifact")
+    generate_parser.add_argument("--component", default="transformer")
     generate_parser.add_argument("--seed", type=int, default=0)
     generate_parser.add_argument("--device", default="cuda")
     generate_parser.add_argument(
@@ -173,9 +181,46 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "generate":
         suite = get_native_suite(args.suite)
+        artifact_path = None if args.artifact is None else Path(args.artifact)
+        artifact_validation = None
+        artifact_config = None
+        if artifact_path is not None:
+            artifact_validation = validate_orbitquant_artifact(artifact_path)
+            artifact_config = OrbitQuantConfig.from_dict(
+                json.loads(
+                    (artifact_path / "quantization_config.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+            )
+        if args.output is None:
+            if artifact_path is None:
+                raise ValueError("generate requires --output when --artifact is not provided")
+            output_dir = artifact_path / "assets"
+        else:
+            output_dir = Path(args.output)
+
         quantization_config = None
         bit_setting = None
-        if args.bit_setting is not None:
+        if artifact_validation is not None:
+            expected_bit_setting = (
+                f"W{artifact_validation['weight_bits']}A"
+                f"{artifact_validation['activation_bits']}"
+            )
+            bit_setting = (
+                args.bit_setting.upper()
+                if args.bit_setting is not None
+                else expected_bit_setting
+            )
+            if bit_setting != expected_bit_setting:
+                raise ValueError(
+                    f"artifact bit setting is {expected_bit_setting}, got {bit_setting}"
+                )
+            quantization_config = artifact_config
+            model_id = artifact_validation["source_model_id"]
+        else:
+            model_id = suite.model_id
+        if artifact_validation is None and args.bit_setting is not None:
             bit_setting = args.bit_setting.upper()
             quantization_config = build_quantization_config_for_suite(
                 suite,
@@ -190,7 +235,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             payload = {
                 "suite": suite.__dict__,
-                "output": args.output,
+                "model_id": model_id,
+                "artifact": None if artifact_path is None else str(artifact_path),
+                "component": args.component,
+                "output": str(output_dir),
                 "device": args.device,
                 "dtype": args.dtype,
                 "quantization_config": None
@@ -208,12 +256,18 @@ def main(argv: list[str] | None = None) -> int:
         from diffusers import DiffusionPipeline
 
         pipeline = DiffusionPipeline.from_pretrained(
-            suite.model_id,
+            model_id,
             torch_dtype=_torch_dtype(args.dtype),
         )
         pipeline.to(args.device)
         quantization_summary = None
-        if quantization_config is not None:
+        if artifact_path is not None:
+            load_quantized_pipeline_component(
+                pipeline,
+                artifact_path,
+                component=args.component,
+            )
+        elif quantization_config is not None:
             quantization_summary = apply_quantization_to_pipeline(
                 pipeline, suite, quantization_config
             )
@@ -222,15 +276,43 @@ def main(argv: list[str] | None = None) -> int:
             suite,
             prompt=args.prompt,
             seed=args.seed,
-            output_dir=args.output,
+            output_dir=output_dir,
             device=args.device,
             quantization_config=quantization_config,
             quantization_summary=quantization_summary,
             quantization_label=bit_setting,
         )
+        artifact_metrics = None
+        if artifact_path is not None:
+            metrics = {"generated_samples": 1}
+            if suite.frames is not None:
+                metrics["generated_frames"] = suite.frames
+            artifact_metrics = record_artifact_metrics(
+                artifact_path,
+                split="orbitquant",
+                metrics=metrics,
+                metadata={
+                    "suite": suite.name,
+                    "prompt": args.prompt,
+                    "seed": args.seed,
+                    "height": suite.height,
+                    "width": suite.width,
+                    "frames": suite.frames,
+                    "steps": suite.steps,
+                    "guidance": suite.guidance,
+                    "bit_setting": bit_setting,
+                    "output_path": str(result.output_path),
+                    "metadata_path": str(result.metadata_path),
+                },
+            )
         print(
             json.dumps(
-                {"output_path": str(result.output_path), "metadata_path": str(result.metadata_path)}
+                {
+                    "output_path": str(result.output_path),
+                    "metadata_path": str(result.metadata_path),
+                    "artifact": None if artifact_path is None else str(artifact_path),
+                    "artifact_metrics": artifact_metrics,
+                }
             )
         )
         return 0

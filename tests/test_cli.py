@@ -3,6 +3,7 @@ import sys
 from types import SimpleNamespace
 
 import torch
+from PIL import Image
 
 import orbitquant.cli.main as cli_main
 from orbitquant.artifacts import save_orbitquant_artifact
@@ -95,6 +96,131 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
     assert '"activation_bits": 6' in output
     assert '"activation_kernel_backend": "cpu"' in output
     assert '"target_policy": "wan"' in output
+
+
+def test_cli_generate_dry_run_uses_artifact_source_and_default_assets_output(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "flux2-native",
+                "--prompt",
+                "A native prompt",
+                "--artifact",
+                str(tmp_path),
+                "--device",
+                "cpu",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["model_id"] == "example/artifact-model"
+    assert output["artifact"] == str(tmp_path)
+    assert output["output"] == str(tmp_path / "assets")
+    assert output["quantization_config"]["weight_bits"] == 4
+    assert output["quantization_config"]["activation_bits"] == 4
+
+
+def test_cli_generate_with_artifact_loads_component_and_records_metrics(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+            self.device = None
+
+        def to(self, device):
+            self.device = device
+            return self
+
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "blue")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    restored = TinyPipeline()
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            assert kwargs["torch_dtype"] is torch.float32
+            return restored
+
+    monkeypatch.setitem(
+        sys.modules, "diffusers", SimpleNamespace(DiffusionPipeline=FakeDiffusionPipeline)
+    )
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "flux2-native",
+                "--prompt",
+                "A native prompt",
+                "--artifact",
+                str(tmp_path),
+                "--seed",
+                "3",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    record = json.loads((tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text())
+    assert output["artifact"] == str(tmp_path)
+    assert output["output_path"].endswith("flux2-native_seed3_W4A4.png")
+    assert (tmp_path / "assets" / "flux2-native_seed3_W4A4.png").is_file()
+    assert record["split"] == "orbitquant"
+    assert record["metrics"]["generated_samples"] == 1
+    assert record["metadata"]["output_path"] == output["output_path"]
+    assert restored.device == "cpu"
 
 
 def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, tmp_path):
