@@ -21,6 +21,7 @@ from orbitquant.eval.native_runner import (
     build_quantization_config_for_suite,
     load_pipeline_for_suite,
     run_native_generation,
+    target_policy_for_suite,
 )
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.eval.prompts import select_prompt_record
@@ -76,7 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("native-suites", help="list native eval suites")
 
     quantize_parser = subparsers.add_parser("quantize", help="quantize a Diffusers component")
-    quantize_parser.add_argument("--model-id", required=True)
+    quantize_parser.add_argument("--model-id")
+    quantize_parser.add_argument("--suite")
     quantize_parser.add_argument("--revision")
     quantize_parser.add_argument("--output", required=True)
     quantize_parser.add_argument("--component", default="transformer")
@@ -149,13 +151,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "quantize":
-        from diffusers import DiffusionPipeline
-
         device = _resolve_device(args.device)
+        suite = None if args.suite is None else get_native_suite(args.suite)
+        model_id = args.model_id if args.model_id is not None else None
+        if model_id is None:
+            if suite is None:
+                raise ValueError("quantize requires --model-id unless --suite is provided")
+            model_id = suite.model_id
+        target_policy = args.target_policy
+        if target_policy == "auto" and suite is not None:
+            target_policy = target_policy_for_suite(suite)
         config = OrbitQuantConfig(
             weight_bits=args.weight_bits,
             activation_bits=args.activation_bits,
-            target_policy=args.target_policy,
+            target_policy=target_policy,
             rotation_seed=args.rotation_seed,
             block_size=args.block_size,
             runtime_mode=args.runtime_mode,
@@ -164,19 +173,24 @@ def main(argv: list[str] | None = None) -> int:
         load_kwargs = {"torch_dtype": _torch_dtype(args.dtype)}
         if args.revision is not None:
             load_kwargs["revision"] = args.revision
-        pipeline = DiffusionPipeline.from_pretrained(args.model_id, **load_kwargs)
+        if suite is None:
+            from diffusers import DiffusionPipeline
+
+            pipeline = DiffusionPipeline.from_pretrained(model_id, **load_kwargs)
+        else:
+            pipeline = load_pipeline_for_suite(suite, model_id=model_id, **load_kwargs)
         pipeline.to(device)
         try:
             component = getattr(pipeline, args.component)
         except AttributeError as exc:
             raise ValueError(f"pipeline has no component {args.component!r}") from exc
         summary = quantize_linear_modules(component, config)
-        metadata = inspect_model_metadata(args.model_id, revision=args.revision)
+        metadata = inspect_model_metadata(model_id, revision=args.revision)
         manifest = save_orbitquant_artifact(
             component,
             args.output,
             config=config,
-            source_model_id=args.model_id,
+            source_model_id=model_id,
             source_revision=metadata.get("sha") or args.revision or "unknown",
             source_license=metadata.get("license") or "unknown",
             summary=summary,
@@ -186,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "artifact_dir": args.output,
                     "component": args.component,
+                    "source_model_id": model_id,
                     "source_revision": manifest.source_revision,
                     "source_license": manifest.source_license,
                     "quantized_modules": summary.quantized_modules,

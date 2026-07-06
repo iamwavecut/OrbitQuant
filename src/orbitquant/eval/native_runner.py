@@ -106,6 +106,10 @@ def build_quantization_config_for_suite(
     )
 
 
+def target_policy_for_suite(suite: NativeSuite) -> str:
+    return _TARGET_POLICY_BY_SUITE.get(suite.name, "auto")
+
+
 def load_pipeline_for_suite(
     suite: NativeSuite,
     *,

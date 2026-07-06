@@ -352,6 +352,81 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
     assert quantization_config["activation_kernel_backend"] == "cpu"
 
 
+def test_cli_quantize_with_suite_uses_named_native_pipeline(monkeypatch, capsys, tmp_path):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+    class FakeFlux2KleinPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "black-forest-labs/FLUX.2-klein-4B"
+            assert kwargs["torch_dtype"] is torch.float32
+            return TinyPipeline()
+
+    class WrongDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            raise AssertionError("suite-specific pipeline should be used")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(
+            Flux2KleinPipeline=FakeFlux2KleinPipeline,
+            DiffusionPipeline=WrongDiffusionPipeline,
+        ),
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "inspect_model_metadata",
+        lambda model_id, revision=None: {
+            "sha": "abc123",
+            "license": "apache-2.0",
+        },
+    )
+
+    assert (
+        main(
+            [
+                "quantize",
+                "--suite",
+                "flux2-native",
+                "--output",
+                str(tmp_path),
+                "--component",
+                "transformer",
+                "--weight-bits",
+                "4",
+                "--activation-bits",
+                "4",
+                "--block-size",
+                "4",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    quantization_config = json.loads((tmp_path / "quantization_config.json").read_text())
+    assert output["source_model_id"] == "black-forest-labs/FLUX.2-klein-4B"
+    assert quantization_config["target_policy"] == "flux2"
+
+
 def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(
