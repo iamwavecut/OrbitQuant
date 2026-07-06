@@ -173,6 +173,40 @@ def test_extract_video_frames_accepts_numpy_frame_batches():
     assert frames.shape == (2, 8, 8, 3)
 
 
+def test_run_native_generation_saves_video_contact_sheet_and_metadata(
+    monkeypatch, tmp_path
+):
+    def fake_export_to_video(frames, path):
+        Path(path).write_bytes(b"fake mp4")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers.utils",
+        SimpleNamespace(export_to_video=fake_export_to_video),
+    )
+    suite = get_native_suite("wan-native")
+
+    result = run_native_generation(
+        lambda **kwargs: FakeVideoOutput(),
+        suite,
+        prompt="A native video",
+        seed=7,
+        output_dir=tmp_path,
+        device="cpu",
+        quantization_label="W4A4",
+    )
+
+    contact_sheet_path = tmp_path / "wan-native_seed7_W4A4_contact_sheet.webp"
+    metadata = json.loads(result.metadata_path.read_text())
+    assert result.output_path == tmp_path / "wan-native_seed7_W4A4.mp4"
+    assert result.output_path.is_file()
+    assert contact_sheet_path.is_file()
+    assert metadata["contact_sheet_path"] == str(contact_sheet_path)
+    assert result.asset_paths == [contact_sheet_path]
+    with Image.open(contact_sheet_path) as sheet:
+        assert sheet.size == (32, 8)
+
+
 def test_run_native_generation_saves_image_and_metadata(tmp_path):
     pipeline = FakeImagePipeline()
     suite = get_native_suite("flux2-native")

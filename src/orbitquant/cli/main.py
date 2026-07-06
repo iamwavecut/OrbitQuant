@@ -93,6 +93,9 @@ def _record_generated_artifact(
         record_artifact_asset(artifact_path, result.output_path)
     if _path_is_relative_to(result.metadata_path, artifact_path):
         record_artifact_asset(artifact_path, result.metadata_path)
+    for asset_path in result.asset_paths:
+        if _path_is_relative_to(asset_path, artifact_path):
+            record_artifact_asset(artifact_path, asset_path)
     metrics = {
         "generated_samples": 1,
         "wall_time_seconds": result.metadata["wall_time_seconds"],
@@ -118,6 +121,7 @@ def _record_generated_artifact(
             "bit_setting": bit_setting,
             "output_path": str(result.output_path),
             "metadata_path": str(result.metadata_path),
+            "asset_paths": [str(asset_path) for asset_path in result.asset_paths],
         },
     )
     return metrics_record, create_artifact_image_comparisons(artifact_path)

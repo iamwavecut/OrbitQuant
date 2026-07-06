@@ -27,6 +27,7 @@ class NativeGenerationResult:
     output_path: Path
     metadata_path: Path
     metadata: dict[str, Any]
+    asset_paths: list[Path]
 
 
 def _cuda_device_index(device: str | torch.device) -> int | None:
@@ -177,6 +178,23 @@ def _metadata_path(output_path: Path) -> Path:
     return output_path.with_suffix(output_path.suffix + ".json")
 
 
+def _contact_sheet_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}_contact_sheet.webp")
+
+
+def _video_contact_sheet_indices(frame_count: int, *, sample_count: int = 9) -> list[int]:
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
+    if frame_count <= sample_count:
+        return list(range(frame_count))
+    return sorted(
+        {
+            round(index * (frame_count - 1) / (sample_count - 1))
+            for index in range(sample_count)
+        }
+    )
+
+
 def run_native_generation(
     pipeline: Any,
     suite: NativeSuite,
@@ -204,6 +222,8 @@ def run_native_generation(
     started_at = time.perf_counter()
     output = pipeline(**kwargs)
 
+    asset_paths: list[Path] = []
+    contact_sheet_path: Path | None = None
     if is_video:
         try:
             from diffusers.utils import export_to_video
@@ -211,7 +231,17 @@ def run_native_generation(
             raise RuntimeError(
                 "diffusers video export utilities are required for video suites"
             ) from exc
-        export_to_video(extract_video_frames(output), str(output_path))
+        frames = extract_video_frames(output)
+        export_to_video(frames, str(output_path))
+        from orbitquant.eval.assets import create_video_contact_sheet
+
+        contact_sheet_path = _contact_sheet_path(output_path)
+        create_video_contact_sheet(
+            frames,
+            contact_sheet_path,
+            sample_indices=_video_contact_sheet_indices(len(frames)),
+        )
+        asset_paths.append(contact_sheet_path)
     else:
         image = _extract_image(output)
         image.save(output_path)
@@ -231,6 +261,9 @@ def run_native_generation(
         "bit_settings": suite.bit_settings,
         "wall_time_seconds": wall_time_seconds,
         "peak_vram_bytes": _peak_vram_bytes(device),
+        "contact_sheet_path": None
+        if contact_sheet_path is None
+        else str(contact_sheet_path),
         "quantization": None
         if quantization_config is None
         else {
@@ -249,4 +282,5 @@ def run_native_generation(
         output_path=output_path,
         metadata_path=metadata_path,
         metadata=metadata,
+        asset_paths=asset_paths,
     )

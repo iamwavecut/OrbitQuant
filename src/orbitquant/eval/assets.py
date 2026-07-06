@@ -55,7 +55,7 @@ def create_video_contact_sheet(
 ) -> Path:
     if columns <= 0:
         raise ValueError("columns must be positive")
-    if not frames:
+    if len(frames) == 0:
         raise ValueError("frames must not be empty")
     indices = list(sample_indices) if sample_indices is not None else list(range(len(frames)))
     if not indices:

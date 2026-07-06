@@ -2,6 +2,7 @@ import json
 import sys
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -430,6 +431,91 @@ def test_cli_generate_creates_comparison_when_original_pair_exists(
     assert comparison in manifest["checksums"]
     assert (tmp_path / comparison).is_file()
     assert output["artifact_comparisons"] == [comparison]
+
+
+def test_cli_generate_with_video_artifact_records_contact_sheet_asset(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyWanPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            self.device = device
+            return self
+
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(frames=np.zeros((1, 2, 8, 8, 3), dtype=np.uint8))
+
+    def fake_export_to_video(frames, path):
+        with open(path, "wb") as output:
+            output.write(b"fake mp4")
+
+    source = TinyWanPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    restored = TinyWanPipeline()
+
+    class FakeWanPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            assert kwargs["torch_dtype"] is torch.float32
+            return restored
+
+    monkeypatch.setitem(sys.modules, "diffusers", SimpleNamespace(WanPipeline=FakeWanPipeline))
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers.utils",
+        SimpleNamespace(export_to_video=fake_export_to_video),
+    )
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "wan-native",
+                "--prompt",
+                "A native video prompt",
+                "--artifact",
+                str(tmp_path),
+                "--seed",
+                "2",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    assert output["output_path"].endswith("wan-native_seed2_W4A4.mp4")
+    assert "assets/wan-native_seed2_W4A4.mp4" in manifest["checksums"]
+    assert "assets/wan-native_seed2_W4A4.mp4.json" in manifest["checksums"]
+    assert "assets/wan-native_seed2_W4A4_contact_sheet.webp" in manifest["checksums"]
 
 
 def test_cli_generate_pack_dry_run_lists_prompt_seed_jobs(capsys, tmp_path):
