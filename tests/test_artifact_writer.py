@@ -3,8 +3,9 @@ import json
 import torch
 from safetensors.torch import load_file
 
-from orbitquant.artifacts import save_orbitquant_artifact
+from orbitquant.artifacts import load_orbitquant_artifact, save_orbitquant_artifact
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import quantize_linear_modules
 
 
@@ -39,3 +40,29 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
     assert any(name.endswith("packed_weight_indices") for name in tensors)
+
+
+def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model(tmp_path):
+    torch.manual_seed(0)
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    restored = TinyArtifactModel()
+    manifest = load_orbitquant_artifact(restored, tmp_path)
+
+    assert manifest.source_model_id == "example/model"
+    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    restored_state = restored.state_dict()
+    packed_key = "transformer_blocks.0.attn.to_q.packed_weight_indices"
+    assert restored_state[packed_key].dtype == torch.uint8
