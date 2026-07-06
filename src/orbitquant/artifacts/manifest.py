@@ -13,6 +13,10 @@ class OrbitQuantManifest:
     source_license: str
     weight_bits: int
     activation_bits: int
+    rotation_seed: int
+    block_size: int | str
+    block_size_policy: str
+    codebook_version: int
     target_policy: str
     runtime_mode: str
     activation_kernel_backend: str
@@ -42,6 +46,12 @@ class OrbitQuantManifest:
             source_license=source_license,
             weight_bits=config.weight_bits,
             activation_bits=config.activation_bits,
+            rotation_seed=config.rotation_seed,
+            block_size=config.block_size,
+            block_size_policy="largest_power_of_two_dividing_dim"
+            if config.block_size == "paper"
+            else "explicit",
+            codebook_version=1,
             target_policy=config.target_policy,
             runtime_mode=config.runtime_mode,
             activation_kernel_backend=config.activation_kernel_backend,
@@ -63,7 +73,11 @@ class OrbitQuantManifest:
             "weight_bits": self.weight_bits,
             "activation_bits": self.activation_bits,
             "rotation": "rpbh",
+            "rotation_seed": self.rotation_seed,
+            "block_size": self.block_size,
+            "block_size_policy": self.block_size_policy,
             "codebook": "lloyd_max",
+            "codebook_version": self.codebook_version,
             "row_norm_dtype": "bfloat16",
             "runtime_mode": self.runtime_mode,
             "activation_kernel_backend": self.activation_kernel_backend,
@@ -84,6 +98,12 @@ class OrbitQuantManifest:
             source_license=data["source_license"],
             weight_bits=int(data["weight_bits"]),
             activation_bits=int(data["activation_bits"]),
+            rotation_seed=int(data.get("rotation_seed", 0)),
+            block_size=data.get("block_size", "paper"),
+            block_size_policy=data.get(
+                "block_size_policy", "largest_power_of_two_dividing_dim"
+            ),
+            codebook_version=int(data.get("codebook_version", 1)),
             target_policy=data.get("target_policy", "auto"),
             runtime_mode=data.get("runtime_mode", "dequant_bf16"),
             activation_kernel_backend=data.get("activation_kernel_backend", "auto"),
