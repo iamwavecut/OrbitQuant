@@ -3,12 +3,23 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+try:
+    from diffusers.quantizers.quantization_config import QuantizationConfigMixin
+except Exception:
+    try:
+        from transformers.utils.quantization_config import QuantizationConfigMixin
+    except Exception:
+
+        class QuantizationConfigMixin:  # type: ignore[no-redef]
+            """Fallback used when Hugging Face quantization mixins are unavailable."""
+
+
 _SUPPORTED_BITS = {2, 3, 4, 6, 8}
 _SUPPORTED_RUNTIME_MODES = {"dequant_bf16", "debug_no_quant", "debug_no_activation_quant"}
 
 
 @dataclass
-class OrbitQuantConfig:
+class OrbitQuantConfig(QuantizationConfigMixin):
     """Serializable OrbitQuant configuration.
 
     The class intentionally stays independent from Diffusers/Transformers at the
