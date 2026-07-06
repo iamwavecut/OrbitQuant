@@ -81,6 +81,7 @@ def _record_generated_artifact(
     artifact_path: Path,
     result: Any,
     *,
+    split: str,
     suite: Any,
     prompt: str,
     prompt_record: dict[str, Any] | None,
@@ -101,7 +102,7 @@ def _record_generated_artifact(
         metrics["peak_vram_bytes"] = result.metadata["peak_vram_bytes"]
     return record_artifact_metrics(
         artifact_path,
-        split="orbitquant",
+        split=split,
         metrics=metrics,
         metadata={
             "suite": suite.name,
@@ -174,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--output")
     generate_parser.add_argument("--artifact")
     generate_parser.add_argument("--component", default="transformer")
+    generate_parser.add_argument(
+        "--split", default="orbitquant", choices=["original", "orbitquant"]
+    )
     generate_parser.add_argument("--seed", type=int, default=0)
     generate_parser.add_argument("--device", default="cuda")
     generate_parser.add_argument(
@@ -200,6 +204,9 @@ def main(argv: list[str] | None = None) -> int:
     generate_pack_parser.add_argument("--artifact", required=True)
     generate_pack_parser.add_argument("--output")
     generate_pack_parser.add_argument("--component", default="transformer")
+    generate_pack_parser.add_argument(
+        "--split", default="orbitquant", choices=["original", "orbitquant"]
+    )
     generate_pack_parser.add_argument("--prompt-id", action="append")
     generate_pack_parser.add_argument("--prompt-limit", type=int)
     generate_pack_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
@@ -304,15 +311,15 @@ def main(argv: list[str] | None = None) -> int:
         suite = get_native_suite(args.suite)
         artifact_path = Path(args.artifact)
         artifact_validation = validate_orbitquant_artifact(artifact_path)
-        quantization_config = OrbitQuantConfig.from_dict(
-            json.loads(
-                (artifact_path / "quantization_config.json").read_text(encoding="utf-8")
-            )
+        artifact_config = OrbitQuantConfig.from_dict(
+            json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
         )
-        bit_setting = (
+        artifact_bit_setting = (
             f"W{artifact_validation['weight_bits']}A"
             f"{artifact_validation['activation_bits']}"
         )
+        bit_setting = artifact_bit_setting if args.split == "orbitquant" else "original"
+        quantization_config = artifact_config if args.split == "orbitquant" else None
         output_dir = artifact_path / "assets" if args.output is None else Path(args.output)
         prompt_payload = json.loads((artifact_path / "prompts.json").read_text(encoding="utf-8"))
         jobs = build_prompt_seed_jobs(
@@ -331,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
                         "component": args.component,
                         "output": str(output_dir),
                         "bit_setting": bit_setting,
+                        "split": args.split,
                         "job_count": len(jobs),
                         "jobs": jobs,
                     },
@@ -345,11 +353,12 @@ def main(argv: list[str] | None = None) -> int:
             torch_dtype=_torch_dtype(args.dtype),
         )
         pipeline.to(args.device)
-        load_quantized_pipeline_component(
-            pipeline,
-            artifact_path,
-            component=args.component,
-        )
+        if args.split == "orbitquant":
+            load_quantized_pipeline_component(
+                pipeline,
+                artifact_path,
+                component=args.component,
+            )
         outputs = []
         for job in jobs:
             prompt_record = job["prompt_record"]
@@ -369,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
             metrics = _record_generated_artifact(
                 artifact_path,
                 result,
+                split=args.split,
                 suite=suite,
                 prompt=prompt_record["prompt"],
                 prompt_record=prompt_record,
@@ -422,16 +432,22 @@ def main(argv: list[str] | None = None) -> int:
                 f"W{artifact_validation['weight_bits']}A"
                 f"{artifact_validation['activation_bits']}"
             )
-            bit_setting = (
-                args.bit_setting.upper()
-                if args.bit_setting is not None
-                else expected_bit_setting
-            )
-            if bit_setting != expected_bit_setting:
+            if args.split == "original":
+                if args.bit_setting is not None:
+                    raise ValueError("original split does not accept --bit-setting")
+                bit_setting = "original"
+                quantization_config = None
+            else:
+                bit_setting = (
+                    args.bit_setting.upper()
+                    if args.bit_setting is not None
+                    else expected_bit_setting
+                )
+                quantization_config = artifact_config
+            if args.split == "orbitquant" and bit_setting != expected_bit_setting:
                 raise ValueError(
                     f"artifact bit setting is {expected_bit_setting}, got {bit_setting}"
                 )
-            quantization_config = artifact_config
             model_id = artifact_validation["source_model_id"]
         else:
             model_id = suite.model_id
@@ -497,11 +513,12 @@ def main(argv: list[str] | None = None) -> int:
         pipeline.to(args.device)
         quantization_summary = None
         if artifact_path is not None:
-            load_quantized_pipeline_component(
-                pipeline,
-                artifact_path,
-                component=args.component,
-            )
+            if args.split == "orbitquant":
+                load_quantized_pipeline_component(
+                    pipeline,
+                    artifact_path,
+                    component=args.component,
+                )
         elif quantization_config is not None:
             quantization_summary = apply_quantization_to_pipeline(
                 pipeline, suite, quantization_config
@@ -522,6 +539,7 @@ def main(argv: list[str] | None = None) -> int:
             artifact_metrics = _record_generated_artifact(
                 artifact_path,
                 result,
+                split=args.split,
                 suite=suite,
                 prompt=prompt,
                 prompt_record=prompt_record,

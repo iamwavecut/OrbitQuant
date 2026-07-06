@@ -272,6 +272,90 @@ def test_cli_generate_with_artifact_loads_component_and_records_metrics(
     assert restored.device == "cpu"
 
 
+def test_cli_generate_with_artifact_original_split_skips_quantized_component(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "yellow")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            return TinyPipeline()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "load_quantized_pipeline_component",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("original split must not load quantized component")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "flux2-native",
+                "--prompt",
+                "A native prompt",
+                "--artifact",
+                str(tmp_path),
+                "--split",
+                "original",
+                "--seed",
+                "3",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    record = json.loads((tmp_path / "benchmark" / "original.metrics.jsonl").read_text())
+    assert output["output_path"].endswith("flux2-native_seed3_original.png")
+    assert record["split"] == "original"
+    assert record["metadata"]["bit_setting"] == "original"
+    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
+
+
 def test_cli_generate_pack_dry_run_lists_prompt_seed_jobs(capsys, tmp_path):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(
