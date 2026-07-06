@@ -46,6 +46,7 @@ def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
         "activation_bits": config.activation_bits,
         "target_policy": config.target_policy,
         "runtime_mode": config.runtime_mode,
+        "activation_kernel_backend": config.activation_kernel_backend,
         "tensor_count": len(state_dict),
         "quantized_module_count": len(manifest.quantized_modules),
         "adaln_module_count": len(manifest.adaln_modules),

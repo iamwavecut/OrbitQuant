@@ -25,6 +25,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             f"- Method: `{data['quant_method']}`",
             f"- Bits: `{bits}`",
             f"- Runtime mode: `{data['runtime_mode']}`",
+            f"- Activation kernel backend: `{data['activation_kernel_backend']}`",
             f"- Rotation: `{data['rotation']}`",
             f"- Codebook: `{data['codebook']}`",
             "- Calibration data: none",

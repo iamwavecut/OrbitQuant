@@ -16,6 +16,7 @@ except Exception:
 
 _SUPPORTED_BITS = {2, 3, 4, 6, 8}
 _SUPPORTED_RUNTIME_MODES = {"dequant_bf16", "debug_no_quant", "debug_no_activation_quant"}
+_SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
 
 
 @dataclass
@@ -46,6 +47,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     modules_dtype_dict: dict[str, list[str]] = field(default_factory=dict)
     artifact_format_version: int = 1
     runtime_mode: str = "dequant_bf16"
+    activation_kernel_backend: str = "auto"
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
@@ -60,6 +62,11 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("only Lloyd-Max codebooks are implemented")
         if self.runtime_mode not in _SUPPORTED_RUNTIME_MODES:
             raise ValueError(f"runtime_mode must be one of {sorted(_SUPPORTED_RUNTIME_MODES)}")
+        if self.activation_kernel_backend not in _SUPPORTED_ACTIVATION_KERNEL_BACKENDS:
+            raise ValueError(
+                "activation_kernel_backend must be one of "
+                f"{sorted(_SUPPORTED_ACTIVATION_KERNEL_BACKENDS)}"
+            )
         if self.adaln_group_size <= 0:
             raise ValueError("adaln_group_size must be positive")
 

@@ -72,6 +72,11 @@ def main(argv: list[str] | None = None) -> int:
         default="dequant_bf16",
         choices=["dequant_bf16", "debug_no_quant", "debug_no_activation_quant"],
     )
+    quantize_parser.add_argument(
+        "--activation-kernel-backend",
+        default="auto",
+        choices=["auto", "cpu", "mps", "triton_cuda"],
+    )
     quantize_parser.add_argument("--device", default="auto")
     quantize_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
@@ -98,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         default="dequant_bf16",
         choices=["dequant_bf16", "debug_no_quant", "debug_no_activation_quant"],
     )
+    generate_parser.add_argument(
+        "--activation-kernel-backend",
+        default="auto",
+        choices=["auto", "cpu", "mps", "triton_cuda"],
+    )
     generate_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
@@ -122,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             rotation_seed=args.rotation_seed,
             block_size=args.block_size,
             runtime_mode=args.runtime_mode,
+            activation_kernel_backend=args.activation_kernel_backend,
         )
         load_kwargs = {"torch_dtype": _torch_dtype(args.dtype)}
         if args.revision is not None:
@@ -171,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
                 bit_setting,
                 rotation_seed=args.rotation_seed,
                 runtime_mode=args.runtime_mode,
+                activation_kernel_backend=args.activation_kernel_backend,
             )
         kwargs = build_pipeline_kwargs(
             suite, prompt=args.prompt, seed=args.seed, device=args.device

@@ -40,6 +40,7 @@ class OrbitQuantLinear(nn.Module):
         self.weight_bits = config.weight_bits
         self.activation_bits = config.activation_bits
         self.runtime_mode = config.runtime_mode
+        self.activation_kernel_backend = config.activation_kernel_backend
         self.module_name = module_name
         self.activation_eps = config.activation_eps
         self.rotation = RPBHRotation(
@@ -200,6 +201,7 @@ class OrbitQuantLinear(nn.Module):
                 rotation=self.rotation,
                 codebook=self.activation_codebook,
                 eps=self.activation_eps,
+                backend=self.activation_kernel_backend,
             )
 
         weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)

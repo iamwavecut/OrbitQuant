@@ -39,6 +39,32 @@ def test_orbit_linear_quantized_forward_is_finite_and_shape_preserving():
     assert not any(parameter.requires_grad for parameter in quantized.parameters())
 
 
+def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):
+    torch.manual_seed(2)
+    source = torch.nn.Linear(16, 7)
+    x = torch.randn(2, 5, 16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    original_kernel = layers_module.quantize_activations_kernel
+    seen_backends = []
+
+    def wrapped_kernel(*args, **kwargs):
+        seen_backends.append(kwargs["backend"])
+        return original_kernel(*args, **kwargs)
+
+    monkeypatch.setattr(layers_module, "quantize_activations_kernel", wrapped_kernel)
+
+    quantized(x)
+
+    assert seen_backends == ["cpu"]
+
+
 def test_orbit_linear_caches_dequantized_weight(monkeypatch):
     torch.manual_seed(2)
     source = torch.nn.Linear(16, 7)

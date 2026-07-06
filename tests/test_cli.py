@@ -80,6 +80,8 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
                 "cpu",
                 "--bit-setting",
                 "W4A6",
+                "--activation-kernel-backend",
+                "cpu",
                 "--dry-run",
             ]
         )
@@ -91,6 +93,7 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
     assert '"width": 832' in output
     assert '"weight_bits": 4' in output
     assert '"activation_bits": 6' in output
+    assert '"activation_kernel_backend": "cpu"' in output
     assert '"target_policy": "wan"' in output
 
 
@@ -153,6 +156,8 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
                 "4",
                 "--block-size",
                 "4",
+                "--activation-kernel-backend",
+                "cpu",
                 "--device",
                 "cpu",
                 "--dtype",
@@ -168,6 +173,8 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
     assert (tmp_path / "model.safetensors").exists()
     assert (tmp_path / "orbitquant_manifest.json").exists()
     assert (tmp_path / "SHA256SUMS").exists()
+    quantization_config = json.loads((tmp_path / "quantization_config.json").read_text())
+    assert quantization_config["activation_kernel_backend"] == "cpu"
 
 
 def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path):

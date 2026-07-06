@@ -65,6 +65,7 @@ def build_quantization_config_for_suite(
     *,
     rotation_seed: int = 0,
     runtime_mode: str = "dequant_bf16",
+    activation_kernel_backend: str = "auto",
 ) -> OrbitQuantConfig:
     normalized = bit_setting.upper()
     if normalized not in suite.bit_settings:
@@ -77,6 +78,7 @@ def build_quantization_config_for_suite(
         activation_bits=activation_bits,
         rotation_seed=rotation_seed,
         runtime_mode=runtime_mode,
+        activation_kernel_backend=activation_kernel_backend,
         target_policy=_TARGET_POLICY_BY_SUITE.get(suite.name, "auto"),
     )
 
