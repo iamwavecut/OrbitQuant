@@ -36,6 +36,7 @@ class FakeVideoOutput:
 class FakeImagePipeline:
     def __init__(self):
         self.kwargs = None
+        self.scheduler = SimpleNamespace(config={"solver_order": 2})
 
     def __call__(self, **kwargs):
         self.kwargs = kwargs
@@ -218,6 +219,7 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
         seed=5,
         output_dir=tmp_path,
         device="cpu",
+        runtime_dtype="float32",
     )
 
     assert result.output_path.exists()
@@ -226,5 +228,12 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
     assert result.metadata["wall_time_seconds"] >= 0.0
     assert metadata["wall_time_seconds"] == result.metadata["wall_time_seconds"]
     assert metadata["peak_vram_bytes"] is None
+    assert metadata["device"] == "cpu"
+    assert metadata["dtype"] == "float32"
+    assert metadata["pipeline_class"] == "FakeImagePipeline"
+    assert metadata["scheduler"] == {
+        "class": "SimpleNamespace",
+        "config": {"solver_order": 2},
+    }
     assert pipeline.kwargs["height"] == 1024
     assert pipeline.kwargs["width"] == 1024

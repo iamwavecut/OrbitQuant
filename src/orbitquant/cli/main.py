@@ -122,6 +122,10 @@ def _record_generated_artifact(
             "output_path": str(result.output_path),
             "metadata_path": str(result.metadata_path),
             "asset_paths": [str(asset_path) for asset_path in result.asset_paths],
+            "device": result.metadata["device"],
+            "dtype": result.metadata["dtype"],
+            "pipeline_class": result.metadata["pipeline_class"],
+            "scheduler": result.metadata["scheduler"],
         },
     )
     return metrics_record, create_artifact_image_comparisons(artifact_path)
@@ -380,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
                 quantization_config=quantization_config,
                 quantization_summary=None,
                 quantization_label=variant,
+                runtime_dtype=args.dtype,
             )
             metrics, comparisons = _record_generated_artifact(
                 artifact_path,
@@ -540,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:
             quantization_config=quantization_config,
             quantization_summary=quantization_summary,
             quantization_label=bit_setting,
+            runtime_dtype=args.dtype,
         )
         artifact_metrics = None
         if artifact_path is not None:

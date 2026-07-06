@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -195,6 +196,29 @@ def _video_contact_sheet_indices(frame_count: int, *, sample_count: int = 9) -> 
     )
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "to_dict"):
+        return _json_safe(value.to_dict())
+    return str(value)
+
+
+def _scheduler_metadata(pipeline: Any) -> dict[str, Any] | None:
+    scheduler = getattr(pipeline, "scheduler", None)
+    if scheduler is None:
+        return None
+    config = getattr(scheduler, "config", None)
+    return {
+        "class": scheduler.__class__.__name__,
+        "config": _json_safe(config),
+    }
+
+
 def run_native_generation(
     pipeline: Any,
     suite: NativeSuite,
@@ -206,6 +230,7 @@ def run_native_generation(
     quantization_config: OrbitQuantConfig | None = None,
     quantization_summary: QuantizationSummary | None = None,
     quantization_label: str | None = None,
+    runtime_dtype: str | None = None,
 ) -> NativeGenerationResult:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -259,6 +284,10 @@ def run_native_generation(
         "steps": suite.steps,
         "guidance": suite.guidance,
         "bit_settings": suite.bit_settings,
+        "device": str(device),
+        "dtype": runtime_dtype,
+        "pipeline_class": pipeline.__class__.__name__,
+        "scheduler": _scheduler_metadata(pipeline),
         "wall_time_seconds": wall_time_seconds,
         "peak_vram_bytes": _peak_vram_bytes(device),
         "contact_sheet_path": None
