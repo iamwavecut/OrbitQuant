@@ -76,6 +76,17 @@ settings in this repository: FLUX/Z-Image at 1024x1024 and Wan at 832x480,
 `--resume`, the script skips quantization for existing valid artifacts and adds
 `generate-pack --resume-existing` so completed sample outputs are not regenerated.
 
+Validate a generated native sample and its metadata after copying artifacts back
+from a pod:
+
+```bash
+orbitquant validate-generation \
+  --suite flux2-native \
+  --output ./artifacts/native/flux2-native-w4a4/assets/flux2-native_seed0_W4A4_simple-object.png \
+  --seed 0 \
+  --bit-setting W4A4
+```
+
 After external GenEval or VBench runs finish, import their JSON metrics into the
 artifact so reports and checksums stay consistent:
 

@@ -10,4 +10,5 @@ def test_readme_documents_native_gpu_pod_workflow():
     assert "--resume" in readme
     assert "--resume-existing" in readme
     assert "hf auth whoami" in readme
+    assert "orbitquant validate-generation" in readme
     assert "orbitquant record-metrics" in readme
