@@ -3,6 +3,7 @@ from orbitquant.eval.native_settings import NativeSuite, get_native_suite, list_
 from orbitquant.eval.prompts import (
     IMAGE_PROMPTS,
     VIDEO_PROMPTS,
+    build_prompt_seed_jobs,
     default_prompt_payload,
     select_prompt_record,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "IMAGE_PROMPTS",
     "NativeEvalReportResult",
     "VIDEO_PROMPTS",
+    "build_prompt_seed_jobs",
     "NativeSuite",
     "create_image_comparison_sheet",
     "create_video_contact_sheet",

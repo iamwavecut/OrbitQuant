@@ -272,6 +272,137 @@ def test_cli_generate_with_artifact_loads_component_and_records_metrics(
     assert restored.device == "cpu"
 
 
+def test_cli_generate_pack_dry_run_lists_prompt_seed_jobs(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-limit",
+                "2",
+                "--seeds",
+                "0,1",
+                "--device",
+                "cpu",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["job_count"] == 4
+    assert output["jobs"][0]["prompt_record"]["id"] == "simple-object"
+    assert output["jobs"][0]["seed"] == 0
+    assert output["jobs"][2]["seed"] == 1
+    assert output["output"] == str(tmp_path / "assets")
+
+
+def test_cli_generate_pack_runs_jobs_once_per_prompt_seed_and_records_artifacts(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+            self.calls = []
+
+        def to(self, device):
+            self.device = device
+            return self
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "green")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    restored = TinyPipeline()
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            assert kwargs["torch_dtype"] is torch.float32
+            return restored
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-id",
+                "simple-object",
+                "--prompt-id",
+                "counting",
+                "--seeds",
+                "3",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    metrics_rows = (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text().splitlines()
+    assert output["job_count"] == 2
+    assert len(restored.calls) == 2
+    assert "assets/flux2-native_seed3_W4A4_simple-object.png" in manifest["checksums"]
+    assert "assets/flux2-native_seed3_W4A4_counting.png" in manifest["checksums"]
+    assert len(metrics_rows) == 2
+    assert json.loads(metrics_rows[0])["metadata"]["prompt_record"]["id"] == "simple-object"
+
+
 def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, tmp_path):
     class TinyPipeline:
         def __init__(self):

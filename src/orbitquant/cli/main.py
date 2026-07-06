@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -24,7 +25,7 @@ from orbitquant.eval.native_runner import (
     target_policy_for_suite,
 )
 from orbitquant.eval.native_settings import get_native_suite
-from orbitquant.eval.prompts import select_prompt_record
+from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
 from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import inspect_model_metadata
 from orbitquant.modeling import quantize_linear_modules
@@ -64,6 +65,59 @@ def _path_is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _parse_seed_list(value: str) -> list[int]:
+    try:
+        seeds = [int(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("seeds must be a comma-separated integer list") from exc
+    if not seeds:
+        raise argparse.ArgumentTypeError("at least one seed is required")
+    return seeds
+
+
+def _record_generated_artifact(
+    artifact_path: Path,
+    result: Any,
+    *,
+    suite: Any,
+    prompt: str,
+    prompt_record: dict[str, Any] | None,
+    seed: int,
+    bit_setting: str | None,
+) -> dict[str, Any]:
+    if _path_is_relative_to(result.output_path, artifact_path):
+        record_artifact_asset(artifact_path, result.output_path)
+    if _path_is_relative_to(result.metadata_path, artifact_path):
+        record_artifact_asset(artifact_path, result.metadata_path)
+    metrics = {
+        "generated_samples": 1,
+        "wall_time_seconds": result.metadata["wall_time_seconds"],
+    }
+    if suite.frames is not None:
+        metrics["generated_frames"] = suite.frames
+    if result.metadata["peak_vram_bytes"] is not None:
+        metrics["peak_vram_bytes"] = result.metadata["peak_vram_bytes"]
+    return record_artifact_metrics(
+        artifact_path,
+        split="orbitquant",
+        metrics=metrics,
+        metadata={
+            "suite": suite.name,
+            "prompt": prompt,
+            "prompt_record": prompt_record,
+            "seed": seed,
+            "height": suite.height,
+            "width": suite.width,
+            "frames": suite.frames,
+            "steps": suite.steps,
+            "guidance": suite.guidance,
+            "bit_setting": bit_setting,
+            "output_path": str(result.output_path),
+            "metadata_path": str(result.metadata_path),
+        },
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -138,6 +192,22 @@ def main(argv: list[str] | None = None) -> int:
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
     generate_parser.add_argument("--dry-run", action="store_true")
+
+    generate_pack_parser = subparsers.add_parser(
+        "generate-pack", help="run native generation for artifact prompt pack"
+    )
+    generate_pack_parser.add_argument("--suite", required=True)
+    generate_pack_parser.add_argument("--artifact", required=True)
+    generate_pack_parser.add_argument("--output")
+    generate_pack_parser.add_argument("--component", default="transformer")
+    generate_pack_parser.add_argument("--prompt-id", action="append")
+    generate_pack_parser.add_argument("--prompt-limit", type=int)
+    generate_pack_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
+    generate_pack_parser.add_argument("--device", default="cuda")
+    generate_pack_parser.add_argument(
+        "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
+    )
+    generate_pack_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
     if args.version:
@@ -226,6 +296,100 @@ def main(argv: list[str] | None = None) -> int:
                     "tables": {key: str(value) for key, value in result.table_paths.items()},
                     "artifact_count": len(args.artifact),
                     "row_count": len(result.rows),
+                }
+            )
+        )
+        return 0
+    if args.command == "generate-pack":
+        suite = get_native_suite(args.suite)
+        artifact_path = Path(args.artifact)
+        artifact_validation = validate_orbitquant_artifact(artifact_path)
+        quantization_config = OrbitQuantConfig.from_dict(
+            json.loads(
+                (artifact_path / "quantization_config.json").read_text(encoding="utf-8")
+            )
+        )
+        bit_setting = (
+            f"W{artifact_validation['weight_bits']}A"
+            f"{artifact_validation['activation_bits']}"
+        )
+        output_dir = artifact_path / "assets" if args.output is None else Path(args.output)
+        prompt_payload = json.loads((artifact_path / "prompts.json").read_text(encoding="utf-8"))
+        jobs = build_prompt_seed_jobs(
+            prompt_payload,
+            seeds=args.seeds,
+            prompt_ids=args.prompt_id,
+            prompt_limit=args.prompt_limit,
+        )
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {
+                        "suite": suite.__dict__,
+                        "model_id": artifact_validation["source_model_id"],
+                        "artifact": str(artifact_path),
+                        "component": args.component,
+                        "output": str(output_dir),
+                        "bit_setting": bit_setting,
+                        "job_count": len(jobs),
+                        "jobs": jobs,
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+
+        pipeline = load_pipeline_for_suite(
+            suite,
+            model_id=artifact_validation["source_model_id"],
+            torch_dtype=_torch_dtype(args.dtype),
+        )
+        pipeline.to(args.device)
+        load_quantized_pipeline_component(
+            pipeline,
+            artifact_path,
+            component=args.component,
+        )
+        outputs = []
+        for job in jobs:
+            prompt_record = job["prompt_record"]
+            seed = int(job["seed"])
+            variant = f"{bit_setting}_{prompt_record['id']}"
+            result = run_native_generation(
+                pipeline,
+                suite,
+                prompt=prompt_record["prompt"],
+                seed=seed,
+                output_dir=output_dir,
+                device=args.device,
+                quantization_config=quantization_config,
+                quantization_summary=None,
+                quantization_label=variant,
+            )
+            metrics = _record_generated_artifact(
+                artifact_path,
+                result,
+                suite=suite,
+                prompt=prompt_record["prompt"],
+                prompt_record=prompt_record,
+                seed=seed,
+                bit_setting=bit_setting,
+            )
+            outputs.append(
+                {
+                    "output_path": str(result.output_path),
+                    "metadata_path": str(result.metadata_path),
+                    "metrics": metrics,
+                    "prompt_record": prompt_record,
+                    "seed": seed,
+                }
+            )
+        print(
+            json.dumps(
+                {
+                    "artifact": str(artifact_path),
+                    "job_count": len(jobs),
+                    "outputs": outputs,
                 }
             )
         )
@@ -355,36 +519,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         artifact_metrics = None
         if artifact_path is not None:
-            if _path_is_relative_to(result.output_path, artifact_path):
-                record_artifact_asset(artifact_path, result.output_path)
-            if _path_is_relative_to(result.metadata_path, artifact_path):
-                record_artifact_asset(artifact_path, result.metadata_path)
-            metrics = {
-                "generated_samples": 1,
-                "wall_time_seconds": result.metadata["wall_time_seconds"],
-            }
-            if suite.frames is not None:
-                metrics["generated_frames"] = suite.frames
-            if result.metadata["peak_vram_bytes"] is not None:
-                metrics["peak_vram_bytes"] = result.metadata["peak_vram_bytes"]
-            artifact_metrics = record_artifact_metrics(
+            artifact_metrics = _record_generated_artifact(
                 artifact_path,
-                split="orbitquant",
-                metrics=metrics,
-                metadata={
-                    "suite": suite.name,
-                    "prompt": prompt,
-                    "prompt_record": prompt_record,
-                    "seed": args.seed,
-                    "height": suite.height,
-                    "width": suite.width,
-                    "frames": suite.frames,
-                    "steps": suite.steps,
-                    "guidance": suite.guidance,
-                    "bit_setting": bit_setting,
-                    "output_path": str(result.output_path),
-                    "metadata_path": str(result.metadata_path),
-                },
+                result,
+                suite=suite,
+                prompt=prompt,
+                prompt_record=prompt_record,
+                seed=args.seed,
+                bit_setting=bit_setting,
             )
         print(
             json.dumps(

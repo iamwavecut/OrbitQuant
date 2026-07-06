@@ -137,3 +137,35 @@ def select_prompt_record(
             f"prompt index out of range: {prompt_index}; available prompts: {len(prompts)}"
         )
     return deepcopy(prompts[prompt_index])
+
+
+def build_prompt_seed_jobs(
+    payload: dict[str, Any],
+    *,
+    seeds: list[int],
+    prompt_ids: list[str] | None = None,
+    prompt_limit: int | None = None,
+) -> list[dict[str, Any]]:
+    if not seeds:
+        raise ValueError("at least one seed is required")
+    if prompt_limit is not None and prompt_limit <= 0:
+        raise ValueError("prompt_limit must be positive")
+
+    prompts = list(payload.get("prompts", []))
+    if prompt_ids is not None:
+        selected = []
+        for prompt_id in prompt_ids:
+            selected.append(select_prompt_record(payload, prompt_id=prompt_id))
+        prompts = selected
+    else:
+        prompts = deepcopy(prompts)
+    if prompt_limit is not None:
+        prompts = prompts[:prompt_limit]
+    if not prompts:
+        raise ValueError("prompt selection produced no jobs")
+
+    jobs = []
+    for seed in seeds:
+        for prompt_record in prompts:
+            jobs.append({"seed": seed, "prompt_record": deepcopy(prompt_record)})
+    return jobs
