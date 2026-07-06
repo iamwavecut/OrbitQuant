@@ -76,6 +76,21 @@ def save_orbitquant_artifact(
     save_file(_rotation_tensors(model), rotation_path)
     config_path = output_path / "quantization_config.json"
     config_path.write_text(json.dumps(config.to_dict(), indent=2) + "\n", encoding="utf-8")
+    prompts_path = output_path / "prompts.json"
+    prompts_path.write_text(json.dumps({"prompts": []}, indent=2) + "\n", encoding="utf-8")
+    benchmark_path = output_path / "benchmark" / "summary.json"
+    benchmark_path.parent.mkdir(parents=True, exist_ok=True)
+    benchmark_summary = {
+        "status": "not_run",
+        "source_model_id": source_model_id,
+        "source_revision": source_revision,
+        "weight_bits": config.weight_bits,
+        "activation_bits": config.activation_bits,
+        "target_policy": config.target_policy,
+        "runtime_mode": config.runtime_mode,
+        "activation_kernel_backend": config.activation_kernel_backend,
+    }
+    benchmark_path.write_text(json.dumps(benchmark_summary, indent=2) + "\n", encoding="utf-8")
 
     skipped = _summary_list(summary, "skipped_modules")
     checksums = {
@@ -83,6 +98,8 @@ def save_orbitquant_artifact(
         "orbitquant_codebooks.safetensors": sha256_file(codebook_path),
         "orbitquant_rotations.safetensors": sha256_file(rotation_path),
         "quantization_config.json": sha256_file(config_path),
+        "prompts.json": sha256_file(prompts_path),
+        "benchmark/summary.json": sha256_file(benchmark_path),
     }
     manifest = OrbitQuantManifest.from_config(
         config,

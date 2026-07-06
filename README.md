@@ -62,6 +62,10 @@ Current artifacts include:
   the dimensions and bit-widths used by the artifact.
 - `orbitquant_rotations.safetensors`: deterministic RPBH permutation, inverse
   permutation, signs, and normalization tensors.
+- `prompts.json`: prompt/eval prompt container, initially empty until native
+  generation or metric runs populate it.
+- `benchmark/summary.json`: benchmark/eval status summary, initially marked
+  `not_run` for newly quantized artifacts.
 - `SHA256SUMS`: checksums for all artifact files.
 
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.

@@ -39,6 +39,8 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert manifest["source_model_id"] == "example/model"
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
+    assert "prompts.json" in {path.name for path in tmp_path.iterdir()}
+    assert (tmp_path / "benchmark" / "summary.json").is_file()
     assert "orbitquant_codebooks.safetensors" in {path.name for path in tmp_path.iterdir()}
     assert "orbitquant_rotations.safetensors" in {path.name for path in tmp_path.iterdir()}
     assert manifest["checksums"]["model.safetensors"] == next(
@@ -48,9 +50,16 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     )
     assert "orbitquant_codebooks.safetensors" in manifest["checksums"]
     assert "orbitquant_rotations.safetensors" in manifest["checksums"]
+    assert "prompts.json" in manifest["checksums"]
+    assert "benchmark/summary.json" in manifest["checksums"]
+    prompts = json.loads((tmp_path / "prompts.json").read_text())
+    benchmark_summary = json.loads((tmp_path / "benchmark" / "summary.json").read_text())
     codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
     rotation_tensors = load_file(tmp_path / "orbitquant_rotations.safetensors")
     assert any(name.endswith("packed_weight_indices") for name in tensors)
+    assert prompts == {"prompts": []}
+    assert benchmark_summary["status"] == "not_run"
+    assert benchmark_summary["source_model_id"] == "example/model"
     assert any(name.endswith(".centroids") for name in codebook_tensors)
     assert any(name.endswith(".permutation") for name in rotation_tensors)
 
