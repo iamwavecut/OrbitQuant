@@ -187,7 +187,9 @@ Current artifacts include:
 The current `triton_cuda` path keeps norm and RPBH rotation in PyTorch but uses
 real Triton kernels for codebook lookup, norm rescale, packed weight
 dequantization, offline low-bit weight packing, and offline weight
-RPBH/FWHT-to-codebook indexing during artifact creation. On Apple Silicon, `mps`
+RPBH/FWHT-to-codebook indexing during artifact creation. It also uses Triton for
+AdaLN INT4 RTN group scale calculation, quantize+pack, and runtime dequantization
+instead of round-tripping through CPU unpack/pack. On Apple Silicon, `mps`
 uses Metal shaders for the same runtime lookup/rescale and packed weight dequant
 stages when `torch.mps.compile_shader` is available. Otherwise it falls back to
 the reference PyTorch path on MPS tensors. Full fused activation
@@ -208,7 +210,9 @@ dequantization avoids the CPU unpack path for that backend. The
 `weight_pack_optimized` field records whether artifact creation can pack low-bit
 weight indices without a CPU round-trip. The `weight_quant_optimized` field
 records whether artifact creation can rotate/FWHT weights and map them to
-Lloyd-Max codebook indices on the accelerator.
+Lloyd-Max codebook indices on the accelerator. The `adaln_quant_optimized` and
+`adaln_dequant_optimized` fields report whether the AdaLN INT4 RTN path avoids
+CPU quantize/pack and runtime unpack/dequant for that backend.
 
 ## License
 

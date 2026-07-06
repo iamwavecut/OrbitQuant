@@ -177,6 +177,136 @@ def _quantize_rotated_weight_indices_kernel(
     tl.store(indices_ptr + offsets, indices.to(tl.uint8), mask=mask)
 
 
+@triton.jit
+def _adaln_group_scales_kernel(
+    weight_ptr,
+    scales_ptr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    num_groups: tl.constexpr,
+    group_size: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    group_offsets = tl.program_id(0)
+    rows = group_offsets // num_groups
+    groups = group_offsets % num_groups
+    offsets = tl.arange(0, block_size)
+    cols = groups * group_size + offsets
+    mask = (rows < out_features) & (offsets < group_size) & (cols < in_features)
+    values = tl.load(
+        weight_ptr + rows * in_features + cols,
+        mask=mask,
+        other=0.0,
+    ).to(tl.float32)
+    max_abs = tl.max(tl.abs(values), axis=0)
+    max_abs = tl.maximum(max_abs, 1.0e-12)
+    tl.store(scales_ptr + rows * num_groups + groups, max_abs / 7.0)
+
+
+@triton.jit
+def _adaln_quantize_pack_int4_kernel(
+    weight_ptr,
+    scales_ptr,
+    packed_ptr,
+    packed_length: tl.constexpr,
+    total_values: tl.constexpr,
+    in_features: tl.constexpr,
+    padded_in_features: tl.constexpr,
+    num_groups: tl.constexpr,
+    group_size: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    byte_offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = byte_offsets < packed_length
+    value_offsets0 = byte_offsets * 2
+    value_offsets1 = value_offsets0 + 1
+
+    rows0 = value_offsets0 // padded_in_features
+    cols0 = value_offsets0 % padded_in_features
+    groups0 = cols0 // group_size
+    valid0 = mask & (value_offsets0 < total_values)
+    weight_valid0 = valid0 & (cols0 < in_features)
+    values0 = tl.load(
+        weight_ptr + rows0 * in_features + cols0,
+        mask=weight_valid0,
+        other=0.0,
+    ).to(tl.float32)
+    scales0 = tl.load(
+        scales_ptr + rows0 * num_groups + groups0,
+        mask=valid0,
+        other=1.0,
+    ).to(tl.float32)
+    scaled0 = values0 / scales0
+    rounded0 = tl.inline_asm_elementwise(
+        "cvt.rni.s32.f32 $0, $1;",
+        "=r,f",
+        [scaled0],
+        dtype=tl.int32,
+        is_pure=True,
+        pack=1,
+    )
+    clamped0 = tl.minimum(tl.maximum(rounded0, -8), 7) + 8
+
+    rows1 = value_offsets1 // padded_in_features
+    cols1 = value_offsets1 % padded_in_features
+    groups1 = cols1 // group_size
+    valid1 = mask & (value_offsets1 < total_values)
+    weight_valid1 = valid1 & (cols1 < in_features)
+    values1 = tl.load(
+        weight_ptr + rows1 * in_features + cols1,
+        mask=weight_valid1,
+        other=0.0,
+    ).to(tl.float32)
+    scales1 = tl.load(
+        scales_ptr + rows1 * num_groups + groups1,
+        mask=valid1,
+        other=1.0,
+    ).to(tl.float32)
+    scaled1 = values1 / scales1
+    rounded1 = tl.inline_asm_elementwise(
+        "cvt.rni.s32.f32 $0, $1;",
+        "=r,f",
+        [scaled1],
+        dtype=tl.int32,
+        is_pure=True,
+        pack=1,
+    )
+    clamped1 = tl.minimum(tl.maximum(rounded1, -8), 7) + 8
+    clamped1 = tl.where(valid1, clamped1, 0)
+
+    packed = clamped0.to(tl.uint32) | (clamped1.to(tl.uint32) << 4)
+    tl.store(packed_ptr + byte_offsets, packed.to(tl.uint8), mask=mask)
+
+
+@triton.jit
+def _dequantize_adaln_weight_kernel(
+    packed_ptr,
+    scales_ptr,
+    output_ptr,
+    total: tl.constexpr,
+    in_features: tl.constexpr,
+    padded_in_features: tl.constexpr,
+    num_groups: tl.constexpr,
+    group_size: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = offsets < total
+    rows = offsets // in_features
+    cols = offsets % in_features
+    groups = cols // group_size
+    value_offsets = rows * padded_in_features + cols
+    byte_offsets = value_offsets // 2
+    shifts = (value_offsets % 2) * 4
+    packed = tl.load(packed_ptr + byte_offsets, mask=mask, other=0).to(tl.uint32)
+    unsigned = (packed >> shifts) & 15
+    signed = unsigned.to(tl.int32) - 8
+    scales = tl.load(scales_ptr + rows * num_groups + groups, mask=mask, other=0.0).to(
+        tl.float32
+    )
+    tl.store(output_ptr + offsets, signed.to(tl.float32) * scales, mask=mask)
+
+
 def quantize_rotated_activations_with_triton(
     rotated: torch.Tensor,
     norms: torch.Tensor,
@@ -205,6 +335,99 @@ def quantize_rotated_activations_with_triton(
         levels=centroids.numel(),
     )
     return output.reshape_as(rotated_contiguous)
+
+
+def quantize_adaln_weight_with_triton(
+    weight: torch.Tensor,
+    *,
+    group_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not weight.is_cuda:
+        raise RuntimeError("triton_cuda AdaLN RTN quantization requires CUDA tensors")
+    if weight.ndim != 2:
+        raise ValueError("weight must be a rank-2 tensor")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+
+    triton, _ = _load_triton()
+    weight_fp32 = weight.to(dtype=torch.float32).contiguous()
+    out_features, in_features = weight_fp32.shape
+    num_groups = triton.cdiv(in_features, group_size)
+    padded_in_features = num_groups * group_size
+    total_values = out_features * padded_in_features
+    packed_length = (total_values + 1) // 2
+    scales = torch.empty(out_features, num_groups, device=weight.device, dtype=torch.float32)
+    packed = torch.empty(packed_length, device=weight.device, dtype=torch.uint8)
+    if out_features == 0 or total_values == 0:
+        return packed, scales
+
+    scale_block_size = triton.next_power_of_2(group_size)
+    _adaln_group_scales_kernel[(out_features * num_groups,)](
+        weight_fp32,
+        scales,
+        out_features=out_features,
+        in_features=in_features,
+        num_groups=num_groups,
+        group_size=group_size,
+        block_size=scale_block_size,
+    )
+
+    pack_block_size = 256
+    _adaln_quantize_pack_int4_kernel[(triton.cdiv(packed_length, pack_block_size),)](
+        weight_fp32,
+        scales,
+        packed,
+        packed_length=packed_length,
+        total_values=total_values,
+        in_features=in_features,
+        padded_in_features=padded_in_features,
+        num_groups=num_groups,
+        group_size=group_size,
+        block_size=pack_block_size,
+    )
+    return packed, scales
+
+
+def dequantize_adaln_weight_with_triton(
+    packed_weight: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    out_features: int,
+    in_features: int,
+    group_size: int,
+    device: torch.device | str = "cuda",
+) -> torch.Tensor:
+    if not torch.cuda.is_available():
+        raise RuntimeError("triton_cuda backend requires CUDA tensors")
+    target_device = torch.device(device)
+    if target_device.type != "cuda":
+        raise RuntimeError("triton_cuda AdaLN dequant requires a CUDA device")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+
+    triton, _ = _load_triton()
+    num_groups = triton.cdiv(in_features, group_size)
+    padded_in_features = num_groups * group_size
+    total = out_features * in_features
+    packed = packed_weight.to(device=target_device, dtype=torch.uint8).contiguous()
+    scales_fp32 = scales.to(device=target_device, dtype=torch.float32).contiguous()
+    output = torch.empty(total, device=target_device, dtype=torch.float32)
+    if total == 0:
+        return output.reshape(out_features, in_features)
+
+    block_size = 256
+    _dequantize_adaln_weight_kernel[(triton.cdiv(total, block_size),)](
+        packed,
+        scales_fp32,
+        output,
+        total=total,
+        in_features=in_features,
+        padded_in_features=padded_in_features,
+        num_groups=num_groups,
+        group_size=group_size,
+        block_size=block_size,
+    )
+    return output.reshape(out_features, in_features)
 
 
 def dequantize_packed_weight_with_triton(
