@@ -53,10 +53,14 @@ class RPBHRotation:
 
         generator = torch.Generator(device="cpu")
         generator.manual_seed(int(self.seed))
-        permutation = torch.randperm(self.dim, generator=generator, dtype=torch.long)
+        permutation = torch.randperm(
+            self.dim, generator=generator, dtype=torch.long, device="cpu"
+        )
         inverse = torch.empty_like(permutation)
-        inverse[permutation] = torch.arange(self.dim, dtype=torch.long)
-        signs = torch.randint(0, 2, (self.dim,), generator=generator, dtype=torch.int8)
+        inverse[permutation] = torch.arange(self.dim, dtype=torch.long, device="cpu")
+        signs = torch.randint(
+            0, 2, (self.dim,), generator=generator, dtype=torch.int8, device="cpu"
+        )
         signs = signs.mul(2).sub(1)
 
         object.__setattr__(self, "block_size", block_size)

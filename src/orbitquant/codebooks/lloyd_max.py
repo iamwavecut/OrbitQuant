@@ -55,13 +55,15 @@ def get_codebook(dim: int, bits: int) -> LloydMaxCodebook:
         raise ValueError("bits must be in [1, 8]")
 
     levels = 2**bits
-    grid = torch.linspace(-1 + 1e-6, 1 - 1e-6, 20001, dtype=torch.float64)
+    grid = torch.linspace(
+        -1 + 1e-6, 1 - 1e-6, 20001, dtype=torch.float64, device="cpu"
+    )
     density = _coordinate_density(grid, dim)
     density = density / density.sum()
 
     cdf = torch.cumsum(density, dim=0)
-    quantiles = (torch.arange(levels, dtype=torch.float64) + 0.5) / levels
-    centroids = torch.empty(levels, dtype=torch.float64)
+    quantiles = (torch.arange(levels, dtype=torch.float64, device="cpu") + 0.5) / levels
+    centroids = torch.empty(levels, dtype=torch.float64, device="cpu")
     for idx, quantile in enumerate(quantiles):
         grid_idx = int(torch.searchsorted(cdf, quantile).clamp(max=grid.numel() - 1))
         centroids[idx] = grid[grid_idx]
@@ -70,9 +72,9 @@ def get_codebook(dim: int, bits: int) -> LloydMaxCodebook:
         boundaries = (centroids[:-1] + centroids[1:]) / 2
         edges = torch.cat(
             (
-                torch.tensor([-1.0], dtype=torch.float64),
+                torch.tensor([-1.0], dtype=torch.float64, device="cpu"),
                 boundaries,
-                torch.tensor([1.0], dtype=torch.float64),
+                torch.tensor([1.0], dtype=torch.float64, device="cpu"),
             )
         )
         next_centroids = torch.empty_like(centroids)

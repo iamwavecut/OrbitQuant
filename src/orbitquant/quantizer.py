@@ -99,6 +99,7 @@ class OrbitQuantizer(*_hf_base_classes()):
             super().__init__(quantization_config, **kwargs)
         if not hasattr(self, "modules_to_not_convert"):
             self.modules_to_not_convert = modules_to_not_convert
+        self._transformers_postload_quantization = False
 
     def is_serializable(self, *args: Any, **kwargs: Any) -> bool:
         return True
@@ -114,6 +115,8 @@ class OrbitQuantizer(*_hf_base_classes()):
     def param_needs_quantization(
         self, model: Any, param_name: str, *args: Any, **kwargs: Any
     ) -> bool:
+        if self._transformers_postload_quantization:
+            return False
         return self._param_action(model, param_name) in {"orbitquant", "adaln_int4_rtn"}
 
     def check_if_quantized_param(
@@ -195,6 +198,13 @@ class OrbitQuantizer(*_hf_base_classes()):
             )
         return True
 
+    def get_state_dict_and_metadata(
+        self, state_or_model: Any, safe_serialization: bool = False
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if isinstance(state_or_model, torch.nn.Module):
+            return state_or_model.state_dict(), {}
+        return state_or_model, {}
+
     @property
     def is_trainable(self) -> bool:
         return False
@@ -205,6 +215,9 @@ class OrbitQuantizer(*_hf_base_classes()):
 
     def _process_model_before_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
         model.quantization_config = self.quantization_config
+        self._transformers_postload_quantization = (
+            not self.pre_quantized and "checkpoint_files" in kwargs
+        )
         if self.pre_quantized:
             prepare_prequantized_linear_modules(model, self.quantization_config)
         return model
