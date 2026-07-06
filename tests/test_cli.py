@@ -29,6 +29,17 @@ def test_cli_native_suites_lists_no_range_smoke_settings(capsys):
     assert "range" not in output.lower()
 
 
+def test_cli_kernel_info_reports_backend_capabilities(capsys):
+    assert main(["kernel-info"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["cpu"]["available"] is True
+    assert payload["cpu"]["optimized"] is False
+    assert payload["mps"]["implementation"] == "torch_reference_mps"
+    assert payload["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert payload["triton_cuda"]["full_fusion"] is False
+
+
 def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys, tmp_path):
     assert (
         main(

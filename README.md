@@ -163,6 +163,16 @@ a real Triton kernel for codebook lookup and norm rescale. Full fused
 norm+RPBH+lookup kernels and the MPS optimized path are separate work. The
 reference PyTorch path remains the correctness baseline.
 
+Inspect backend availability and optimization status on the current machine:
+
+```bash
+orbitquant kernel-info
+```
+
+`kernel-info` reports `mps` as a PyTorch reference fallback until a native Metal
+kernel exists. It reports `triton_cuda` as partial optimization because only the
+codebook lookup and norm rescale stage is fused today.
+
 ## License
 
 The code in this repository is Apache-2.0. Quantized model artifacts must record

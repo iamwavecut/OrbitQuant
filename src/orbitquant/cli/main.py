@@ -33,6 +33,7 @@ from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
 from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import inspect_model_metadata
+from orbitquant.kernels import backend_capabilities
 from orbitquant.modeling import quantize_linear_modules
 from orbitquant.pipeline import load_quantized_pipeline_component
 
@@ -164,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser.add_argument("--model-id", required=True)
     inspect_parser.add_argument("--revision")
     subparsers.add_parser("native-suites", help="list native eval suites")
+    subparsers.add_parser("kernel-info", help="print activation kernel backend capabilities")
 
     native_plan_parser = subparsers.add_parser(
         "native-plan", help="print native quant/eval job matrix"
@@ -310,6 +312,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "native-suites":
         payload = [suite.__dict__ for suite in list_native_suites()]
         print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "kernel-info":
+        print(json.dumps(backend_capabilities(), indent=2))
         return 0
     if args.command == "native-plan":
         suites = None

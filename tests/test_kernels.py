@@ -4,7 +4,12 @@ import torch
 import orbitquant.kernels.dispatch as dispatch_module
 from orbitquant.codebooks import get_codebook
 from orbitquant.functional import quantize_activations
-from orbitquant.kernels import available_backends, quantize_activations_kernel, select_backend
+from orbitquant.kernels import (
+    available_backends,
+    backend_capabilities,
+    quantize_activations_kernel,
+    select_backend,
+)
 from orbitquant.rotations import RPBHRotation
 
 
@@ -41,6 +46,23 @@ def test_backend_selection_is_explicit_and_fails_loud_for_unavailable_backends()
             assert "MPS" in str(exc)
         else:
             raise AssertionError("unavailable MPS backend was accepted")
+
+
+def test_backend_capabilities_report_partial_and_fallback_kernel_status():
+    capabilities = backend_capabilities(
+        backends={"cpu": True, "mps": True, "triton_cuda": True}
+    )
+
+    assert capabilities["cpu"]["available"] is True
+    assert capabilities["cpu"]["optimized"] is False
+    assert capabilities["cpu"]["implementation"] == "torch_reference"
+    assert capabilities["mps"]["available"] is True
+    assert capabilities["mps"]["optimized"] is False
+    assert capabilities["mps"]["implementation"] == "torch_reference_mps"
+    assert capabilities["triton_cuda"]["available"] is True
+    assert capabilities["triton_cuda"]["optimized"] is True
+    assert capabilities["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert capabilities["triton_cuda"]["full_fusion"] is False
 
 
 def test_backend_selection_accepts_injected_availability_for_gpu_paths():

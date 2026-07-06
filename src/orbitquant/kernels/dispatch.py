@@ -9,6 +9,7 @@ from orbitquant.functional import quantize_activations
 from orbitquant.rotations import RPBHRotation
 
 BackendAvailability = dict[str, bool]
+BackendCapabilities = dict[str, dict[str, object]]
 
 
 def _triton_available() -> bool:
@@ -20,6 +21,45 @@ def available_backends() -> BackendAvailability:
         "cpu": True,
         "mps": bool(torch.backends.mps.is_available()),
         "triton_cuda": bool(torch.cuda.is_available() and _triton_available()),
+    }
+
+
+def backend_capabilities(backends: BackendAvailability | None = None) -> BackendCapabilities:
+    available = available_backends() if backends is None else backends
+    return {
+        "cpu": {
+            "available": bool(available["cpu"]),
+            "optimized": False,
+            "full_fusion": False,
+            "optimized_stage": None,
+            "device_types": ["cpu"],
+            "implementation": "torch_reference",
+            "notes": "Correctness baseline using the reference PyTorch path.",
+        },
+        "mps": {
+            "available": bool(available["mps"]),
+            "optimized": False,
+            "full_fusion": False,
+            "optimized_stage": None,
+            "device_types": ["mps"],
+            "implementation": "torch_reference_mps",
+            "notes": (
+                "Runs the reference PyTorch path on MPS tensors; native Metal "
+                "fusion is not implemented yet."
+            ),
+        },
+        "triton_cuda": {
+            "available": bool(available["triton_cuda"]),
+            "optimized": True,
+            "full_fusion": False,
+            "optimized_stage": "codebook_lookup_rescale",
+            "device_types": ["cuda"],
+            "implementation": "triton_codebook_rescale",
+            "notes": (
+                "Norm and RPBH rotation still run in PyTorch; Triton handles "
+                "codebook lookup and norm rescale."
+            ),
+        },
     }
 
 
