@@ -27,6 +27,15 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: HF integration tests
+        shell: bash
+        run: |
+          uv run python -c "import diffusers, transformers"
+          uv run pytest \
+            tests/test_diffusers_modelmixin_integration.py \
+            tests/test_transformers_pretrained_integration.py \
+            tests/test_quantizer_adapter.py
+
       - name: Test
         run: uv run pytest
 

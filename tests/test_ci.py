@@ -11,6 +11,11 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "uses: astral-sh/setup-uv@v8.3.0" in text
     assert "uv sync --extra dev --extra hf --extra eval" in text
     assert "uv run ruff check ." in text
+    assert "HF integration tests" in text
+    assert "import diffusers, transformers" in text
+    assert "tests/test_diffusers_modelmixin_integration.py" in text
+    assert "tests/test_transformers_pretrained_integration.py" in text
+    assert "tests/test_quantizer_adapter.py" in text
     assert "uv run pytest" in text
     assert "uv build" in text
     assert "uv pip install --python" in text
