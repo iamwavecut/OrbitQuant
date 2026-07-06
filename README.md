@@ -52,6 +52,35 @@ Validate an artifact before publishing or moving it:
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
 
+## Python API
+
+```python
+import torch
+from diffusers import DiffusionPipeline
+from orbitquant import (
+    OrbitQuantConfig,
+    quantize_pipeline,
+    save_quantized_pipeline_component,
+)
+
+pipe = DiffusionPipeline.from_pretrained(
+    "black-forest-labs/FLUX.2-klein-4B",
+    torch_dtype=torch.bfloat16,
+)
+config = OrbitQuantConfig(weight_bits=4, activation_bits=4, target_policy="flux2")
+summary = quantize_pipeline(pipe, config, component="transformer")
+save_quantized_pipeline_component(
+    pipe,
+    "./artifacts/flux2-klein-w4a4",
+    config=config,
+    component="transformer",
+    source_model_id="black-forest-labs/FLUX.2-klein-4B",
+    source_revision="resolved-revision",
+    source_license="apache-2.0",
+    summary=summary,
+)
+```
+
 Current artifacts include:
 
 - `model.safetensors`: packed quantized module state.
