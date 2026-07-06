@@ -11,6 +11,7 @@ from orbitquant.artifacts.checksums import sha256_file, write_sha256sums
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.layers import OrbitQuantLinear
 
 
 def _module_shapes(model: torch.nn.Module) -> dict[str, list[int]]:
@@ -23,6 +24,34 @@ def _module_shapes(model: torch.nn.Module) -> dict[str, list[int]]:
 def _summary_list(summary: Any, field: str) -> list[str]:
     value = getattr(summary, field, [])
     return list(value)
+
+
+def _codebook_tensors(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    tensors: dict[str, torch.Tensor] = {}
+    for module in model.modules():
+        if not isinstance(module, OrbitQuantLinear):
+            continue
+        for codebook in (module.weight_codebook, module.activation_codebook):
+            prefix = f"dim{codebook.dim}_bits{codebook.bits}"
+            tensors[f"{prefix}.centroids"] = codebook.centroids.detach().cpu()
+            tensors[f"{prefix}.boundaries"] = codebook.boundaries.detach().cpu()
+    return tensors
+
+
+def _rotation_tensors(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    tensors: dict[str, torch.Tensor] = {}
+    for module in model.modules():
+        if not isinstance(module, OrbitQuantLinear):
+            continue
+        rotation = module.rotation
+        prefix = f"dim{rotation.dim}_seed{rotation.seed}_block{rotation.block_size}"
+        tensors[f"{prefix}.permutation"] = rotation.permutation.detach().cpu()
+        tensors[f"{prefix}.inverse_permutation"] = rotation.inverse_permutation.detach().cpu()
+        tensors[f"{prefix}.signs"] = rotation.signs.detach().cpu()
+        tensors[f"{prefix}.normalization"] = torch.tensor(
+            [rotation.normalization], dtype=torch.float32
+        )
+    return tensors
 
 
 def save_orbitquant_artifact(
@@ -41,12 +70,18 @@ def save_orbitquant_artifact(
     tensor_path = output_path / "model.safetensors"
     state_dict = {key: value.detach().cpu() for key, value in model.state_dict().items()}
     save_file(state_dict, tensor_path)
+    codebook_path = output_path / "orbitquant_codebooks.safetensors"
+    save_file(_codebook_tensors(model), codebook_path)
+    rotation_path = output_path / "orbitquant_rotations.safetensors"
+    save_file(_rotation_tensors(model), rotation_path)
     config_path = output_path / "quantization_config.json"
     config_path.write_text(json.dumps(config.to_dict(), indent=2) + "\n", encoding="utf-8")
 
     skipped = _summary_list(summary, "skipped_modules")
     checksums = {
         "model.safetensors": sha256_file(tensor_path),
+        "orbitquant_codebooks.safetensors": sha256_file(codebook_path),
+        "orbitquant_rotations.safetensors": sha256_file(rotation_path),
         "quantization_config.json": sha256_file(config_path),
     }
     manifest = OrbitQuantManifest.from_config(

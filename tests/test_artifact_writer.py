@@ -39,12 +39,20 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert manifest["source_model_id"] == "example/model"
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
+    assert "orbitquant_codebooks.safetensors" in {path.name for path in tmp_path.iterdir()}
+    assert "orbitquant_rotations.safetensors" in {path.name for path in tmp_path.iterdir()}
     assert manifest["checksums"]["model.safetensors"] == next(
         line.split()[0]
         for line in (tmp_path / "SHA256SUMS").read_text().splitlines()
         if line.endswith("  model.safetensors")
     )
+    assert "orbitquant_codebooks.safetensors" in manifest["checksums"]
+    assert "orbitquant_rotations.safetensors" in manifest["checksums"]
+    codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
+    rotation_tensors = load_file(tmp_path / "orbitquant_rotations.safetensors")
     assert any(name.endswith("packed_weight_indices") for name in tensors)
+    assert any(name.endswith(".centroids") for name in codebook_tensors)
+    assert any(name.endswith(".permutation") for name in rotation_tensors)
 
 
 def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model(tmp_path):
