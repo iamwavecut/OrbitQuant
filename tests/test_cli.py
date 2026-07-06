@@ -155,6 +155,10 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--seeds 0,1" in script
     assert "--prompt-limit 1" in script
     assert script.count("orbitquant validate-artifact") == 4
+    assert script.count("orbitquant report") == 1
+    assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a6'}" in script
+    assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a4'}" in script
+    assert "--output reports/native" in script
     assert "range" not in script.lower()
 
 

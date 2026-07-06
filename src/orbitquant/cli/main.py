@@ -179,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     native_script_parser.add_argument("--suite", action="append")
     native_script_parser.add_argument("--output-root", default="artifacts/native")
+    native_script_parser.add_argument("--report-output", default="reports/native")
     native_script_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
     native_script_parser.add_argument("--prompt-limit", type=int)
     native_script_parser.add_argument("--device", default="cuda")
@@ -339,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
             build_native_run_script(
                 suites=suites,
                 output_root=args.output_root,
+                report_output_dir=args.report_output,
                 seeds=args.seeds,
                 prompt_limit=args.prompt_limit,
                 device=args.device,

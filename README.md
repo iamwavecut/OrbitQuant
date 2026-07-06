@@ -76,6 +76,8 @@ settings in this repository: FLUX/Z-Image at 1024x1024 and Wan at 832x480,
 81 frames, 50 steps, CFG 5.0. It does not create range smoke jobs. With
 `--resume`, the script skips quantization for existing valid artifacts and adds
 `generate-pack --resume-existing` so completed sample outputs are not regenerated.
+The script finishes with `orbitquant report`, writing Markdown/CSV readiness
+outputs under `reports/native` by default.
 
 Validate a generated native sample and its metadata after copying artifacts back
 from a pod:

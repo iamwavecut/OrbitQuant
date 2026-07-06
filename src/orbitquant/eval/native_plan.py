@@ -99,6 +99,7 @@ def build_native_run_script(
     *,
     suites: list[NativeSuite] | None = None,
     output_root: str | Path = "artifacts/native",
+    report_output_dir: str | Path = "reports/native",
     seeds: list[int] | None = None,
     prompt_limit: int | None = None,
     device: str = "cuda",
@@ -115,10 +116,12 @@ def build_native_run_script(
         "",
     ]
     lines.extend(_preflight_lines(selected_suites))
+    artifact_dirs = []
     for suite in selected_suites:
         for bit_setting in suite.bit_settings:
             weight_bits, activation_bits = _bits(bit_setting)
             artifact_dir = str(Path(output_root) / _artifact_name(suite.name, bit_setting))
+            artifact_dirs.append(artifact_dir)
             lines.append(f"# {suite.name} {bit_setting}")
             quantize_command = _cmd(
                 [
@@ -184,4 +187,9 @@ def build_native_run_script(
                 _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir])
             )
             lines.append("")
+    report_command = ["orbitquant", "report"]
+    for artifact_dir in artifact_dirs:
+        report_command.extend(["--artifact", artifact_dir])
+    report_command.extend(["--output", str(report_output_dir)])
+    lines.extend(["# Native report", _cmd(report_command), ""])
     return "\n".join(lines)
