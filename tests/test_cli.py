@@ -29,13 +29,35 @@ def test_cli_native_suites_lists_no_range_smoke_settings(capsys):
     assert "range" not in output.lower()
 
 
-def test_cli_kernel_info_reports_backend_capabilities(capsys):
+def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
+    monkeypatch.setattr(
+        cli_main,
+        "backend_capabilities",
+        lambda: {
+            "cpu": {
+                "available": True,
+                "optimized": False,
+            },
+            "mps": {
+                "implementation": "metal_codebook_rescale",
+                "optimized_stage": "codebook_lookup_rescale",
+                "full_fusion": False,
+            },
+            "triton_cuda": {
+                "optimized_stage": "codebook_lookup_rescale",
+                "full_fusion": False,
+            },
+        },
+    )
+
     assert main(["kernel-info"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["cpu"]["available"] is True
     assert payload["cpu"]["optimized"] is False
-    assert payload["mps"]["implementation"] == "torch_reference_mps"
+    assert payload["mps"]["implementation"] == "metal_codebook_rescale"
+    assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert payload["mps"]["full_fusion"] is False
     assert payload["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
     assert payload["triton_cuda"]["full_fusion"] is False
 

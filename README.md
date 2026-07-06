@@ -9,7 +9,8 @@ The package is intended to provide Hugging Face Diffusers/Transformers adapters,
 compact quantized artifacts, and native-resolution evaluation scripts.
 
 This repository is currently private and experimental. Do not treat the current
-runtime as optimized low-bit inference until the CUDA/MPS kernel work lands.
+runtime as fully optimized low-bit inference until the full CUDA/MPS fusion work
+lands.
 
 ## Initial Scope
 
@@ -159,9 +160,12 @@ Current artifacts include:
 
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
 The current `triton_cuda` path keeps norm and RPBH rotation in PyTorch but uses
-a real Triton kernel for codebook lookup and norm rescale. Full fused
-norm+RPBH+lookup kernels and the MPS optimized path are separate work. The
-reference PyTorch path remains the correctness baseline.
+a real Triton kernel for codebook lookup and norm rescale. On Apple Silicon,
+`mps` uses a Metal shader for the same codebook lookup/rescale stage when
+`torch.mps.compile_shader` is available, otherwise it falls back to the
+reference PyTorch path on MPS tensors. Full fused norm+RPBH+lookup kernels are
+still separate work. The reference PyTorch path remains the correctness
+baseline.
 
 Inspect backend availability and optimization status on the current machine:
 
@@ -169,9 +173,10 @@ Inspect backend availability and optimization status on the current machine:
 orbitquant kernel-info
 ```
 
-`kernel-info` reports `mps` as a PyTorch reference fallback until a native Metal
-kernel exists. It reports `triton_cuda` as partial optimization because only the
-codebook lookup and norm rescale stage is fused today.
+`kernel-info` reports whether `mps` is using `metal_codebook_rescale` or the
+`torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
+as partial optimization because only the codebook lookup and norm rescale stage
+is fused today.
 
 ## License
 

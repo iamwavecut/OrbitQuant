@@ -16,6 +16,14 @@ def _triton_available() -> bool:
     return importlib.util.find_spec("triton") is not None
 
 
+def _mps_metal_available() -> bool:
+    try:
+        from orbitquant.kernels.mps import mps_metal_available
+    except Exception:
+        return False
+    return mps_metal_available()
+
+
 def available_backends() -> BackendAvailability:
     return {
         "cpu": True,
@@ -26,6 +34,7 @@ def available_backends() -> BackendAvailability:
 
 def backend_capabilities(backends: BackendAvailability | None = None) -> BackendCapabilities:
     available = available_backends() if backends is None else backends
+    mps_optimized = bool(available["mps"] and _mps_metal_available())
     return {
         "cpu": {
             "available": bool(available["cpu"]),
@@ -38,14 +47,19 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
         },
         "mps": {
             "available": bool(available["mps"]),
-            "optimized": False,
+            "optimized": mps_optimized,
             "full_fusion": False,
-            "optimized_stage": None,
+            "optimized_stage": "codebook_lookup_rescale" if mps_optimized else None,
             "device_types": ["mps"],
-            "implementation": "torch_reference_mps",
+            "implementation": "metal_codebook_rescale" if mps_optimized else "torch_reference_mps",
             "notes": (
-                "Runs the reference PyTorch path on MPS tensors; native Metal "
-                "fusion is not implemented yet."
+                "Norm and RPBH rotation still run in PyTorch; a Metal shader "
+                "handles codebook lookup and norm rescale."
+                if mps_optimized
+                else (
+                    "Runs the reference PyTorch path on MPS tensors; native Metal "
+                    "shader support is not available in this environment."
+                )
             ),
         },
         "triton_cuda": {
@@ -107,7 +121,16 @@ def _mps_quantize_activations(
     codebook: LloydMaxCodebook,
     eps: float,
 ) -> torch.Tensor:
-    return _reference_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
+    if not _mps_metal_available():
+        return _reference_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
+    from orbitquant.kernels.mps import quantize_rotated_activations_with_mps
+
+    original_dtype = x.dtype
+    work = x.to(torch.float32)
+    norms = work.norm(dim=-1, keepdim=True).clamp_min(eps)
+    rotated = rotation.apply_to_activations(work / norms)
+    quantized = quantize_rotated_activations_with_mps(rotated, norms, codebook)
+    return quantized.to(original_dtype)
 
 
 def _triton_cuda_quantize_activations(
