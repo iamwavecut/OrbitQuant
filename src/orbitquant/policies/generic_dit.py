@@ -56,18 +56,19 @@ def classify_linear_modules(
         if not isinstance(module, torch.nn.Linear):
             continue
         lowered = name.lower()
+        in_transformer_block = any(token in lowered for token in _BLOCK_TOKENS)
         if explicit_skips and any(token in name for token in explicit_skips):
             decisions[name] = PolicyDecision(name, "bf16_skip", "explicit modules_to_not_convert")
-        elif any(token in lowered for token in _SKIP_TOKENS):
-            decisions[name] = PolicyDecision(
-                name, "bf16_skip", "non-transformer or boundary module"
-            )
         elif any(token in lowered for token in _MODULATION_TOKENS):
             decisions[name] = PolicyDecision(
                 name, "adaln_int4_rtn", "dynamic modulation projection"
             )
-        elif any(token in lowered for token in _BLOCK_TOKENS):
+        elif in_transformer_block:
             decisions[name] = PolicyDecision(name, "orbitquant", "transformer block linear")
+        elif any(token in lowered for token in _SKIP_TOKENS):
+            decisions[name] = PolicyDecision(
+                name, "bf16_skip", "non-transformer or boundary module"
+            )
         else:
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "outside known transformer block policy"
