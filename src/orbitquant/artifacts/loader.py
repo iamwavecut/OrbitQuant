@@ -7,6 +7,7 @@ import torch
 from safetensors.torch import load_file
 
 from orbitquant.adaln import RTNInt4Linear
+from orbitquant.artifacts.checksums import sha256_file
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
@@ -25,6 +26,19 @@ def _get_module(model: torch.nn.Module, module_name: str) -> torch.nn.Module:
     return module
 
 
+def _validate_manifest_checksums(artifact_path: Path, manifest: OrbitQuantManifest) -> None:
+    for relative_path, expected in manifest.checksums.items():
+        path = artifact_path / relative_path
+        if not path.is_file():
+            raise RuntimeError(f"artifact checksum target missing: {relative_path}")
+        actual = sha256_file(path)
+        if actual != expected:
+            raise RuntimeError(
+                f"artifact checksum mismatch for {relative_path}: "
+                f"expected {expected}, got {actual}"
+            )
+
+
 def load_orbitquant_artifact(
     model: torch.nn.Module,
     artifact_dir: str | Path,
@@ -38,6 +52,7 @@ def load_orbitquant_artifact(
     manifest = OrbitQuantManifest.from_dict(
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
+    _validate_manifest_checksums(artifact_path, manifest)
 
     for name in manifest.quantized_modules:
         module = _get_module(model, name)

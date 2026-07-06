@@ -39,6 +39,11 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert manifest["source_model_id"] == "example/model"
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
+    assert manifest["checksums"]["model.safetensors"] == next(
+        line.split()[0]
+        for line in (tmp_path / "SHA256SUMS").read_text().splitlines()
+        if line.endswith("  model.safetensors")
+    )
     assert any(name.endswith("packed_weight_indices") for name in tensors)
 
 
@@ -66,3 +71,27 @@ def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model
     restored_state = restored.state_dict()
     packed_key = "transformer_blocks.0.attn.to_q.packed_weight_indices"
     assert restored_state[packed_key].dtype == torch.uint8
+
+
+def test_load_orbitquant_artifact_rejects_checksum_mismatch(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    with (tmp_path / "model.safetensors").open("ab") as handle:
+        handle.write(b"corruption")
+
+    try:
+        load_orbitquant_artifact(TinyArtifactModel(), tmp_path)
+    except RuntimeError as exc:
+        assert "checksum mismatch" in str(exc)
+    else:
+        raise AssertionError("load_orbitquant_artifact accepted a corrupted artifact")
