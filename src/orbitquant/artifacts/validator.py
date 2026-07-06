@@ -20,6 +20,11 @@ _REQUIRED_ARTIFACT_FILES = (
     "orbitquant_rotations.safetensors",
     "prompts.json",
     "benchmark/summary.json",
+    "benchmark/original.metrics.jsonl",
+    "benchmark/orbitquant.metrics.jsonl",
+    "benchmark/original.metrics.csv",
+    "benchmark/orbitquant.metrics.csv",
+    "assets/.gitkeep",
 )
 
 

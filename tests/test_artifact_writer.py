@@ -56,6 +56,16 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert "orbitquant_rotations.safetensors" in manifest["checksums"]
     assert "prompts.json" in manifest["checksums"]
     assert "benchmark/summary.json" in manifest["checksums"]
+    assert (tmp_path / "benchmark" / "original.metrics.jsonl").is_file()
+    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").is_file()
+    assert (tmp_path / "benchmark" / "original.metrics.csv").is_file()
+    assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").is_file()
+    assert (tmp_path / "assets" / ".gitkeep").is_file()
+    assert "benchmark/original.metrics.jsonl" in manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
+    assert "benchmark/original.metrics.csv" in manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.csv" in manifest["checksums"]
+    assert "assets/.gitkeep" in manifest["checksums"]
     prompts = json.loads((tmp_path / "prompts.json").read_text())
     benchmark_summary = json.loads((tmp_path / "benchmark" / "summary.json").read_text())
     codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
@@ -64,6 +74,10 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert prompts == {"prompts": []}
     assert benchmark_summary["status"] == "not_run"
     assert benchmark_summary["source_model_id"] == "example/model"
+    assert (tmp_path / "benchmark" / "original.metrics.jsonl").read_text() == ""
+    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
+    assert (tmp_path / "benchmark" / "original.metrics.csv").read_text() == "metric,value\n"
+    assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").read_text() == "metric,value\n"
     assert any(name.endswith(".centroids") for name in codebook_tensors)
     assert any(name.endswith(".permutation") for name in rotation_tensors)
 
@@ -92,6 +106,29 @@ def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model
     restored_state = restored.state_dict()
     packed_key = "transformer_blocks.0.attn.to_q.packed_weight_indices"
     assert restored_state[packed_key].dtype == torch.uint8
+
+
+def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    result = validate_orbitquant_artifact(tmp_path)
+
+    assert "benchmark/original.metrics.jsonl" in result["required_files"]
+    assert "benchmark/orbitquant.metrics.jsonl" in result["required_files"]
+    assert "benchmark/original.metrics.csv" in result["required_files"]
+    assert "benchmark/orbitquant.metrics.csv" in result["required_files"]
+    assert "assets/.gitkeep" in result["required_files"]
 
 
 def test_load_orbitquant_artifact_uses_prequantized_skeletons(tmp_path, monkeypatch):
