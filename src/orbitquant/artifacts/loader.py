@@ -9,6 +9,7 @@ from safetensors.torch import load_file
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.artifacts.checksums import validate_checksums
 from orbitquant.artifacts.manifest import OrbitQuantManifest
+from orbitquant.artifacts.validator import validate_required_artifact_files
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import _parent_and_child, _set_child
@@ -33,6 +34,7 @@ def load_orbitquant_artifact(
     strict: bool = True,
 ) -> OrbitQuantManifest:
     artifact_path = Path(artifact_dir)
+    validate_required_artifact_files(artifact_path)
     config = OrbitQuantConfig.from_dict(
         json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
     )

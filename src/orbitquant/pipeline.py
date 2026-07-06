@@ -5,7 +5,11 @@ from typing import Any
 
 import torch
 
-from orbitquant.artifacts import OrbitQuantManifest, save_orbitquant_artifact
+from orbitquant.artifacts import (
+    OrbitQuantManifest,
+    load_orbitquant_artifact,
+    save_orbitquant_artifact,
+)
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.modeling import QuantizationSummary, quantize_linear_modules
 
@@ -51,3 +55,14 @@ def save_quantized_pipeline_component(
         source_license=source_license,
         summary=summary,
     )
+
+
+def load_quantized_pipeline_component(
+    pipeline: Any,
+    artifact_dir: str | Path,
+    *,
+    component: str = "transformer",
+    strict: bool = True,
+) -> OrbitQuantManifest:
+    target = _get_pipeline_component(pipeline, component)
+    return load_orbitquant_artifact(target, artifact_dir, strict=strict)

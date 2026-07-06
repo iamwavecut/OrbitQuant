@@ -143,6 +143,30 @@ def test_load_orbitquant_artifact_rejects_checksum_mismatch(tmp_path):
         raise AssertionError("load_orbitquant_artifact accepted a corrupted artifact")
 
 
+def test_load_orbitquant_artifact_rejects_missing_required_layout_file(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    (tmp_path / "README.md").unlink()
+
+    try:
+        load_orbitquant_artifact(TinyArtifactModel(), tmp_path)
+    except RuntimeError as exc:
+        assert "required artifact file missing" in str(exc)
+        assert "README.md" in str(exc)
+    else:
+        raise AssertionError("load_orbitquant_artifact accepted an incomplete artifact layout")
+
+
 def test_validate_orbitquant_artifact_rejects_missing_required_layout_file(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)

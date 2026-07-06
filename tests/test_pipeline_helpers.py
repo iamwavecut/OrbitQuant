@@ -2,7 +2,11 @@ import torch
 
 from orbitquant import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
-from orbitquant.pipeline import quantize_pipeline, save_quantized_pipeline_component
+from orbitquant.pipeline import (
+    load_quantized_pipeline_component,
+    quantize_pipeline,
+    save_quantized_pipeline_component,
+)
 
 
 class TinyPipeline:
@@ -44,6 +48,32 @@ def test_save_quantized_pipeline_component_writes_artifact(tmp_path):
     assert (tmp_path / "orbitquant_manifest.json").is_file()
 
 
+def test_load_quantized_pipeline_component_restores_saved_component_artifact(tmp_path):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    restored_pipeline = TinyPipeline()
+    manifest = load_quantized_pipeline_component(
+        restored_pipeline, tmp_path, component="transformer"
+    )
+
+    restored_layer = restored_pipeline.transformer.transformer_blocks[0]["attn"]["to_q"]
+    assert manifest.source_model_id == "example/model"
+    assert isinstance(restored_layer, OrbitQuantLinear)
+    assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
+
+
 def test_quantize_pipeline_fails_loud_for_missing_component():
     pipeline = TinyPipeline()
     config = OrbitQuantConfig(block_size=4)
@@ -55,3 +85,15 @@ def test_quantize_pipeline_fails_loud_for_missing_component():
         assert "unet" in str(exc)
     else:
         raise AssertionError("quantize_pipeline accepted a missing pipeline component")
+
+
+def test_load_quantized_pipeline_component_fails_loud_for_missing_component(tmp_path):
+    pipeline = TinyPipeline()
+
+    try:
+        load_quantized_pipeline_component(pipeline, tmp_path, component="unet")
+    except ValueError as exc:
+        assert "pipeline has no component" in str(exc)
+        assert "unet" in str(exc)
+    else:
+        raise AssertionError("load_quantized_pipeline_component accepted a missing component")

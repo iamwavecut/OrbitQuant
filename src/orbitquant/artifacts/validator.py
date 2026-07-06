@@ -23,7 +23,7 @@ _REQUIRED_ARTIFACT_FILES = (
 )
 
 
-def _validate_required_files(artifact_path: Path) -> None:
+def validate_required_artifact_files(artifact_path: Path) -> None:
     missing = [
         relative_path
         for relative_path in _REQUIRED_ARTIFACT_FILES
@@ -35,7 +35,7 @@ def _validate_required_files(artifact_path: Path) -> None:
 
 def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
     artifact_path = Path(artifact_dir)
-    _validate_required_files(artifact_path)
+    validate_required_artifact_files(artifact_path)
     config = OrbitQuantConfig.from_dict(
         json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
     )

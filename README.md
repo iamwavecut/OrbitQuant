@@ -59,6 +59,7 @@ import torch
 from diffusers import DiffusionPipeline
 from orbitquant import (
     OrbitQuantConfig,
+    load_quantized_pipeline_component,
     quantize_pipeline,
     save_quantized_pipeline_component,
 )
@@ -78,6 +79,16 @@ save_quantized_pipeline_component(
     source_revision="resolved-revision",
     source_license="apache-2.0",
     summary=summary,
+)
+
+restored_pipe = DiffusionPipeline.from_pretrained(
+    "black-forest-labs/FLUX.2-klein-4B",
+    torch_dtype=torch.bfloat16,
+)
+load_quantized_pipeline_component(
+    restored_pipe,
+    "./artifacts/flux2-klein-w4a4",
+    component="transformer",
 )
 ```
 
