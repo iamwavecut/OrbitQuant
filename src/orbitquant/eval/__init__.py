@@ -1,4 +1,3 @@
-from orbitquant.eval.assets import create_image_comparison_sheet, create_video_contact_sheet
 from orbitquant.eval.native_settings import NativeSuite, get_native_suite, list_native_suites
 from orbitquant.eval.prompts import (
     IMAGE_PROMPTS,
@@ -7,7 +6,6 @@ from orbitquant.eval.prompts import (
     default_prompt_payload,
     select_prompt_record,
 )
-from orbitquant.eval.report import NativeEvalReportResult, generate_native_eval_report
 
 __all__ = [
     "IMAGE_PROMPTS",
@@ -23,3 +21,26 @@ __all__ = [
     "list_native_suites",
     "select_prompt_record",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"create_image_comparison_sheet", "create_video_contact_sheet"}:
+        from orbitquant.eval.assets import (
+            create_image_comparison_sheet,
+            create_video_contact_sheet,
+        )
+
+        values = {
+            "create_image_comparison_sheet": create_image_comparison_sheet,
+            "create_video_contact_sheet": create_video_contact_sheet,
+        }
+        return values[name]
+    if name in {"NativeEvalReportResult", "generate_native_eval_report"}:
+        from orbitquant.eval.report import NativeEvalReportResult, generate_native_eval_report
+
+        values = {
+            "NativeEvalReportResult": NativeEvalReportResult,
+            "generate_native_eval_report": generate_native_eval_report,
+        }
+        return values[name]
+    raise AttributeError(f"module 'orbitquant.eval' has no attribute {name!r}")
