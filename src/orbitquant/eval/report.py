@@ -144,6 +144,51 @@ def _write_perf_table(path: Path, rows: list[dict[str, Any]]) -> None:
                 )
 
 
+def _asset_entries(metadata: dict[str, Any]) -> list[tuple[str, str]]:
+    entries = []
+    output_path = metadata.get("output_path")
+    if output_path:
+        entries.append(("output", str(output_path)))
+    contact_sheet_path = metadata.get("contact_sheet_path")
+    if contact_sheet_path:
+        entries.append(("contact_sheet", str(contact_sheet_path)))
+    for asset_path in metadata.get("asset_paths", []):
+        asset_type = "comparison" if "original_vs_orbitquant" in str(asset_path) else "asset"
+        entries.append((asset_type, str(asset_path)))
+    return entries
+
+
+def _write_asset_table(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "target_group",
+                "model_id",
+                "bits",
+                "split",
+                "suite",
+                "asset_type",
+                "path",
+            ]
+        )
+        for row in rows:
+            metadata = row["metadata"]
+            for asset_type, asset_path in _asset_entries(metadata):
+                writer.writerow(
+                    [
+                        row["target_group"],
+                        row["source_model_id"],
+                        row["bits"],
+                        row["split"],
+                        row["suite"],
+                        asset_type,
+                        asset_path,
+                    ]
+                )
+
+
 def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
         "| Group | Model | Bits | Split | Suite | Metrics |",
@@ -186,9 +231,11 @@ def generate_native_eval_report(
     image_table = tables_dir / "image_geneval.csv"
     video_table = tables_dir / "video_vbench.csv"
     perf_table = tables_dir / "perf.csv"
+    asset_table = tables_dir / "assets.csv"
     _write_metric_table(image_table, rows, family="image")
     _write_metric_table(video_table, rows, family="video")
     _write_perf_table(perf_table, rows)
+    _write_asset_table(asset_table, rows)
 
     date_label = report_date or date.today().strftime("%Y%m%d")
     report_path = output_path / f"orbitquant-native-eval-{date_label}.md"
@@ -210,6 +257,7 @@ def generate_native_eval_report(
         f"- Image GenEval: `{image_table.relative_to(output_path).as_posix()}`",
         f"- Video VBench: `{video_table.relative_to(output_path).as_posix()}`",
         f"- Performance: `{perf_table.relative_to(output_path).as_posix()}`",
+        f"- Generated Assets: `{asset_table.relative_to(output_path).as_posix()}`",
         "",
     ]
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
@@ -219,6 +267,7 @@ def generate_native_eval_report(
             "image_geneval": image_table,
             "video_vbench": video_table,
             "perf": perf_table,
+            "assets": asset_table,
         },
         rows=rows,
     )

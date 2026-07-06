@@ -39,7 +39,15 @@ def _write_artifact(path, *, source_model_id: str, target_policy: str):
         path,
         split="orbitquant",
         metrics={"geneval_overall": 0.71, "wall_time_seconds": 8.5},
-        metadata={"suite": "flux2-native", "seed": 1, "bit_setting": "W4A4"},
+        metadata={
+            "suite": "flux2-native",
+            "seed": 1,
+            "bit_setting": "W4A4",
+            "output_path": str(path / "assets" / "flux2-native_seed1_W4A4.png"),
+            "asset_paths": [
+                str(path / "assets" / "original_vs_orbitquant_flux2-native_seed1_W4A4.webp")
+            ],
+        },
     )
 
 
@@ -63,17 +71,25 @@ def test_generate_native_eval_report_writes_markdown_and_tables(tmp_path):
     assert (report_dir / "tables" / "image_geneval.csv").is_file()
     assert (report_dir / "tables" / "video_vbench.csv").is_file()
     assert (report_dir / "tables" / "perf.csv").is_file()
+    assert (report_dir / "tables" / "assets.csv").is_file()
 
     report = result.report_path.read_text()
     image_table = (report_dir / "tables" / "image_geneval.csv").read_text()
     perf_table = (report_dir / "tables" / "perf.csv").read_text()
+    assets_table = (report_dir / "tables" / "assets.csv").read_text()
 
     assert "Extra Targets" in report
     assert "black-forest-labs/FLUX.2-klein-4B" in report
     assert "W4A4" in report
     assert "geneval_overall" in report
+    assert "Generated Assets" in report
     assert "0.71" in image_table
     assert "8.5" in perf_table
+    assert "output" in assets_table
+    assert "comparison" in assets_table
+    assert "flux2-native_seed1_W4A4.png" in assets_table
+    assert "original_vs_orbitquant_flux2-native_seed1_W4A4.webp" in assets_table
+    assert result.table_paths["assets"] == report_dir / "tables" / "assets.csv"
     assert result.rows[0]["target_group"] == "extra"
 
 
