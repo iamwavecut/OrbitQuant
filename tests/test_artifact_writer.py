@@ -341,6 +341,65 @@ def test_create_artifact_image_comparisons_pairs_original_and_orbitquant_outputs
         assert sheet.size[0] == 32
 
 
+def test_create_artifact_image_comparisons_pairs_video_contact_sheets(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4, target_policy="wan")
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/wan",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    original_contact_sheet = tmp_path / "assets" / "wan-native_seed5_original_contact_sheet.webp"
+    orbitquant_contact_sheet = tmp_path / "assets" / "wan-native_seed5_W4A4_contact_sheet.webp"
+    Image.new("RGB", (16, 8), "red").save(original_contact_sheet)
+    Image.new("RGB", (16, 8), "blue").save(orbitquant_contact_sheet)
+    record_artifact_asset(tmp_path, original_contact_sheet)
+    record_artifact_asset(tmp_path, orbitquant_contact_sheet)
+    record_artifact_metrics(
+        tmp_path,
+        split="original",
+        metrics={"generated_samples": 1, "generated_frames": 81},
+        metadata={
+            "suite": "wan-native",
+            "seed": 5,
+            "bit_setting": "original",
+            "prompt_record": {"id": "simple-motion"},
+            "output_path": str(tmp_path / "assets" / "wan-native_seed5_original.mp4"),
+            "asset_paths": [str(original_contact_sheet)],
+        },
+    )
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={"generated_samples": 1, "generated_frames": 81},
+        metadata={
+            "suite": "wan-native",
+            "seed": 5,
+            "bit_setting": "W4A4",
+            "prompt_record": {"id": "simple-motion"},
+            "output_path": str(tmp_path / "assets" / "wan-native_seed5_W4A4.mp4"),
+            "asset_paths": [str(orbitquant_contact_sheet)],
+        },
+    )
+
+    comparisons = create_artifact_image_comparisons(tmp_path)
+
+    result = validate_orbitquant_artifact(tmp_path)
+    assert comparisons == [
+        "assets/original_vs_orbitquant_wan-native_seed5_W4A4_simple-motion.webp"
+    ]
+    comparison_path = tmp_path / comparisons[0]
+    assert comparison_path.is_file()
+    assert result["checksums"][comparisons[0]] == sha256_file(comparison_path)
+    with Image.open(comparison_path) as sheet:
+        assert sheet.size[0] == 32
+
+
 def test_create_artifact_image_comparisons_skips_unpaired_outputs(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)

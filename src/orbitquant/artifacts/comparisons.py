@@ -41,6 +41,29 @@ def _output_path(artifact_path: Path, metadata: dict[str, Any]) -> Path | None:
     return path if path.is_absolute() else artifact_path / path
 
 
+def _artifact_path(artifact_path: Path, value: Any) -> Path:
+    path = Path(str(value))
+    return path if path.is_absolute() else artifact_path / path
+
+
+def _comparison_source_path(artifact_path: Path, metadata: dict[str, Any]) -> Path | None:
+    output_path = _output_path(artifact_path, metadata)
+    if output_path is not None and output_path.suffix.lower() in _IMAGE_SUFFIXES:
+        return output_path
+
+    contact_sheet_path = metadata.get("contact_sheet_path")
+    if contact_sheet_path:
+        path = _artifact_path(artifact_path, contact_sheet_path)
+        if path.suffix.lower() in _IMAGE_SUFFIXES:
+            return path
+
+    for asset_path in metadata.get("asset_paths", []):
+        path = _artifact_path(artifact_path, asset_path)
+        if "contact_sheet" in path.name and path.suffix.lower() in _IMAGE_SUFFIXES:
+            return path
+    return None
+
+
 def _comparison_key(metadata: dict[str, Any]) -> tuple[str, str, str]:
     return (
         str(metadata.get("suite", "")),
@@ -53,8 +76,8 @@ def _indexed_records(artifact_path: Path, split: str) -> dict[tuple[str, str, st
     records = {}
     for record in _read_jsonl(artifact_path / "benchmark" / f"{split}.metrics.jsonl"):
         metadata = dict(record.get("metadata", {}))
-        path = _output_path(artifact_path, metadata)
-        if path is None or path.suffix.lower() not in _IMAGE_SUFFIXES or not path.is_file():
+        path = _comparison_source_path(artifact_path, metadata)
+        if path is None or not path.is_file():
             continue
         records[_comparison_key(metadata)] = {"metadata": metadata, "path": path}
     return records
