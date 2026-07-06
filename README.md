@@ -109,8 +109,9 @@ Current artifacts include:
 - `SHA256SUMS`: checksums for all artifact files.
 
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
-The current CUDA/MPS entries are dispatch contracts for optimized kernels; the
-reference PyTorch path remains the correctness baseline.
+The current CUDA/MPS entries are explicit dispatch hooks with reference-equivalent
+fallbacks; fused optimized kernels are separate GPU-validated work. The reference
+PyTorch path remains the correctness baseline.
 
 ## License
 
