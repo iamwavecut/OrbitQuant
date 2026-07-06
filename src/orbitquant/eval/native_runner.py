@@ -219,6 +219,98 @@ def _scheduler_metadata(pipeline: Any) -> dict[str, Any] | None:
     }
 
 
+def _metadata_mismatch(key: str, expected: Any, actual: Any) -> str | None:
+    if isinstance(expected, float):
+        try:
+            if abs(float(actual) - expected) <= 1e-9:
+                return None
+        except (TypeError, ValueError):
+            pass
+    elif actual == expected:
+        return None
+    return f"{key}: expected {expected!r}, got {actual!r}"
+
+
+def validate_native_generation_output(
+    output_path: str | Path,
+    metadata_path: str | Path,
+    suite: NativeSuite,
+    *,
+    seed: int,
+    bit_setting: str,
+    prompt: str | None = None,
+    model_id: str | None = None,
+) -> dict[str, Any]:
+    output = Path(output_path)
+    metadata_file = Path(metadata_path)
+    if not output.is_file():
+        raise RuntimeError(f"native generation output missing: {output}")
+    if output.stat().st_size <= 0:
+        raise RuntimeError(f"native generation output is empty: {output}")
+    if not metadata_file.is_file():
+        raise RuntimeError(f"native generation metadata missing: {metadata_file}")
+    try:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"native generation metadata is not valid JSON: {metadata_file}"
+        ) from exc
+
+    expected_model_id = suite.model_id if model_id is None else model_id
+    mismatches = [
+        mismatch
+        for mismatch in (
+            _metadata_mismatch("suite", suite.name, metadata.get("suite")),
+            _metadata_mismatch("model_id", expected_model_id, metadata.get("model_id")),
+            _metadata_mismatch("seed", seed, metadata.get("seed")),
+            _metadata_mismatch("height", suite.height, metadata.get("height")),
+            _metadata_mismatch("width", suite.width, metadata.get("width")),
+            _metadata_mismatch("frames", suite.frames, metadata.get("frames")),
+            _metadata_mismatch("steps", suite.steps, metadata.get("steps")),
+            _metadata_mismatch("guidance", suite.guidance, metadata.get("guidance")),
+            None
+            if prompt is None
+            else _metadata_mismatch("prompt", prompt, metadata.get("prompt")),
+        )
+        if mismatch is not None
+    ]
+
+    if bit_setting == "original":
+        if metadata.get("quantization") is not None:
+            mismatches.append("quantization: expected None for original split")
+    else:
+        weight_bits, activation_bits = parse_bit_setting(bit_setting)
+        quantization = metadata.get("quantization")
+        config = quantization.get("config") if isinstance(quantization, Mapping) else None
+        if not isinstance(config, Mapping):
+            mismatches.append("quantization.config: expected quantized metadata")
+        else:
+            for key, expected in (
+                ("weight_bits", weight_bits),
+                ("activation_bits", activation_bits),
+            ):
+                mismatch = _metadata_mismatch(
+                    f"quantization.config.{key}",
+                    expected,
+                    config.get(key),
+                )
+                if mismatch is not None:
+                    mismatches.append(mismatch)
+
+    if mismatches:
+        raise RuntimeError(
+            "native generation metadata mismatch: " + "; ".join(mismatches)
+        )
+    return {
+        "valid": True,
+        "output_path": str(output),
+        "metadata_path": str(metadata_file),
+        "suite": suite.name,
+        "seed": seed,
+        "bit_setting": bit_setting,
+    }
+
+
 def run_native_generation(
     pipeline: Any,
     suite: NativeSuite,
@@ -231,6 +323,7 @@ def run_native_generation(
     quantization_summary: QuantizationSummary | None = None,
     quantization_label: str | None = None,
     runtime_dtype: str | None = None,
+    model_id: str | None = None,
 ) -> NativeGenerationResult:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -275,7 +368,7 @@ def run_native_generation(
     metadata_path = _metadata_path(output_path)
     metadata = {
         "suite": suite.name,
-        "model_id": suite.model_id,
+        "model_id": suite.model_id if model_id is None else model_id,
         "prompt": prompt,
         "seed": seed,
         "height": suite.height,

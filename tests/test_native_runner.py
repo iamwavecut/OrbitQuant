@@ -19,6 +19,7 @@ from orbitquant.eval.native_runner import (
     output_path_for_suite,
     parse_bit_setting,
     run_native_generation,
+    validate_native_generation_output,
 )
 from orbitquant.layers import OrbitQuantLinear
 
@@ -237,3 +238,83 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
     }
     assert pipeline.kwargs["height"] == 1024
     assert pipeline.kwargs["width"] == 1024
+
+
+def test_validate_native_generation_output_accepts_native_metadata(tmp_path):
+    suite = get_native_suite("flux2-native")
+    output_path = tmp_path / "flux2-native_seed5_W4A4_simple-object.png"
+    Image.new("RGB", (16, 16), "red").save(output_path)
+    metadata_path = output_path.with_suffix(".png.json")
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "suite": suite.name,
+                "model_id": suite.model_id,
+                "prompt": "A native image",
+                "seed": 5,
+                "height": suite.height,
+                "width": suite.width,
+                "frames": suite.frames,
+                "steps": suite.steps,
+                "guidance": suite.guidance,
+                "quantization": {
+                    "config": {
+                        "weight_bits": 4,
+                        "activation_bits": 4,
+                    }
+                },
+            }
+        )
+        + "\n"
+    )
+
+    payload = validate_native_generation_output(
+        output_path,
+        metadata_path,
+        suite,
+        seed=5,
+        bit_setting="W4A4",
+        prompt="A native image",
+    )
+
+    assert payload["valid"] is True
+    assert payload["suite"] == "flux2-native"
+
+
+def test_validate_native_generation_output_rejects_wrong_native_settings(tmp_path):
+    suite = get_native_suite("wan-native")
+    output_path = tmp_path / "wan-native_seed3_W4A4_motion.mp4"
+    output_path.write_bytes(b"fake mp4")
+    metadata_path = output_path.with_suffix(".mp4.json")
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "suite": suite.name,
+                "model_id": suite.model_id,
+                "prompt": "A native video",
+                "seed": 3,
+                "height": 512,
+                "width": suite.width,
+                "frames": suite.frames,
+                "steps": suite.steps,
+                "guidance": suite.guidance,
+                "quantization": {
+                    "config": {
+                        "weight_bits": 4,
+                        "activation_bits": 4,
+                    }
+                },
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(RuntimeError, match="height"):
+        validate_native_generation_output(
+            output_path,
+            metadata_path,
+            suite,
+            seed=3,
+            bit_setting="W4A4",
+            prompt="A native video",
+        )

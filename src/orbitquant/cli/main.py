@@ -27,6 +27,7 @@ from orbitquant.eval.native_runner import (
     output_path_for_suite,
     run_native_generation,
     target_policy_for_suite,
+    validate_native_generation_output,
 )
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
@@ -471,7 +472,20 @@ def main(argv: list[str] | None = None) -> int:
                 and expected_output_path.is_file()
                 and expected_metadata_path.is_file()
             ):
-                skipped_outputs.append(str(expected_output_path))
+                try:
+                    validate_native_generation_output(
+                        expected_output_path,
+                        expected_metadata_path,
+                        suite,
+                        seed=seed,
+                        bit_setting=bit_setting,
+                        prompt=prompt_record["prompt"],
+                        model_id=artifact_validation["source_model_id"],
+                    )
+                except RuntimeError:
+                    pending_jobs.append(job)
+                else:
+                    skipped_outputs.append(str(expected_output_path))
             else:
                 pending_jobs.append(job)
         if args.dry_run:
@@ -539,6 +553,16 @@ def main(argv: list[str] | None = None) -> int:
                 quantization_summary=None,
                 quantization_label=variant,
                 runtime_dtype=args.dtype,
+                model_id=artifact_validation["source_model_id"],
+            )
+            validate_native_generation_output(
+                result.output_path,
+                result.metadata_path,
+                suite,
+                seed=seed,
+                bit_setting=bit_setting,
+                prompt=prompt_record["prompt"],
+                model_id=artifact_validation["source_model_id"],
             )
             metrics, comparisons = _record_generated_artifact(
                 artifact_path,
@@ -703,6 +727,16 @@ def main(argv: list[str] | None = None) -> int:
             quantization_summary=quantization_summary,
             quantization_label=bit_setting,
             runtime_dtype=args.dtype,
+            model_id=model_id,
+        )
+        validate_native_generation_output(
+            result.output_path,
+            result.metadata_path,
+            suite,
+            seed=args.seed,
+            bit_setting="original" if bit_setting is None else bit_setting,
+            prompt=prompt,
+            model_id=model_id,
         )
         artifact_metrics = None
         if artifact_path is not None:
