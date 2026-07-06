@@ -31,6 +31,7 @@ orbitquant quantize \
   --target-policy flux2 \
   --weight-bits 4 \
   --activation-bits 4 \
+  --activation-kernel-backend auto \
   --output ./artifacts/flux2-klein-w4a4
 ```
 
@@ -41,7 +42,8 @@ orbitquant generate \
   --suite flux2-native \
   --prompt "A small red cube on a white table" \
   --output ./artifacts/native-smoke/flux2 \
-  --bit-setting W4A4
+  --bit-setting W4A4 \
+  --activation-kernel-backend auto
 ```
 
 Validate an artifact before publishing or moving it:
@@ -49,6 +51,22 @@ Validate an artifact before publishing or moving it:
 ```bash
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
+
+Current artifacts include:
+
+- `model.safetensors`: packed quantized module state.
+- `quantization_config.json`: serialized `OrbitQuantConfig`.
+- `orbitquant_manifest.json`: source provenance, quantization policy, tensor
+  shapes, runtime settings, and checksums.
+- `orbitquant_codebooks.safetensors`: Lloyd-Max centroids and boundaries for
+  the dimensions and bit-widths used by the artifact.
+- `orbitquant_rotations.safetensors`: deterministic RPBH permutation, inverse
+  permutation, signs, and normalization tensors.
+- `SHA256SUMS`: checksums for all artifact files.
+
+`activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
+The current CUDA/MPS entries are dispatch contracts for optimized kernels; the
+reference PyTorch path remains the correctness baseline.
 
 ## License
 
