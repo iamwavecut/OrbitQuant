@@ -84,6 +84,9 @@ class TinyZImageNames(torch.nn.Module):
                 )
             ]
         )
+        self.t_embedder = torch.nn.ModuleDict(
+            {"mlp": torch.nn.ModuleList([torch.nn.Linear(16, 16)])}
+        )
         self.final_layer = torch.nn.ModuleDict({"linear": torch.nn.Linear(16, 8)})
 
 
@@ -95,6 +98,7 @@ def test_z_image_policy_covers_attention_ffn_and_adaln_but_skips_final_layer():
     assert decisions["transformer_blocks.0.attention.to_q"].action == "orbitquant"
     assert decisions["transformer_blocks.0.feed_forward.net.0"].action == "orbitquant"
     assert decisions["transformer_blocks.0.adaLN_modulation.0"].action == "adaln_int4_rtn"
+    assert decisions["t_embedder.mlp.0"].action == "bf16_skip"
     assert decisions["final_layer.linear"].action == "bf16_skip"
 
 

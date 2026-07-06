@@ -14,22 +14,23 @@ class PolicyDecision:
     reason: str
 
 
-_SKIP_TOKENS = (
+_HARD_SKIP_TOKENS = (
     "embed",
     "embedding",
     "time_text_embed",
     "time_in",
     "time_out",
     "timestep",
-    "proj_out",
-    "final",
-    "unpatchify",
+    "t_embedder",
+    "time_proj",
     "vae",
     "text_encoder",
     "scheduler",
     "image_processor",
     "safety_checker",
 )
+
+_BOUNDARY_SKIP_TOKENS = ("proj_out", "final", "unpatchify")
 
 _BLOCK_TOKENS = (
     "transformer_blocks",
@@ -59,13 +60,17 @@ def classify_linear_modules(
         in_transformer_block = any(token in lowered for token in _BLOCK_TOKENS)
         if explicit_skips and any(token in name for token in explicit_skips):
             decisions[name] = PolicyDecision(name, "bf16_skip", "explicit modules_to_not_convert")
+        elif any(token in lowered for token in _HARD_SKIP_TOKENS):
+            decisions[name] = PolicyDecision(
+                name, "bf16_skip", "embedding, timestep, or non-denoiser module"
+            )
         elif any(token in lowered for token in _MODULATION_TOKENS):
             decisions[name] = PolicyDecision(
                 name, "adaln_int4_rtn", "dynamic modulation projection"
             )
         elif in_transformer_block:
             decisions[name] = PolicyDecision(name, "orbitquant", "transformer block linear")
-        elif any(token in lowered for token in _SKIP_TOKENS):
+        elif any(token in lowered for token in _BOUNDARY_SKIP_TOKENS):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "non-transformer or boundary module"
             )
