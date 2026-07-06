@@ -29,6 +29,51 @@ def test_cli_native_suites_lists_no_range_smoke_settings(capsys):
     assert "range" not in output.lower()
 
 
+def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "native-plan",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--seeds",
+                "0",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    jobs = payload["jobs"]
+    assert payload["job_count"] == 14
+    assert {job["suite"] for job in jobs} == {
+        "flux2-native",
+        "flux1-schnell-native",
+        "z-image-native",
+        "wan-native",
+    }
+    assert sum(1 for job in jobs if job["suite"] == "wan-native") == 2
+    wan_w4a6 = next(
+        job
+        for job in jobs
+        if job["suite"] == "wan-native" and job["bit_setting"] == "W4A6"
+    )
+    flux1_w3a3 = next(
+        job
+        for job in jobs
+        if job["suite"] == "flux1-schnell-native" and job["bit_setting"] == "W3A3"
+    )
+    assert wan_w4a6["width"] == 832
+    assert wan_w4a6["height"] == 480
+    assert wan_w4a6["frames"] == 81
+    assert wan_w4a6["metric"] == "vbench"
+    assert flux1_w3a3["width"] == 1024
+    assert flux1_w3a3["height"] == 1024
+    assert flux1_w3a3["guidance"] == 0.0
+    assert flux1_w3a3["artifact_dir"].endswith("flux1-schnell-native-w3a3")
+    assert "range" not in json.dumps(payload).lower()
+
+
 def test_cli_generate_requires_prompt_and_output():
     try:
         main(["generate", "--suite", "flux2-native"])

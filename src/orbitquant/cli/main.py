@@ -18,6 +18,7 @@ from orbitquant.artifacts import (
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.metrics import load_metric_json
+from orbitquant.eval.native_plan import build_native_eval_plan
 from orbitquant.eval.native_runner import (
     apply_quantization_to_pipeline,
     build_pipeline_kwargs,
@@ -142,6 +143,13 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser.add_argument("--revision")
     subparsers.add_parser("native-suites", help="list native eval suites")
 
+    native_plan_parser = subparsers.add_parser(
+        "native-plan", help="print native quant/eval job matrix"
+    )
+    native_plan_parser.add_argument("--suite", action="append")
+    native_plan_parser.add_argument("--output-root", default="artifacts/native")
+    native_plan_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
+
     quantize_parser = subparsers.add_parser("quantize", help="quantize a Diffusers component")
     quantize_parser.add_argument("--model-id")
     quantize_parser.add_argument("--suite")
@@ -250,6 +258,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "native-suites":
         payload = [suite.__dict__ for suite in list_native_suites()]
         print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "native-plan":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        print(
+            json.dumps(
+                build_native_eval_plan(
+                    suites=suites,
+                    output_root=args.output_root,
+                    seeds=args.seeds,
+                ),
+                indent=2,
+            )
+        )
         return 0
     if args.command == "quantize":
         device = _resolve_device(args.device)
