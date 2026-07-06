@@ -6,6 +6,9 @@ def test_github_actions_cpu_unit_workflow_exists():
 
     assert workflow.is_file()
     text = workflow.read_text(encoding="utf-8")
+    assert "uses: actions/checkout@v7" in text
+    assert "uses: actions/setup-python@v6" in text
+    assert "uses: astral-sh/setup-uv@v8" in text
     assert "uv sync --extra dev --extra hf --extra eval" in text
     assert "uv run ruff check ." in text
     assert "uv run pytest" in text
