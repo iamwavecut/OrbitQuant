@@ -43,9 +43,14 @@ class OrbitQuantizer(*_hf_base_classes()):
     ) -> None:
         if isinstance(quantization_config, dict):
             quantization_config = OrbitQuantConfig.from_dict(quantization_config)
-        self.quantization_config = quantization_config
-        self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
-        self.pre_quantized = kwargs.pop("pre_quantized", False)
+        modules_to_not_convert = kwargs.get("modules_to_not_convert", [])
+        if self.__class__.__bases__ == (object,):
+            self.quantization_config = quantization_config
+            self.pre_quantized = kwargs.get("pre_quantized", True)
+        else:
+            super().__init__(quantization_config, **kwargs)
+        if not hasattr(self, "modules_to_not_convert"):
+            self.modules_to_not_convert = modules_to_not_convert
 
     def is_serializable(self, *args: Any, **kwargs: Any) -> bool:
         return True

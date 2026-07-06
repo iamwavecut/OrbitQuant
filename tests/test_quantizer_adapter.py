@@ -25,6 +25,14 @@ def test_quantizer_adapter_reports_no_calibration_requirement():
     assert quantizer.is_serializable() is True
 
 
+def test_quantizer_preserves_hf_pre_quantized_constructor_semantics():
+    default_quantizer = OrbitQuantizer(OrbitQuantConfig())
+    on_the_fly_quantizer = OrbitQuantizer(OrbitQuantConfig(), pre_quantized=False)
+
+    assert default_quantizer.pre_quantized is True
+    assert on_the_fly_quantizer.pre_quantized is False
+
+
 def test_hf_registration_is_best_effort_without_optional_dependencies():
     result = register_hf_quantizers()
 
