@@ -39,7 +39,7 @@ def _module_and_tensor_name(model: Any, param_name: str) -> tuple[Any, str]:
     parts = param_name.split(".")
     module = model
     for part in parts[:-1]:
-        if part.isdigit() and isinstance(module, (torch.nn.ModuleList, torch.nn.Sequential)):
+        if part.isdigit() and isinstance(module, torch.nn.ModuleList | torch.nn.Sequential):
             module = module[int(part)]
         elif isinstance(module, torch.nn.ModuleDict):
             module = module[part]

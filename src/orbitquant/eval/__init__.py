@@ -11,6 +11,7 @@ __all__ = [
     "IMAGE_PROMPTS",
     "NativeEvalReportResult",
     "VIDEO_PROMPTS",
+    "build_external_eval_plan",
     "build_prompt_seed_jobs",
     "NativeSuite",
     "create_image_comparison_sheet",
@@ -43,4 +44,8 @@ def __getattr__(name: str):
             "generate_native_eval_report": generate_native_eval_report,
         }
         return values[name]
+    if name == "build_external_eval_plan":
+        from orbitquant.eval.external_plan import build_external_eval_plan
+
+        return build_external_eval_plan
     raise AttributeError(f"module 'orbitquant.eval' has no attribute {name!r}")

@@ -17,7 +17,7 @@ def _normalize_json_value(value: Any) -> Any:
         return str(value)
     if isinstance(value, dict):
         return {str(key): _normalize_json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_normalize_json_value(item) for item in value]
     item = getattr(value, "item", None)
     if callable(item):
@@ -30,7 +30,7 @@ def _normalize_json_value(value: Any) -> Any:
 
 def _csv_value(value: Any) -> Any:
     normalized = _normalize_json_value(value)
-    if isinstance(normalized, (dict, list)):
+    if isinstance(normalized, dict | list):
         return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
     return normalized
 

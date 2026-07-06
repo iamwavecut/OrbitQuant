@@ -113,6 +113,40 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys
     assert "range" not in json.dumps(payload).lower()
 
 
+def test_cli_external_eval_plan_lists_metric_runner_import_commands(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "external-eval-plan",
+                "--suite",
+                "wan-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--metrics-root",
+                str(tmp_path / "metrics"),
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["job_count"] == 4
+    job = next(
+        item
+        for item in payload["jobs"]
+        if item["bit_setting"] == "W4A6" and item["split"] == "orbitquant"
+    )
+    assert job["suite"] == "wan-native"
+    assert job["metric"] == "vbench"
+    assert job["artifact_dir"].endswith("wan-native-w4a6")
+    assert job["metrics_json"].endswith("wan-native-w4a6_orbitquant_vbench.json")
+    assert "vbench" in job["eval_command"]
+    assert "orbitquant record-metrics" in job["import_command"]
+    assert "--metric-prefix vbench" in job["import_command"]
+    assert "--split orbitquant" in job["import_command"]
+    assert "range" not in json.dumps(payload).lower()
+
+
 def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tmp_path):
     assert (
         main(

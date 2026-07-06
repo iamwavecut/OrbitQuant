@@ -79,6 +79,14 @@ settings in this repository: FLUX/Z-Image at 1024x1024 and Wan at 832x480,
 The script finishes with `orbitquant report`, writing Markdown/CSV readiness
 outputs under `reports/native` by default.
 
+Print the external GenEval/VBench jobs needed after native samples are created:
+
+```bash
+orbitquant external-eval-plan \
+  --output-root ./artifacts/native \
+  --metrics-root ./metrics/native
+```
+
 Validate a generated native sample and its metadata after copying artifacts back
 from a pod:
 

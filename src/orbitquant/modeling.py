@@ -30,7 +30,7 @@ def _parent_and_child(model: torch.nn.Module, module_name: str) -> tuple[torch.n
     parts = module_name.split(".")
     parent = model
     for part in parts[:-1]:
-        if part.isdigit() and isinstance(parent, (torch.nn.ModuleList, torch.nn.Sequential)):
+        if part.isdigit() and isinstance(parent, torch.nn.ModuleList | torch.nn.Sequential):
             parent = parent[int(part)]
         else:
             parent = getattr(parent, part)
@@ -38,7 +38,7 @@ def _parent_and_child(model: torch.nn.Module, module_name: str) -> tuple[torch.n
 
 
 def _set_child(parent: torch.nn.Module, child_name: str, module: torch.nn.Module) -> None:
-    if child_name.isdigit() and isinstance(parent, (torch.nn.ModuleList, torch.nn.Sequential)):
+    if child_name.isdigit() and isinstance(parent, torch.nn.ModuleList | torch.nn.Sequential):
         parent[int(child_name)] = module
     elif isinstance(parent, torch.nn.ModuleDict):
         parent[child_name] = module

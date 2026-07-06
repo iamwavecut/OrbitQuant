@@ -170,7 +170,7 @@ def extract_video_frames(output: Any) -> Any:
     frames = getattr(output, "frames", None)
     if frames is None:
         raise ValueError("pipeline output does not contain frames")
-    if isinstance(frames, (list, tuple)) and len(frames) == 0:
+    if isinstance(frames, list | tuple) and len(frames) == 0:
         raise ValueError("pipeline output does not contain frames")
     return frames[0]
 

@@ -18,7 +18,7 @@ from orbitquant.modeling import _parent_and_child, _set_child
 def _get_module(model: torch.nn.Module, module_name: str) -> torch.nn.Module:
     module = model
     for part in module_name.split("."):
-        if part.isdigit() and isinstance(module, (torch.nn.ModuleList, torch.nn.Sequential)):
+        if part.isdigit() and isinstance(module, torch.nn.ModuleList | torch.nn.Sequential):
             module = module[int(part)]
         elif isinstance(module, torch.nn.ModuleDict):
             module = module[part]

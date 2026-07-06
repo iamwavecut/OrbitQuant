@@ -17,6 +17,7 @@ from orbitquant.artifacts import (
 )
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
+from orbitquant.eval.external_plan import build_external_eval_plan
 from orbitquant.eval.metrics import load_metric_json
 from orbitquant.eval.native_plan import build_native_eval_plan, build_native_run_script
 from orbitquant.eval.native_runner import (
@@ -174,6 +175,13 @@ def main(argv: list[str] | None = None) -> int:
     native_plan_parser.add_argument("--output-root", default="artifacts/native")
     native_plan_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
 
+    external_eval_plan_parser = subparsers.add_parser(
+        "external-eval-plan", help="print GenEval/VBench runner and metric import jobs"
+    )
+    external_eval_plan_parser.add_argument("--suite", action="append")
+    external_eval_plan_parser.add_argument("--output-root", default="artifacts/native")
+    external_eval_plan_parser.add_argument("--metrics-root", default="metrics/native")
+
     native_script_parser = subparsers.add_parser(
         "native-script", help="print a bash script for the native quant/eval matrix"
     )
@@ -327,6 +335,21 @@ def main(argv: list[str] | None = None) -> int:
                     suites=suites,
                     output_root=args.output_root,
                     seeds=args.seeds,
+                ),
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "external-eval-plan":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        print(
+            json.dumps(
+                build_external_eval_plan(
+                    suites=suites,
+                    output_root=args.output_root,
+                    metrics_root=args.metrics_root,
                 ),
                 indent=2,
             )
