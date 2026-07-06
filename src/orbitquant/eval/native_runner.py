@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,28 @@ _TARGET_POLICY_BY_SUITE = {
 class NativeGenerationResult:
     output_path: Path
     metadata_path: Path
+    metadata: dict[str, Any]
+
+
+def _cuda_device_index(device: str | torch.device) -> int | None:
+    torch_device = torch.device(device)
+    if torch_device.type != "cuda" or not torch.cuda.is_available():
+        return None
+    return torch_device.index if torch_device.index is not None else torch.cuda.current_device()
+
+
+def _reset_peak_vram(device: str | torch.device) -> None:
+    device_index = _cuda_device_index(device)
+    if device_index is None:
+        return
+    torch.cuda.reset_peak_memory_stats(device_index)
+
+
+def _peak_vram_bytes(device: str | torch.device) -> int | None:
+    device_index = _cuda_device_index(device)
+    if device_index is None:
+        return None
+    return int(torch.cuda.max_memory_allocated(device_index))
 
 
 def build_pipeline_kwargs(
@@ -154,6 +177,8 @@ def run_native_generation(
         variant=quantization_label,
     )
     kwargs = build_pipeline_kwargs(suite, prompt=prompt, seed=seed, device=device)
+    _reset_peak_vram(device)
+    started_at = time.perf_counter()
     output = pipeline(**kwargs)
 
     if is_video:
@@ -167,6 +192,7 @@ def run_native_generation(
     else:
         image = _extract_image(output)
         image.save(output_path)
+    wall_time_seconds = time.perf_counter() - started_at
 
     metadata_path = _metadata_path(output_path)
     metadata = {
@@ -180,6 +206,8 @@ def run_native_generation(
         "steps": suite.steps,
         "guidance": suite.guidance,
         "bit_settings": suite.bit_settings,
+        "wall_time_seconds": wall_time_seconds,
+        "peak_vram_bytes": _peak_vram_bytes(device),
         "quantization": None
         if quantization_config is None
         else {
@@ -194,4 +222,8 @@ def run_native_generation(
         },
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    return NativeGenerationResult(output_path=output_path, metadata_path=metadata_path)
+    return NativeGenerationResult(
+        output_path=output_path,
+        metadata_path=metadata_path,
+        metadata=metadata,
+    )

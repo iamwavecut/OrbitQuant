@@ -219,6 +219,7 @@ def test_cli_generate_with_artifact_loads_component_and_records_metrics(
     assert (tmp_path / "assets" / "flux2-native_seed3_W4A4.png").is_file()
     assert record["split"] == "orbitquant"
     assert record["metrics"]["generated_samples"] == 1
+    assert record["metrics"]["wall_time_seconds"] >= 0.0
     assert record["metadata"]["output_path"] == output["output_path"]
     assert restored.device == "cpu"
 

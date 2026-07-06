@@ -284,9 +284,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         artifact_metrics = None
         if artifact_path is not None:
-            metrics = {"generated_samples": 1}
+            metrics = {
+                "generated_samples": 1,
+                "wall_time_seconds": result.metadata["wall_time_seconds"],
+            }
             if suite.frames is not None:
                 metrics["generated_frames"] = suite.frames
+            if result.metadata["peak_vram_bytes"] is not None:
+                metrics["peak_vram_bytes"] = result.metadata["peak_vram_bytes"]
             artifact_metrics = record_artifact_metrics(
                 artifact_path,
                 split="orbitquant",

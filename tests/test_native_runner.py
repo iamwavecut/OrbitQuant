@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -134,5 +135,9 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
 
     assert result.output_path.exists()
     assert result.metadata_path.exists()
+    metadata = json.loads(result.metadata_path.read_text())
+    assert result.metadata["wall_time_seconds"] >= 0.0
+    assert metadata["wall_time_seconds"] == result.metadata["wall_time_seconds"]
+    assert metadata["peak_vram_bytes"] is None
     assert pipeline.kwargs["height"] == 1024
     assert pipeline.kwargs["width"] == 1024
