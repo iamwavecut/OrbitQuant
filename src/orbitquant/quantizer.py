@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
+
+from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import (
     dequantize_quantized_linear_modules,
     prepare_prequantized_linear_modules,
     quantize_linear_modules,
 )
 from orbitquant.policies import classify_linear_modules
+
+_ORBITQUANT_STATE_TENSORS = {"packed_weight_indices", "row_norms", "debug_weight", "bias"}
+_RTN_INT4_STATE_TENSORS = {"packed_weight", "scales", "bias"}
 
 
 def _hf_base_classes() -> tuple[type, ...]:
@@ -26,6 +33,43 @@ def _hf_base_classes() -> tuple[type, ...]:
     except Exception:
         pass
     return tuple(bases) or (object,)
+
+
+def _module_and_tensor_name(model: Any, param_name: str) -> tuple[Any, str]:
+    parts = param_name.split(".")
+    module = model
+    for part in parts[:-1]:
+        if part.isdigit() and isinstance(module, (torch.nn.ModuleList, torch.nn.Sequential)):
+            module = module[int(part)]
+        elif isinstance(module, torch.nn.ModuleDict):
+            module = module[part]
+        else:
+            module = getattr(module, part)
+    return module, parts[-1]
+
+
+def _is_prequantized_state_tensor(module: Any, tensor_name: str) -> bool:
+    if isinstance(module, OrbitQuantLinear):
+        return tensor_name in _ORBITQUANT_STATE_TENSORS and (
+            tensor_name in module._parameters or tensor_name in module._buffers
+        )
+    if isinstance(module, RTNInt4Linear):
+        return tensor_name in _RTN_INT4_STATE_TENSORS and (
+            tensor_name in module._parameters or tensor_name in module._buffers
+        )
+    return False
+
+
+def _move_like_loaded_tensor(
+    value: torch.Tensor,
+    *,
+    target_device: Any,
+    existing: torch.Tensor | None,
+) -> torch.Tensor:
+    dtype = None if existing is None else existing.dtype
+    if target_device is None:
+        return value.to(dtype=dtype) if dtype is not None else value
+    return value.to(device=target_device, dtype=dtype)
 
 
 class OrbitQuantizer(*_hf_base_classes()):
@@ -82,19 +126,74 @@ class OrbitQuantizer(*_hf_base_classes()):
     ) -> bool:
         if not self.pre_quantized:
             return False
-        return self.param_needs_quantization(model, param_name)
+        try:
+            module, tensor_name = _module_and_tensor_name(model, param_name)
+        except (AttributeError, IndexError, KeyError):
+            return False
+        return _is_prequantized_state_tensor(module, tensor_name)
 
     def check_quantized_param(self, *args: Any, **kwargs: Any) -> bool:
         return self.check_if_quantized_param(*args, **kwargs)
 
-    def create_quantized_param(self, *args: Any, **kwargs: Any) -> None:
+    def create_quantized_param(
+        self,
+        model: Any,
+        param_value: torch.Tensor,
+        param_name: str,
+        target_device: Any,
+        state_dict: dict[str, Any],
+        unexpected_keys: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if self.pre_quantized:
+            module, tensor_name = _module_and_tensor_name(model, param_name)
+            if not _is_prequantized_state_tensor(module, tensor_name):
+                raise ValueError(f"{param_name} is not an OrbitQuant pre-quantized tensor")
+
+            if tensor_name in module._parameters:
+                old_value = module._parameters[tensor_name]
+                loaded_value = _move_like_loaded_tensor(
+                    param_value, target_device=target_device, existing=old_value
+                )
+                requires_grad = False if old_value is None else old_value.requires_grad
+                module._parameters[tensor_name] = torch.nn.Parameter(
+                    loaded_value, requires_grad=requires_grad
+                )
+            else:
+                old_value = module._buffers[tensor_name]
+                module._buffers[tensor_name] = _move_like_loaded_tensor(
+                    param_value, target_device=target_device, existing=old_value
+                )
+
+            if isinstance(module, OrbitQuantLinear):
+                module.clear_dequantized_cache()
+            if unexpected_keys is not None and param_name in unexpected_keys:
+                unexpected_keys.remove(param_name)
+            return
+
         msg = (
             "OrbitQuant does not create quantized tensors during HF streaming "
-            "weight loading. Use pre_quantized=True to load packed OrbitQuant "
-            "buffers into prepared module skeletons, or pre_quantized=False to "
-            "load full precision weights and quantize after loading."
+            "weight loading from full precision tensors. Use pre_quantized=True "
+            "to load packed OrbitQuant buffers into prepared module skeletons, "
+            "or pre_quantized=False to load full precision weights and quantize "
+            "after loading."
         )
         raise RuntimeError(msg)
+
+    def check_quantized_param_shape(
+        self,
+        param_name: str,
+        current_param: torch.Tensor,
+        loaded_param: torch.Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
+        if current_param.shape != loaded_param.shape:
+            raise ValueError(
+                f"Expected {param_name} to have shape {tuple(current_param.shape)}, "
+                f"but loaded tensor has shape {tuple(loaded_param.shape)}."
+            )
+        return True
 
     @property
     def is_trainable(self) -> bool:

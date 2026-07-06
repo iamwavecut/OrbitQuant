@@ -1,3 +1,6 @@
+from collections import OrderedDict
+
+import pytest
 import torch
 
 from orbitquant.adaln import RTNInt4Linear
@@ -148,6 +151,86 @@ def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():
         restored_state["transformer_blocks.0.modulation.packed_weight"],
         source_state["transformer_blocks.0.modulation.packed_weight"],
     )
+    x = torch.randn(2, 3, 16)
+    assert torch.isfinite(restored.transformer_blocks[0]["attn"]["to_q"](x)).all()
+    assert torch.isfinite(restored.transformer_blocks[0]["modulation"](x)).all()
+
+
+def test_pre_quantized_quantizer_materializes_streamed_packed_tensors():
+    torch.manual_seed(0)
+    config = OrbitQuantConfig(block_size=8)
+    source = TinyQuantizerTransformer()
+    source.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    source_quantizer = OrbitQuantizer(config, pre_quantized=False)
+    source_quantizer._process_model_before_weight_loading(source)
+    source_quantizer._process_model_after_weight_loading(source)
+    source_state = {key: value.detach().clone() for key, value in source.state_dict().items()}
+
+    restored = TinyQuantizerTransformer()
+    restored.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    streaming_quantizer = OrbitQuantizer(config, pre_quantized=True)
+    streaming_quantizer._process_model_before_weight_loading(restored)
+    unexpected_keys = list(source_state)
+
+    streamed_keys = [
+        "transformer_blocks.0.attn.to_q.packed_weight_indices",
+        "transformer_blocks.0.attn.to_q.row_norms",
+        "transformer_blocks.0.attn.to_q.bias",
+        "transformer_blocks.0.modulation.packed_weight",
+        "transformer_blocks.0.modulation.scales",
+        "transformer_blocks.0.modulation.bias",
+    ]
+    for key in streamed_keys:
+        value = source_state[key]
+        assert streaming_quantizer.check_if_quantized_param(
+            restored, value, key, source_state, param_device="cpu"
+        )
+        streaming_quantizer.create_quantized_param(
+            restored, value, key, "cpu", source_state, unexpected_keys
+        )
+
+    restored_state = restored.state_dict()
+    for key in streamed_keys:
+        assert torch.equal(restored_state[key], source_state[key])
+        assert key not in unexpected_keys
+
+
+def test_diffusers_meta_loader_streams_pre_quantized_tensors_through_quantizer():
+    model_loading_utils = pytest.importorskip("diffusers.models.model_loading_utils")
+    torch.manual_seed(0)
+    config = OrbitQuantConfig(block_size=8)
+    source = TinyQuantizerTransformer()
+    source.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    source_quantizer = OrbitQuantizer(config, pre_quantized=False)
+    source_quantizer._process_model_before_weight_loading(source)
+    source_quantizer._process_model_after_weight_loading(source)
+    source_state = OrderedDict(
+        (key, value.detach().clone()) for key, value in source.state_dict().items()
+    )
+
+    restored = TinyQuantizerTransformer()
+    restored.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    streaming_quantizer = OrbitQuantizer(config, pre_quantized=True)
+    streaming_quantizer._process_model_before_weight_loading(restored)
+    streamed_keys = [
+        "transformer_blocks.0.attn.to_q.packed_weight_indices",
+        "transformer_blocks.0.attn.to_q.row_norms",
+        "transformer_blocks.0.modulation.packed_weight",
+        "transformer_blocks.0.modulation.scales",
+    ]
+    unexpected_keys = list(streamed_keys)
+
+    model_loading_utils.load_model_dict_into_meta(
+        restored,
+        source_state,
+        hf_quantizer=streaming_quantizer,
+        unexpected_keys=unexpected_keys,
+    )
+
+    restored_state = restored.state_dict()
+    for key in streamed_keys:
+        assert torch.equal(restored_state[key], source_state[key])
+        assert key not in unexpected_keys
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(restored.transformer_blocks[0]["attn"]["to_q"](x)).all()
     assert torch.isfinite(restored.transformer_blocks[0]["modulation"](x)).all()
