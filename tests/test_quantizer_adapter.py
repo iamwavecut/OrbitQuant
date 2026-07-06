@@ -115,3 +115,39 @@ def test_on_the_fly_quantizer_quantizes_after_weight_loading_only():
 
     quantizer._process_model_after_weight_loading(model)
     assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+
+
+def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():
+    torch.manual_seed(0)
+    config = OrbitQuantConfig(block_size=8)
+    source = TinyQuantizerTransformer()
+    source.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+
+    on_the_fly_quantizer = OrbitQuantizer(config, pre_quantized=False)
+    on_the_fly_quantizer._process_model_before_weight_loading(source)
+    on_the_fly_quantizer._process_model_after_weight_loading(source)
+    source_state = {key: value.detach().clone() for key, value in source.state_dict().items()}
+
+    restored = TinyQuantizerTransformer()
+    restored.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    pre_quantized_quantizer = OrbitQuantizer(config, pre_quantized=True)
+    pre_quantized_quantizer._process_model_before_weight_loading(restored)
+
+    incompatible = restored.load_state_dict(source_state, strict=True)
+
+    assert incompatible.missing_keys == []
+    assert incompatible.unexpected_keys == []
+    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(restored.transformer_blocks[0]["modulation"], RTNInt4Linear)
+    restored_state = restored.state_dict()
+    assert torch.equal(
+        restored_state["transformer_blocks.0.attn.to_q.packed_weight_indices"],
+        source_state["transformer_blocks.0.attn.to_q.packed_weight_indices"],
+    )
+    assert torch.equal(
+        restored_state["transformer_blocks.0.modulation.packed_weight"],
+        source_state["transformer_blocks.0.modulation.packed_weight"],
+    )
+    x = torch.randn(2, 3, 16)
+    assert torch.isfinite(restored.transformer_blocks[0]["attn"]["to_q"](x)).all()
+    assert torch.isfinite(restored.transformer_blocks[0]["modulation"](x)).all()
