@@ -126,3 +126,45 @@ def build_external_eval_plan(
                     }
                 )
     return {"job_count": len(jobs), "jobs": jobs}
+
+
+def build_external_eval_script(
+    suites: list[NativeSuite] | None = None,
+    *,
+    output_root: str | Path = "artifacts/native",
+    metrics_root: str | Path = "metrics/native",
+    report_output_dir: str | Path = "reports/native",
+) -> str:
+    plan = build_external_eval_plan(
+        suites=suites,
+        output_root=output_root,
+        metrics_root=metrics_root,
+    )
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        _cmd(["mkdir", "-p", Path(metrics_root)]),
+        "",
+    ]
+    artifact_dirs: list[str] = []
+    for job in plan["jobs"]:
+        artifact_dir = str(job["artifact_dir"])
+        if artifact_dir not in artifact_dirs:
+            artifact_dirs.append(artifact_dir)
+        lines.extend(
+            [
+                f"# {job['suite']} {job['bit_setting']} {job['split']} {job['metric']}",
+                _cmd(["mkdir", "-p", Path(str(job["metrics_json"])).parent]),
+                str(job["eval_command"]),
+                str(job["import_command"]),
+                "",
+            ]
+        )
+    if artifact_dirs:
+        report_command = ["orbitquant", "report"]
+        for artifact_dir in artifact_dirs:
+            report_command.extend(["--artifact", artifact_dir])
+        report_command.extend(["--output", str(report_output_dir)])
+        lines.extend(["# Native report", _cmd(report_command), ""])
+    return "\n".join(lines)

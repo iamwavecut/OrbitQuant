@@ -17,7 +17,7 @@ from orbitquant.artifacts import (
 )
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
-from orbitquant.eval.external_plan import build_external_eval_plan
+from orbitquant.eval.external_plan import build_external_eval_plan, build_external_eval_script
 from orbitquant.eval.metrics import load_metric_json
 from orbitquant.eval.native_plan import build_native_eval_plan, build_native_run_script
 from orbitquant.eval.native_runner import (
@@ -181,6 +181,14 @@ def main(argv: list[str] | None = None) -> int:
     external_eval_plan_parser.add_argument("--suite", action="append")
     external_eval_plan_parser.add_argument("--output-root", default="artifacts/native")
     external_eval_plan_parser.add_argument("--metrics-root", default="metrics/native")
+
+    external_eval_script_parser = subparsers.add_parser(
+        "external-eval-script", help="print a bash script for GenEval/VBench metric import"
+    )
+    external_eval_script_parser.add_argument("--suite", action="append")
+    external_eval_script_parser.add_argument("--output-root", default="artifacts/native")
+    external_eval_script_parser.add_argument("--metrics-root", default="metrics/native")
+    external_eval_script_parser.add_argument("--report-output", default="reports/native")
 
     native_script_parser = subparsers.add_parser(
         "native-script", help="print a bash script for the native quant/eval matrix"
@@ -352,6 +360,19 @@ def main(argv: list[str] | None = None) -> int:
                     metrics_root=args.metrics_root,
                 ),
                 indent=2,
+            )
+        )
+        return 0
+    if args.command == "external-eval-script":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        print(
+            build_external_eval_script(
+                suites=suites,
+                output_root=args.output_root,
+                metrics_root=args.metrics_root,
+                report_output_dir=args.report_output,
             )
         )
         return 0

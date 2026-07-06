@@ -147,6 +147,34 @@ def test_cli_external_eval_plan_lists_metric_runner_import_commands(capsys, tmp_
     assert "range" not in json.dumps(payload).lower()
 
 
+def test_cli_external_eval_script_prints_metric_runner_script(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "external-eval-script",
+                "--suite",
+                "wan-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--metrics-root",
+                str(tmp_path / "metrics"),
+                "--report-output",
+                str(tmp_path / "reports"),
+            ]
+        )
+        == 0
+    )
+
+    script = capsys.readouterr().out
+    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "vbench --input-dir" in script
+    assert "orbitquant record-metrics" in script
+    assert "--metric-prefix vbench" in script
+    assert "orbitquant report" in script
+    assert f"--output {tmp_path / 'reports'}" in script
+    assert "range" not in script.lower()
+
+
 def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tmp_path):
     assert (
         main(

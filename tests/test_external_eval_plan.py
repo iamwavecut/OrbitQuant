@@ -1,4 +1,4 @@
-from orbitquant.eval.external_plan import build_external_eval_plan
+from orbitquant.eval.external_plan import build_external_eval_plan, build_external_eval_script
 from orbitquant.eval.native_settings import get_native_suite
 
 
@@ -51,3 +51,25 @@ def test_build_external_eval_plan_skips_visual_only_extra_target(tmp_path):
     )
 
     assert plan == {"job_count": 0, "jobs": []}
+
+
+def test_build_external_eval_script_runs_vbench_import_and_report(tmp_path):
+    script = build_external_eval_script(
+        [get_native_suite("wan-native")],
+        output_root=tmp_path / "artifacts",
+        metrics_root=tmp_path / "metrics",
+        report_output_dir=tmp_path / "reports",
+    )
+
+    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert f"mkdir -p {tmp_path / 'metrics'}" in script
+    assert script.count("vbench --input-dir") == 4
+    assert script.count("orbitquant record-metrics") == 4
+    assert "--metric-prefix vbench" in script
+    assert "--split original" in script
+    assert "--split orbitquant" in script
+    assert script.count("orbitquant report") == 1
+    assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a6'}" in script
+    assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a4'}" in script
+    assert f"--output {tmp_path / 'reports'}" in script
+    assert "range" not in script.lower()

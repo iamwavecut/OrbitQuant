@@ -87,6 +87,17 @@ orbitquant external-eval-plan \
   --metrics-root ./metrics/native
 ```
 
+Print the matching executable script when the external metric tools are already
+installed in the eval environment:
+
+```bash
+orbitquant external-eval-script \
+  --output-root ./artifacts/native \
+  --metrics-root ./metrics/native \
+  --report-output ./reports/native \
+  > run-external-eval.sh
+```
+
 Validate a generated native sample and its metadata after copying artifacts back
 from a pod:
 
