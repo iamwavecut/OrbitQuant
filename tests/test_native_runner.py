@@ -1,8 +1,11 @@
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 from PIL import Image
 from torch import nn
 
@@ -12,6 +15,7 @@ from orbitquant.eval.native_runner import (
     build_pipeline_kwargs,
     build_quantization_config_for_suite,
     extract_video_frames,
+    load_pipeline_for_suite,
     output_path_for_suite,
     parse_bit_setting,
     run_native_generation,
@@ -101,6 +105,55 @@ def test_build_quantization_config_for_suite_rejects_unsupported_native_bit_sett
 
     with pytest.raises(ValueError, match="not listed"):
         build_quantization_config_for_suite(suite, "W8A8")
+
+
+def test_load_pipeline_for_suite_uses_named_diffusers_pipeline_class(monkeypatch):
+    suite = get_native_suite("flux2-native")
+
+    class FakeFlux2KleinPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "black-forest-labs/FLUX.2-klein-4B"
+            assert kwargs["torch_dtype"] is torch.float32
+            return cls()
+
+    class WrongDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            raise AssertionError("suite-specific pipeline should be used")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(
+            Flux2KleinPipeline=FakeFlux2KleinPipeline,
+            DiffusionPipeline=WrongDiffusionPipeline,
+        ),
+    )
+
+    pipeline = load_pipeline_for_suite(suite, torch_dtype=torch.float32)
+
+    assert isinstance(pipeline, FakeFlux2KleinPipeline)
+
+
+def test_load_pipeline_for_suite_falls_back_to_diffusion_pipeline(monkeypatch):
+    suite = get_native_suite("z-image-native")
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "Tongyi-MAI/Z-Image-Turbo"
+            return cls()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(DiffusionPipeline=FakeDiffusionPipeline),
+    )
+
+    pipeline = load_pipeline_for_suite(suite, torch_dtype=torch.float32)
+
+    assert isinstance(pipeline, FakeDiffusionPipeline)
 
 
 def test_apply_quantization_to_pipeline_targets_transformer_component():

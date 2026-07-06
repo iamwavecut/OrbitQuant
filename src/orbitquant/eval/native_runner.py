@@ -106,6 +106,25 @@ def build_quantization_config_for_suite(
     )
 
 
+def load_pipeline_for_suite(
+    suite: NativeSuite,
+    *,
+    model_id: str | None = None,
+    **from_pretrained_kwargs: Any,
+) -> Any:
+    try:
+        import diffusers
+    except Exception as exc:
+        raise RuntimeError("diffusers is required to load native pipelines") from exc
+    pipeline_cls = getattr(diffusers, suite.pipeline, None)
+    if pipeline_cls is None:
+        pipeline_cls = diffusers.DiffusionPipeline
+    return pipeline_cls.from_pretrained(
+        suite.model_id if model_id is None else model_id,
+        **from_pretrained_kwargs,
+    )
+
+
 def apply_quantization_to_pipeline(
     pipeline: Any, suite: NativeSuite, config: OrbitQuantConfig
 ) -> QuantizationSummary:

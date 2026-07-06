@@ -19,6 +19,7 @@ from orbitquant.eval.native_runner import (
     apply_quantization_to_pipeline,
     build_pipeline_kwargs,
     build_quantization_config_for_suite,
+    load_pipeline_for_suite,
     run_native_generation,
 )
 from orbitquant.eval.native_settings import get_native_suite
@@ -309,10 +310,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2))
             return 0
 
-        from diffusers import DiffusionPipeline
-
-        pipeline = DiffusionPipeline.from_pretrained(
-            model_id,
+        pipeline = load_pipeline_for_suite(
+            suite,
+            model_id=model_id,
             torch_dtype=_torch_dtype(args.dtype),
         )
         pipeline.to(args.device)

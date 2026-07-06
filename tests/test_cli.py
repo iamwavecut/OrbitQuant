@@ -231,7 +231,9 @@ def test_cli_generate_with_artifact_loads_component_and_records_metrics(
             return restored
 
     monkeypatch.setitem(
-        sys.modules, "diffusers", SimpleNamespace(DiffusionPipeline=FakeDiffusionPipeline)
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
     )
 
     assert (
