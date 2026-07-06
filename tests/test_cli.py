@@ -74,6 +74,46 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys
     assert "range" not in json.dumps(payload).lower()
 
 
+def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "native-script",
+                "--suite",
+                "wan-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--seeds",
+                "0,1",
+                "--prompt-limit",
+                "1",
+                "--device",
+                "cuda",
+                "--dtype",
+                "bfloat16",
+                "--activation-kernel-backend",
+                "triton_cuda",
+            ]
+        )
+        == 0
+    )
+
+    script = capsys.readouterr().out
+    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert script.count("orbitquant quantize") == 2
+    assert "--suite wan-native" in script
+    assert "--weight-bits 4 --activation-bits 6" in script
+    assert "--weight-bits 4 --activation-bits 4" in script
+    assert "--activation-kernel-backend triton_cuda" in script
+    assert script.count("orbitquant generate-pack") == 4
+    assert "--split original" in script
+    assert "--split orbitquant" in script
+    assert "--seeds 0,1" in script
+    assert "--prompt-limit 1" in script
+    assert script.count("orbitquant validate-artifact") == 4
+    assert "range" not in script.lower()
+
+
 def test_cli_generate_requires_prompt_and_output():
     try:
         main(["generate", "--suite", "flux2-native"])
