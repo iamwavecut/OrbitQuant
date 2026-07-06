@@ -7,7 +7,16 @@ import torch
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
-from orbitquant.policies import classify_linear_modules
+from orbitquant.policies import PolicyDecision, classify_linear_modules
+
+_TORCH_DTYPE_BY_NAME = {
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+    "float16": torch.float16,
+    "fp16": torch.float16,
+    "float32": torch.float32,
+    "fp32": torch.float32,
+}
 
 
 @dataclass
@@ -37,6 +46,12 @@ def _set_child(parent: torch.nn.Module, child_name: str, module: torch.nn.Module
         setattr(parent, child_name, module)
 
 
+def _apply_dtype_override(module: torch.nn.Module, decision: PolicyDecision) -> None:
+    if decision.dtype is None:
+        return
+    module.to(dtype=_TORCH_DTYPE_BY_NAME[decision.dtype])
+
+
 def quantize_linear_modules(
     model: torch.nn.Module, config: OrbitQuantConfig
 ) -> QuantizationSummary:
@@ -59,6 +74,7 @@ def quantize_linear_modules(
             _set_child(parent, child_name, replacement)
             summary.adaln_modules.append(name)
         else:
+            _apply_dtype_override(module, decision)
             summary.skipped_modules.append(name)
 
     return summary
@@ -90,6 +106,7 @@ def prepare_prequantized_linear_modules(
             _set_child(parent, child_name, replacement)
             summary.adaln_modules.append(name)
         else:
+            _apply_dtype_override(module, decision)
             summary.skipped_modules.append(name)
 
     return summary

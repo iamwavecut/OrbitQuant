@@ -18,6 +18,7 @@ _SUPPORTED_BITS = {2, 3, 4, 6, 8}
 _SUPPORTED_RUNTIME_MODES = {"dequant_bf16", "debug_no_quant", "debug_no_activation_quant"}
 _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
 _SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}
+_SUPPORTED_MODULE_DTYPES = {"bfloat16", "bf16", "float16", "fp16", "float32", "fp32"}
 
 
 class _QuantMethodName(str):
@@ -79,6 +80,16 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError(f"target_policy must be one of {sorted(_SUPPORTED_TARGET_POLICIES)}")
         if self.adaln_group_size <= 0:
             raise ValueError("adaln_group_size must be positive")
+        normalized_dtype_dict: dict[str, list[str]] = {}
+        for dtype_name, module_names in self.modules_dtype_dict.items():
+            normalized_dtype = dtype_name.lower()
+            if normalized_dtype not in _SUPPORTED_MODULE_DTYPES:
+                raise ValueError(
+                    "modules_dtype_dict keys must be one of "
+                    f"{sorted(_SUPPORTED_MODULE_DTYPES)}"
+                )
+            normalized_dtype_dict[normalized_dtype] = list(module_names)
+        self.modules_dtype_dict = normalized_dtype_dict
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -12,6 +12,7 @@ class PolicyDecision:
     name: str
     action: str
     reason: str
+    dtype: str | None = None
 
 
 _HARD_SKIP_TOKENS = (
@@ -47,6 +48,13 @@ _BLOCK_TOKENS = (
 _MODULATION_TOKENS = ("adaln", "modulation", "mod", "norm1_context", "norm1")
 
 
+def _dtype_override_for_module(name: str, config: OrbitQuantConfig) -> str | None:
+    for dtype_name, module_patterns in config.modules_dtype_dict.items():
+        if any(pattern in name for pattern in module_patterns):
+            return dtype_name
+    return None
+
+
 def classify_linear_modules(
     model: torch.nn.Module, config: OrbitQuantConfig
 ) -> dict[str, PolicyDecision]:
@@ -58,7 +66,15 @@ def classify_linear_modules(
             continue
         lowered = name.lower()
         in_transformer_block = any(token in lowered for token in _BLOCK_TOKENS)
-        if explicit_skips and any(token in name for token in explicit_skips):
+        dtype_override = _dtype_override_for_module(name, config)
+        if dtype_override is not None:
+            decisions[name] = PolicyDecision(
+                name,
+                "bf16_skip",
+                "explicit modules_dtype_dict override",
+                dtype=dtype_override,
+            )
+        elif explicit_skips and any(token in name for token in explicit_skips):
             decisions[name] = PolicyDecision(name, "bf16_skip", "explicit modules_to_not_convert")
         elif any(token in lowered for token in _HARD_SKIP_TOKENS):
             decisions[name] = PolicyDecision(

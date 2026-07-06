@@ -86,6 +86,18 @@ def test_quantizer_reports_target_weight_parameters_only():
     assert not quantizer.param_needs_quantization(model, "transformer_blocks.0.attn.to_q.bias")
 
 
+def test_quantizer_merges_modules_to_not_convert_kwargs_into_policy_config():
+    model = TinyQuantizerTransformer()
+    quantizer = OrbitQuantizer(
+        OrbitQuantConfig(block_size=8),
+        modules_to_not_convert=["transformer_blocks.0.attn.to_q"],
+    )
+
+    assert not quantizer.param_needs_quantization(
+        model, "transformer_blocks.0.attn.to_q.weight"
+    )
+
+
 def test_pre_quantized_quantizer_prepares_empty_quantized_module_skeletons():
     model = TinyQuantizerTransformer()
     model.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)

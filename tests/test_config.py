@@ -38,6 +38,15 @@ def test_orbit_quant_config_rejects_invalid_activation_kernel_backend():
         raise AssertionError("invalid activation_kernel_backend was accepted")
 
 
+def test_orbit_quant_config_rejects_invalid_module_dtype_override():
+    try:
+        OrbitQuantConfig(modules_dtype_dict={"int8": ["transformer_blocks.0.attn.to_q"]})
+    except ValueError as exc:
+        assert "modules_dtype_dict" in str(exc)
+    else:
+        raise AssertionError("invalid modules_dtype_dict dtype was accepted")
+
+
 def test_orbit_quant_config_rejects_unknown_target_policy():
     try:
         OrbitQuantConfig(target_policy="flxu")

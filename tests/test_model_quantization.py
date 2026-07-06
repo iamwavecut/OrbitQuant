@@ -33,3 +33,20 @@ def test_quantize_linear_modules_replaces_orbit_and_adaln_targets_only():
     assert summary.quantized_modules == ["transformer_blocks.0.attn.to_q"]
     assert summary.adaln_modules == ["transformer_blocks.0.modulation"]
     assert summary.skipped_modules == ["proj_out"]
+
+
+def test_quantize_linear_modules_keeps_dtype_overridden_modules_unquantized():
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(
+        block_size=8,
+        modules_dtype_dict={"float16": ["transformer_blocks.0.attn.to_q"]},
+    )
+
+    summary = quantize_linear_modules(model, config)
+
+    overridden = model.transformer_blocks[0]["attn"]["to_q"]
+    assert isinstance(overridden, torch.nn.Linear)
+    assert overridden.weight.dtype is torch.float16
+    assert summary.quantized_modules == []
+    assert summary.adaln_modules == ["transformer_blocks.0.modulation"]
+    assert "transformer_blocks.0.attn.to_q" in summary.skipped_modules

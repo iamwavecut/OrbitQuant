@@ -72,6 +72,38 @@ def _move_like_loaded_tensor(
     return value.to(device=target_device, dtype=dtype)
 
 
+def _merge_unique(existing: list[str], extra: list[str]) -> list[str]:
+    merged = list(existing)
+    for item in extra:
+        if item not in merged:
+            merged.append(item)
+    return merged
+
+
+def _config_with_hf_overrides(
+    config: OrbitQuantConfig,
+    *,
+    modules_to_not_convert: list[str],
+    modules_dtype_dict: dict[str, list[str]],
+) -> OrbitQuantConfig:
+    if not modules_to_not_convert and not modules_dtype_dict:
+        return config
+    values = config.to_dict()
+    values["modules_to_not_convert"] = _merge_unique(
+        list(values.get("modules_to_not_convert", [])), modules_to_not_convert
+    )
+    merged_dtype_dict = {
+        dtype_name: list(module_names)
+        for dtype_name, module_names in values.get("modules_dtype_dict", {}).items()
+    }
+    for dtype_name, module_names in modules_dtype_dict.items():
+        merged_dtype_dict[dtype_name] = _merge_unique(
+            merged_dtype_dict.get(dtype_name, []), list(module_names)
+        )
+    values["modules_dtype_dict"] = merged_dtype_dict
+    return OrbitQuantConfig.from_dict(values)
+
+
 class OrbitQuantizer(*_hf_base_classes()):
     """Small standalone HF-style quantizer adapter.
 
@@ -91,7 +123,16 @@ class OrbitQuantizer(*_hf_base_classes()):
     ) -> None:
         if isinstance(quantization_config, dict):
             quantization_config = OrbitQuantConfig.from_dict(quantization_config)
-        modules_to_not_convert = kwargs.get("modules_to_not_convert", [])
+        modules_to_not_convert = list(kwargs.get("modules_to_not_convert") or [])
+        modules_dtype_dict = {
+            dtype_name: list(module_names)
+            for dtype_name, module_names in (kwargs.get("modules_dtype_dict") or {}).items()
+        }
+        quantization_config = _config_with_hf_overrides(
+            quantization_config,
+            modules_to_not_convert=modules_to_not_convert,
+            modules_dtype_dict=modules_dtype_dict,
+        )
         if self.__class__.__bases__ == (object,):
             self.quantization_config = quantization_config
             self.pre_quantized = kwargs.get("pre_quantized", True)
