@@ -61,6 +61,8 @@ class OrbitQuantLinear(nn.Module):
             self.register_buffer("debug_weight", debug_weight)
         else:
             self.debug_weight = None
+        self._dequantized_weight_cache: torch.Tensor | None = None
+        self._dequantized_weight_cache_key: tuple[str, torch.dtype] | None = None
 
     @classmethod
     def from_linear(
@@ -106,9 +108,23 @@ class OrbitQuantLinear(nn.Module):
             debug_weight=None,
         )
 
+    def clear_dequantized_cache(self) -> None:
+        self._dequantized_weight_cache = None
+        self._dequantized_weight_cache_key = None
+
     def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        cache_key = (str(device), dtype)
+        if (
+            self._dequantized_weight_cache is not None
+            and self._dequantized_weight_cache_key == cache_key
+        ):
+            return self._dequantized_weight_cache
+
         if self.debug_weight is not None:
-            return self.debug_weight.to(device=device, dtype=dtype)
+            weight = self.debug_weight.to(device=device, dtype=dtype)
+            self._dequantized_weight_cache = weight.detach()
+            self._dequantized_weight_cache_key = cache_key
+            return weight
         if self.packed_weight_indices is None or self.row_norms is None:
             raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
 
@@ -121,7 +137,10 @@ class OrbitQuantLinear(nn.Module):
         centroids = self.weight_codebook.centroids.to(device=device, dtype=torch.float32)
         row_norms = self.row_norms.to(device=device, dtype=torch.float32)
         weight = row_norms[:, None] * centroids[indices]
-        return weight.to(dtype=dtype)
+        dequantized = weight.to(dtype=dtype)
+        self._dequantized_weight_cache = dequantized.detach()
+        self._dequantized_weight_cache_key = cache_key
+        return dequantized
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_mode == "debug_no_quant":

@@ -1,5 +1,6 @@
 import torch
 
+import orbitquant.layers as layers_module
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 
@@ -36,3 +37,28 @@ def test_orbit_linear_quantized_forward_is_finite_and_shape_preserving():
     assert actual.shape == (2, 5, 7)
     assert torch.isfinite(actual).all()
     assert not any(parameter.requires_grad for parameter in quantized.parameters())
+
+
+def test_orbit_linear_caches_dequantized_weight(monkeypatch):
+    torch.manual_seed(2)
+    source = torch.nn.Linear(16, 7)
+    x = torch.randn(2, 5, 16)
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    calls = 0
+    original_unpack = layers_module.unpack_lowbit
+
+    def counted_unpack(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_unpack(*args, **kwargs)
+
+    monkeypatch.setattr(layers_module, "unpack_lowbit", counted_unpack)
+
+    quantized(x)
+    quantized(x)
+    assert calls == 1
+
+    quantized.clear_dequantized_cache()
+    quantized(x)
+    assert calls == 2
