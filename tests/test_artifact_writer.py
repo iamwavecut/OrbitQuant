@@ -163,6 +163,37 @@ def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path
     assert "model_index.json" in result["required_files"]
 
 
+def test_validate_orbitquant_artifact_rejects_model_index_manifest_mismatch(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    model_index_path = tmp_path / "model_index.json"
+    manifest = json.loads(manifest_path.read_text())
+    model_index = json.loads(model_index_path.read_text())
+    model_index["source_model_id"] = "example/other-model"
+    model_index_path.write_text(json.dumps(model_index, indent=2) + "\n")
+    manifest["checksums"]["model_index.json"] = sha256_file(model_index_path)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "model_index mismatch" in str(exc)
+        assert "source_model_id" in str(exc)
+    else:
+        raise AssertionError("validate_orbitquant_artifact accepted mismatched model_index")
+
+
 def test_record_artifact_metrics_keeps_manifest_and_sha256sums_valid(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)

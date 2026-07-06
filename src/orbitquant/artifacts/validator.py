@@ -39,9 +39,50 @@ def validate_required_artifact_files(artifact_path: Path) -> None:
         raise RuntimeError(f"required artifact file missing: {missing}")
 
 
+def _mismatch(name: str, expected: Any, actual: Any) -> str | None:
+    return None if expected == actual else f"{name}: expected {expected!r}, got {actual!r}"
+
+
+def _validate_model_index(
+    model_index: dict[str, Any],
+    *,
+    config: OrbitQuantConfig,
+    manifest: OrbitQuantManifest,
+) -> None:
+    expected = {
+        "_class_name": "OrbitQuantComponentArtifact",
+        "artifact_format": "orbitquant-v1",
+        "quant_method": "orbitquant",
+        "source_model_id": manifest.source_model_id,
+        "source_revision": manifest.source_revision,
+        "source_license": manifest.source_license,
+        "weight_name": "model.safetensors",
+        "quantization_config": "quantization_config.json",
+        "manifest": "orbitquant_manifest.json",
+        "codebooks": "orbitquant_codebooks.safetensors",
+        "rotations": "orbitquant_rotations.safetensors",
+        "weight_bits": config.weight_bits,
+        "activation_bits": config.activation_bits,
+        "target_policy": config.target_policy,
+        "runtime_mode": config.runtime_mode,
+        "activation_kernel_backend": config.activation_kernel_backend,
+    }
+    mismatches = [
+        mismatch
+        for key, value in expected.items()
+        if (mismatch := _mismatch(key, value, model_index.get(key))) is not None
+    ]
+    component = model_index.get("component")
+    if not isinstance(component, str) or not component:
+        mismatches.append(f"component: expected non-empty string, got {component!r}")
+    if mismatches:
+        raise RuntimeError("model_index mismatch: " + "; ".join(mismatches))
+
+
 def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
     artifact_path = Path(artifact_dir)
     validate_required_artifact_files(artifact_path)
+    model_index = json.loads((artifact_path / "model_index.json").read_text(encoding="utf-8"))
     config = OrbitQuantConfig.from_dict(
         json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
     )
@@ -49,6 +90,7 @@ def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
     validate_checksums(artifact_path, manifest.checksums)
+    _validate_model_index(model_index, config=config, manifest=manifest)
     state_dict = load_file(artifact_path / "model.safetensors")
 
     expected_shapes = manifest.module_shapes
@@ -74,6 +116,7 @@ def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
         "weight_bits": config.weight_bits,
         "activation_bits": config.activation_bits,
         "target_policy": config.target_policy,
+        "component": model_index["component"],
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
         "tensor_count": len(state_dict),
