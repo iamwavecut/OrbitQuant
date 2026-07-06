@@ -29,3 +29,16 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+      - name: Build package
+        run: uv build
+
+      - name: Smoke test wheel
+        shell: bash
+        run: |
+          tmpdir="$(mktemp -d)"
+          uv venv "$tmpdir/.venv"
+          uv pip install --python "$tmpdir/.venv/bin/python" dist/orbitquant-0.1.0-py3-none-any.whl
+          source "$tmpdir/.venv/bin/activate"
+          "$tmpdir/.venv/bin/python" -c "import orbitquant; print(orbitquant.__version__)"
+          orbitquant --version
