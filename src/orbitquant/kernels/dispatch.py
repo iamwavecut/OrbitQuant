@@ -66,15 +66,15 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
         },
         "triton_cuda": {
             "available": bool(available["triton_cuda"]),
-            "optimized": True,
+            "optimized": bool(available["triton_cuda"]),
             "full_fusion": False,
             "optimized_stage": "codebook_lookup_rescale",
-            "weight_dequant_optimized": False,
+            "weight_dequant_optimized": bool(available["triton_cuda"]),
             "device_types": ["cuda"],
             "implementation": "triton_codebook_rescale",
             "notes": (
                 "Norm and RPBH rotation still run in PyTorch; Triton handles "
-                "codebook lookup and norm rescale."
+                "codebook lookup, norm rescale, and packed weight dequant."
             ),
         },
     }

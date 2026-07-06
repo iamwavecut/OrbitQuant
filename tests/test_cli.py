@@ -47,7 +47,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
             },
             "triton_cuda": {
                 "optimized_stage": "codebook_lookup_rescale",
-                "weight_dequant_optimized": False,
+                "weight_dequant_optimized": True,
                 "full_fusion": False,
             },
         },
@@ -64,7 +64,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["mps"]["weight_dequant_optimized"] is True
     assert payload["mps"]["full_fusion"] is False
     assert payload["triton_cuda"]["optimized_stage"] == "codebook_lookup_rescale"
-    assert payload["triton_cuda"]["weight_dequant_optimized"] is False
+    assert payload["triton_cuda"]["weight_dequant_optimized"] is True
     assert payload["triton_cuda"]["full_fusion"] is False
 
 

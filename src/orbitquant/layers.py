@@ -195,6 +195,25 @@ class OrbitQuantLinear(nn.Module):
                 self._dequantized_weight_cache = dequantized.detach()
                 self._dequantized_weight_cache_key = cache_key
                 return dequantized
+        if device.type == "cuda":
+            try:
+                from orbitquant.kernels.triton_cuda import dequantize_packed_weight_with_triton
+            except Exception:
+                dequantize_packed_weight_with_triton = None
+            if dequantize_packed_weight_with_triton is not None:
+                weight = dequantize_packed_weight_with_triton(
+                    self.packed_weight_indices,
+                    self.row_norms,
+                    self.weight_codebook,
+                    bits=self.weight_bits,
+                    out_features=self.out_features,
+                    in_features=self.in_features,
+                    device=device,
+                )
+                dequantized = weight.to(dtype=dtype)
+                self._dequantized_weight_cache = dequantized.detach()
+                self._dequantized_weight_cache_key = cache_key
+                return dequantized
 
         flat = unpack_lowbit(
             self.packed_weight_indices,

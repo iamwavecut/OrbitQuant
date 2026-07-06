@@ -1,3 +1,6 @@
+import sys
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -111,3 +114,42 @@ def test_orbit_linear_mps_weight_dequant_uses_kernel_without_cpu_unpack(monkeypa
     actual = quantized._dequantize_weight(device=torch.device("mps"), dtype=torch.float32)
 
     assert torch.allclose(actual.cpu(), expected)
+
+
+def test_orbit_linear_cuda_weight_dequant_dispatches_to_triton_without_cpu_unpack(
+    monkeypatch,
+):
+    torch.manual_seed(4)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    expected = quantized._dequantize_weight(device=torch.device("cpu"), dtype=torch.float32)
+    quantized.clear_dequantized_cache()
+    calls = []
+
+    def fake_triton_dequant(*args, **kwargs):
+        calls.append(kwargs)
+        return expected.clone()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "orbitquant.kernels.triton_cuda",
+        SimpleNamespace(dequantize_packed_weight_with_triton=fake_triton_dequant),
+    )
+
+    def fail_unpack(*args, **kwargs):
+        raise AssertionError("CUDA weight dequant should not call CPU unpack_lowbit")
+
+    monkeypatch.setattr(layers_module, "unpack_lowbit", fail_unpack)
+
+    actual = quantized._dequantize_weight(device=torch.device("cuda"), dtype=torch.float32)
+
+    assert torch.allclose(actual, expected)
+    assert calls == [
+        {
+            "bits": 4,
+            "out_features": 7,
+            "in_features": 16,
+            "device": torch.device("cuda"),
+        }
+    ]
