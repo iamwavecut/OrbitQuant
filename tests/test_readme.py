@@ -19,7 +19,8 @@ def test_readme_documents_component_artifact_usage():
     assert "original_vs_orbitquant" not in readme
     assert "contact sheet" not in readme.lower()
     assert "Pipeline class" in readme
-    assert "Published artifacts use these native target settings" in readme
+    assert "Paper-aligned artifacts use these native target settings" in readme
+    assert "Extra target artifacts use the same native-validation rules" in readme
     assert "Flux2KleinPipeline" in readme
     assert "FluxPipeline" in readme
     assert "ZImagePipeline" in readme

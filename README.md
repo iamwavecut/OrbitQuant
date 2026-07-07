@@ -10,9 +10,9 @@ transformer-component artifacts that can be patched back into the original
 pipeline.
 
 The repository contains the Python package, quantization code, artifact tools,
-and validation helpers. Published model repositories contain compact artifacts,
-usage instructions, provenance, native eval summaries, and final comparison
-matrices.
+and validation helpers. Release-ready model repositories must contain compact
+artifacts, usage instructions, provenance, native validation summaries, and the
+final comparison matrices embedded by the model card.
 
 ## What It Provides
 
@@ -203,16 +203,22 @@ orbitquant validate-artifact \
   --policy-inventory ./reports/inventories/flux2-klein-policy.json
 ```
 
-## Published Artifact Settings
+## Release Target Settings
 
-Published artifacts use these native target settings:
+Paper-aligned artifacts use these native target settings:
+
+| Suite | Source model | Pipeline class | Native setting | Bit settings |
+| --- | --- | --- | --- | --- |
+| `flux1-schnell-native` | `black-forest-labs/FLUX.1-schnell` | `FluxPipeline` | 1024x1024, 4 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
+| `z-image-native` | `Tongyi-MAI/Z-Image-Turbo` | `ZImagePipeline` | 1024x1024, 10 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
+| `wan-native` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `WanPipeline` | 832x480, 81 frames, 50 steps, guidance 5.0 | W4A6, W4A4 |
+
+Extra target artifacts use the same native-validation rules, but are not paper
+reproduction targets:
 
 | Suite | Source model | Pipeline class | Native setting | Bit settings |
 | --- | --- | --- | --- | --- |
 | `flux2-native` | `black-forest-labs/FLUX.2-klein-4B` | `Flux2KleinPipeline` | 1024x1024, 4 steps, guidance 1.0 | W4A4, W3A3, W2A4, W2A3 |
-| `flux1-schnell-native` | `black-forest-labs/FLUX.1-schnell` | `FluxPipeline` | 1024x1024, 4 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
-| `z-image-native` | `Tongyi-MAI/Z-Image-Turbo` | `ZImagePipeline` | 1024x1024, 10 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
-| `wan-native` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `WanPipeline` | 832x480, 81 frames, 50 steps, guidance 5.0 | W4A6, W4A4 |
 
 User-facing comparison assets are generated at the native settings above. Small
 low-resolution checks are not accepted as published quality evidence.
