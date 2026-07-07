@@ -2,7 +2,7 @@ import torch
 
 from orbitquant import OrbitQuantConfig, OrbitQuantLinear
 from orbitquant.adaln import RTNInt4Linear
-from orbitquant.modeling import quantize_linear_modules
+from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
 
 
 class TinyPipelineTransformer(torch.nn.Module):
@@ -63,3 +63,41 @@ def test_quantize_linear_modules_fails_loud_for_unavailable_cuda_device(monkeypa
         assert "CUDA quantization device requested" in str(exc)
     else:
         raise AssertionError("unavailable CUDA quantization device was accepted")
+
+
+def test_prewarm_quantized_linear_modules_materializes_weight_caches():
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+    quantize_linear_modules(model, config)
+
+    orbit_layer = model.transformer_blocks[0]["attn"]["to_q"]
+    adaln_layer = model.transformer_blocks[0]["modulation"]
+    assert isinstance(orbit_layer, OrbitQuantLinear)
+    assert isinstance(adaln_layer, RTNInt4Linear)
+    assert orbit_layer._dequantized_weight_cache is None
+    assert adaln_layer._dequantized_weight_cache is None
+
+    summary = prewarm_quantized_linear_modules(model, device="cpu", dtype=torch.float32)
+
+    assert summary.orbitquant_modules == 1
+    assert summary.adaln_modules == 1
+    assert summary.total_modules == 2
+    assert summary.device == "cpu"
+    assert summary.dtype == "float32"
+    assert summary.elapsed_seconds >= 0.0
+    assert orbit_layer._dequantized_weight_cache is not None
+    assert adaln_layer._dequantized_weight_cache is not None
+    assert orbit_layer._dequantized_weight_cache.dtype is torch.float32
+    assert adaln_layer._dequantized_weight_cache.dtype is torch.float32
+
+
+def test_prewarm_quantized_linear_modules_reports_empty_model_without_side_effects():
+    model = torch.nn.Sequential(torch.nn.Linear(4, 4))
+
+    summary = prewarm_quantized_linear_modules(model, device="cpu", dtype=torch.float32)
+
+    assert summary.orbitquant_modules == 0
+    assert summary.adaln_modules == 0
+    assert summary.total_modules == 0
+    assert summary.device == "cpu"
+    assert summary.dtype == "float32"

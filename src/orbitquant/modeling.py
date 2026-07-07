@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import torch
@@ -24,6 +25,16 @@ class QuantizationSummary:
     quantized_modules: list[str] = field(default_factory=list)
     adaln_modules: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class QuantizationPrewarmSummary:
+    orbitquant_modules: int
+    adaln_modules: int
+    total_modules: int
+    elapsed_seconds: float
+    device: str
+    dtype: str
 
 
 def _parent_and_child(model: torch.nn.Module, module_name: str) -> tuple[torch.nn.Module, str]:
@@ -137,6 +148,70 @@ def _first_tensor_device(module: torch.nn.Module) -> torch.device:
     for buffer in module.buffers(recurse=False):
         return buffer.device
     return torch.device("cpu")
+
+
+def _first_floating_tensor_dtype(module: torch.nn.Module) -> torch.dtype:
+    for parameter in module.parameters(recurse=False):
+        if parameter.is_floating_point():
+            return parameter.dtype
+    for buffer in module.buffers(recurse=False):
+        if buffer.is_floating_point():
+            return buffer.dtype
+    return torch.bfloat16
+
+
+def _synchronize_if_needed(device: torch.device) -> None:
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    elif device.type == "mps" and torch.backends.mps.is_available():
+        torch.mps.synchronize()
+
+
+def prewarm_quantized_linear_modules(
+    model: torch.nn.Module,
+    *,
+    device: str | torch.device | None = None,
+    dtype: torch.dtype | None = None,
+) -> QuantizationPrewarmSummary:
+    """Materialize lazy dequantized weight caches for quantized linear modules."""
+
+    target_device = None if device is None else _quantization_device(device)
+    started_at = time.perf_counter()
+    orbitquant_modules = 0
+    adaln_modules = 0
+    last_device = target_device or torch.device("cpu")
+    last_dtype = dtype or torch.bfloat16
+    synced_devices: dict[str, torch.device] = {}
+
+    for module in model.modules():
+        if not isinstance(module, OrbitQuantLinear | RTNInt4Linear):
+            continue
+        module_device = target_device or _first_tensor_device(module)
+        module_dtype = dtype or _first_floating_tensor_dtype(module)
+        device_key = str(module_device)
+        if device_key not in synced_devices:
+            _synchronize_if_needed(module_device)
+            synced_devices[device_key] = module_device
+        module._dequantize_weight(device=module_device, dtype=module_dtype)
+        last_device = module_device
+        last_dtype = module_dtype
+        if isinstance(module, OrbitQuantLinear):
+            orbitquant_modules += 1
+        else:
+            adaln_modules += 1
+
+    for module_device in synced_devices.values():
+        _synchronize_if_needed(module_device)
+
+    elapsed_seconds = time.perf_counter() - started_at
+    return QuantizationPrewarmSummary(
+        orbitquant_modules=orbitquant_modules,
+        adaln_modules=adaln_modules,
+        total_modules=orbitquant_modules + adaln_modules,
+        elapsed_seconds=elapsed_seconds,
+        device=str(last_device),
+        dtype=str(last_dtype).removeprefix("torch."),
+    )
 
 
 def _frozen_linear_from_weight(

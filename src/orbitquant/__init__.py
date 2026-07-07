@@ -2,6 +2,7 @@
 
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
+from orbitquant.modeling import prewarm_quantized_linear_modules
 from orbitquant.pipeline import (
     load_quantized_pipeline_component,
     quantize_pipeline,
@@ -18,6 +19,7 @@ __all__ = [
     "OrbitQuantLinear",
     "__version__",
     "load_quantized_pipeline_component",
+    "prewarm_quantized_linear_modules",
     "quantize_pipeline",
     "register_hf_quantizers",
     "save_quantized_pipeline_component",

@@ -322,6 +322,7 @@ def run_native_generation(
     quantization_config: OrbitQuantConfig | None = None,
     quantization_summary: QuantizationSummary | None = None,
     quantization_label: str | None = None,
+    prewarm_metadata: dict[str, Any] | None = None,
     runtime_dtype: str | None = None,
     model_id: str | None = None,
 ) -> NativeGenerationResult:
@@ -397,6 +398,7 @@ def run_native_generation(
                 "adaln_modules": quantization_summary.adaln_modules,
                 "skipped_modules": quantization_summary.skipped_modules,
             },
+            "prewarm": prewarm_metadata,
         },
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

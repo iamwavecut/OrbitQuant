@@ -212,6 +212,15 @@ def test_run_native_generation_saves_video_contact_sheet_and_metadata(
 def test_run_native_generation_saves_image_and_metadata(tmp_path):
     pipeline = FakeImagePipeline()
     suite = get_native_suite("flux2-native")
+    config = build_quantization_config_for_suite(suite, "W4A4")
+    prewarm_metadata = {
+        "orbitquant_modules": 2,
+        "adaln_modules": 1,
+        "total_modules": 3,
+        "elapsed_seconds": 0.25,
+        "device": "cuda",
+        "dtype": "bfloat16",
+    }
 
     result = run_native_generation(
         pipeline,
@@ -220,6 +229,9 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
         seed=5,
         output_dir=tmp_path,
         device="cpu",
+        quantization_config=config,
+        quantization_label="W4A4",
+        prewarm_metadata=prewarm_metadata,
         runtime_dtype="float32",
     )
 
@@ -236,6 +248,7 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
         "class": "SimpleNamespace",
         "config": {"solver_order": 2},
     }
+    assert metadata["quantization"]["prewarm"] == prewarm_metadata
     assert pipeline.kwargs["height"] == 1024
     assert pipeline.kwargs["width"] == 1024
 

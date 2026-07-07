@@ -35,7 +35,7 @@ from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
 from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import inspect_model_metadata
 from orbitquant.kernels import backend_capabilities
-from orbitquant.modeling import quantize_linear_modules
+from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
 from orbitquant.pipeline import load_quantized_pipeline_component
 
 
@@ -45,6 +45,38 @@ def _torch_dtype(name: str) -> torch.dtype:
         "float16": torch.float16,
         "float32": torch.float32,
     }[name]
+
+
+def _pipeline_component(pipeline: Any, component: str) -> torch.nn.Module:
+    try:
+        value = getattr(pipeline, component)
+    except AttributeError as exc:
+        raise ValueError(f"pipeline has no component {component!r}") from exc
+    if not isinstance(value, torch.nn.Module):
+        raise TypeError(f"pipeline component {component!r} is not a torch.nn.Module")
+    return value
+
+
+def _prewarm_pipeline_component(
+    pipeline: Any,
+    component: str,
+    *,
+    device: str | torch.device,
+    dtype: torch.dtype,
+) -> dict[str, Any]:
+    summary = prewarm_quantized_linear_modules(
+        _pipeline_component(pipeline, component),
+        device=device,
+        dtype=dtype,
+    )
+    return {
+        "orbitquant_modules": summary.orbitquant_modules,
+        "adaln_modules": summary.adaln_modules,
+        "total_modules": summary.total_modules,
+        "elapsed_seconds": summary.elapsed_seconds,
+        "device": summary.device,
+        "dtype": summary.dtype,
+    }
 
 
 def _parse_block_size(value: str) -> int | str:
@@ -314,6 +346,11 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
+    generate_parser.add_argument(
+        "--no-prewarm",
+        action="store_true",
+        help="do not prewarm quantized weight caches before generation",
+    )
     generate_parser.add_argument("--dry-run", action="store_true")
 
     generate_pack_parser = subparsers.add_parser(
@@ -334,6 +371,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
     )
     generate_pack_parser.add_argument("--resume-existing", action="store_true")
+    generate_pack_parser.add_argument(
+        "--no-prewarm",
+        action="store_true",
+        help="do not prewarm quantized weight caches before generation",
+    )
     generate_pack_parser.add_argument(
         "--skip-artifact-checksums",
         action="store_true",
@@ -649,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
             torch_dtype=_torch_dtype(args.dtype),
         )
         pipeline.to(args.device)
+        prewarm_metadata = None
         if args.split == "orbitquant":
             load_quantized_pipeline_component(
                 pipeline,
@@ -657,6 +700,13 @@ def main(argv: list[str] | None = None) -> int:
                 validate_checksums=not args.skip_artifact_checksums,
                 device=args.device,
             )
+            if not args.no_prewarm:
+                prewarm_metadata = _prewarm_pipeline_component(
+                    pipeline,
+                    args.component,
+                    device=args.device,
+                    dtype=_torch_dtype(args.dtype),
+                )
         outputs = []
         for job in pending_jobs:
             prompt_record = job["prompt_record"]
@@ -672,6 +722,7 @@ def main(argv: list[str] | None = None) -> int:
                 quantization_config=quantization_config,
                 quantization_summary=None,
                 quantization_label=variant,
+                prewarm_metadata=prewarm_metadata,
                 runtime_dtype=args.dtype,
                 model_id=artifact_validation["source_model_id"],
             )
@@ -826,17 +877,33 @@ def main(argv: list[str] | None = None) -> int:
         )
         pipeline.to(args.device)
         quantization_summary = None
+        prewarm_metadata = None
         if artifact_path is not None:
             if args.split == "orbitquant":
                 load_quantized_pipeline_component(
                     pipeline,
                     artifact_path,
                     component=args.component,
+                    device=args.device,
                 )
+                if not args.no_prewarm:
+                    prewarm_metadata = _prewarm_pipeline_component(
+                        pipeline,
+                        args.component,
+                        device=args.device,
+                        dtype=_torch_dtype(args.dtype),
+                    )
         elif quantization_config is not None:
             quantization_summary = apply_quantization_to_pipeline(
                 pipeline, suite, quantization_config
             )
+            if not args.no_prewarm:
+                prewarm_metadata = _prewarm_pipeline_component(
+                    pipeline,
+                    args.component,
+                    device=args.device,
+                    dtype=_torch_dtype(args.dtype),
+                )
         result = run_native_generation(
             pipeline,
             suite,
@@ -847,6 +914,7 @@ def main(argv: list[str] | None = None) -> int:
             quantization_config=quantization_config,
             quantization_summary=quantization_summary,
             quantization_label=bit_setting,
+            prewarm_metadata=prewarm_metadata,
             runtime_dtype=args.dtype,
             model_id=model_id,
         )
