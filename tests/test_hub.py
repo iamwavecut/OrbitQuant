@@ -293,20 +293,28 @@ def test_stage_compact_upload_artifact_keeps_one_direct_comparison_matrix(tmp_pa
 def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
     _write_artifact(tmp_path)
     allowed_matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    extra_matrix = tmp_path / "assets" / "video_generation_comparison_matrix.webp"
     raw_png = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
     raw_png_sidecar = raw_png.with_suffix(".png.json")
     raw_webp = tmp_path / "assets" / "original_vs_orbitquant_seed0.webp"
     contact_sheet = tmp_path / "assets" / "wan_contact_sheet.webp"
     raw_video = tmp_path / "assets" / "wan-native_seed0_W4A4_motion.mp4"
+    raw_video_sidecar = raw_video.with_suffix(".mp4.json")
     nested_raw = tmp_path / "assets" / "nested" / "debug_frame.png"
+    unexpected_file = tmp_path / "debug.txt"
+    ignored_cache = tmp_path / ".cache" / "upload.tmp"
     for path, payload in (
         (allowed_matrix, b"matrix"),
+        (extra_matrix, b"video matrix"),
         (raw_png, b"png"),
         (raw_png_sidecar, b"json"),
         (raw_webp, b"webp"),
         (contact_sheet, b"contact"),
         (raw_video, b"mp4"),
+        (raw_video_sidecar, b"mp4 json"),
         (nested_raw, b"nested"),
+        (unexpected_file, b"debug"),
+        (ignored_cache, b"ignored"),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
@@ -320,19 +328,43 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
         for path in stage_dir.rglob("*")
         if path.is_file()
     }
-    assert "assets/image_generation_comparison_matrix.webp" in staged_files
+    expected_files = set(hub_module._REQUIRED_ARTIFACT_FILES) | {
+        "assets/image_generation_comparison_matrix.webp"
+    }
+    assert staged_files == expected_files
+
+    staged_manifest = json.loads((stage_dir / "orbitquant_manifest.json").read_text())
+    manifest_checksum_files = set(staged_manifest["checksums"])
+    sha256sum_files = set(read_sha256sums(stage_dir / "SHA256SUMS"))
+    assert manifest_checksum_files == staged_files - {
+        "README.md",
+        "SHA256SUMS",
+        "orbitquant_manifest.json",
+    }
+    assert sha256sum_files == staged_files - {"SHA256SUMS"}
+
+    staged_summary = json.loads((stage_dir / "benchmark" / "summary.json").read_text())
+    assert staged_summary["published_summary"] == "compact"
+    assert staged_summary["raw_generation_records"] == "local-only"
     assert not any(path.endswith(".png") for path in staged_files)
     assert not any(path.endswith(".png.json") for path in staged_files)
     assert not any(path.endswith(".mp4") for path in staged_files)
+    assert "assets/video_generation_comparison_matrix.webp" not in staged_files
     assert "assets/original_vs_orbitquant_seed0.webp" not in staged_files
     assert "assets/wan_contact_sheet.webp" not in staged_files
     assert "assets/nested/debug_frame.png" not in staged_files
+    assert "debug.txt" not in staged_files
+    assert ".cache/upload.tmp" not in staged_files
+    assert result["omitted_unexpected_file_count"] == 1
+    assert result["omitted_unexpected_files"] == ["debug.txt"]
     assert set(result["omitted_raw_eval_assets"]) >= {
+        "assets/video_generation_comparison_matrix.webp",
         "assets/flux2-native_seed0_W4A4_simple-object.png",
         "assets/flux2-native_seed0_W4A4_simple-object.png.json",
         "assets/original_vs_orbitquant_seed0.webp",
         "assets/wan_contact_sheet.webp",
         "assets/wan-native_seed0_W4A4_motion.mp4",
+        "assets/wan-native_seed0_W4A4_motion.mp4.json",
         "assets/nested/debug_frame.png",
     }
 
