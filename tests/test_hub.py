@@ -1442,6 +1442,10 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     assert "- Release eval applicable: 1 / 2" in markdown
     assert "- Release eval ready: 0 / 1" in markdown
     assert "- Missing release metrics: 2" in markdown
+    assert "## Readiness Semantics" in markdown
+    assert "no forbidden raw files" in markdown
+    assert "it is not a GenEval or VBench result" in markdown
+    assert "paper metric or reproduction claims" in markdown
     assert "Missing required metrics" not in markdown
     assert (
         "| flux2-native | W4A4 | `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` | "

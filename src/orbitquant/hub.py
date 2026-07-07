@@ -898,6 +898,22 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
         f"- Forbidden files: {payload.get('forbidden_file_count', 0)}",
         "",
+        "## Readiness Semantics",
+        "",
+        (
+            "- Artifact ready means the compact repository has required files, "
+            "consistent manifest/checksum metadata, and no forbidden raw files."
+        ),
+        (
+            "- Native smoke ready means a final comparison asset and original/"
+            "OrbitQuant generated-sample counters are present; it is not a "
+            "GenEval or VBench result."
+        ),
+        (
+            "- Release eval ready is the only readiness flag for paper metric "
+            "or reproduction claims."
+        ),
+        "",
         "## Artifact Matrix",
         "",
         (
