@@ -388,7 +388,8 @@ class OrbitQuantLinear(nn.Module):
             work = x.to(torch.float32)
             norms = work.norm(dim=-1, keepdim=True)
             rotated_x = (
-                self.rotation.apply_to_activations(work / (norms + self.activation_eps)) * norms
+                self.rotation.apply_to_activations(work / norms.clamp_min(self.activation_eps))
+                * norms
             ).to(x.dtype)
         else:
             rotated_x = quantize_activations_kernel(

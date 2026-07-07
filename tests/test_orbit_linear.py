@@ -143,7 +143,7 @@ def test_orbit_linear_quantized_forward_matches_manual_paper_equation(monkeypatc
     work = x.to(torch.float32)
     rotated_activation = quantized.rotation.apply_to_activations(work)
     token_norms = rotated_activation.norm(dim=-1, keepdim=True)
-    activation_unit = rotated_activation / (token_norms + config.activation_eps)
+    activation_unit = rotated_activation / token_norms.clamp_min(config.activation_eps)
     dequantized_activation = token_norms * quantized.activation_codebook.quantize(
         activation_unit
     )

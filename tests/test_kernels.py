@@ -59,6 +59,26 @@ def test_activation_quantization_is_per_token_scale_equivariant_and_batch_indepe
     assert torch.equal(with_outlier[:-1], baseline.reshape(-1, 16))
 
 
+def test_activation_normalization_clamps_epsilon_instead_of_adding_it():
+    class IdentityCodebook:
+        def quantize(self, values):
+            return values
+
+    torch.manual_seed(12)
+    x = torch.randn(2, 3, 16)
+    rotation = RPBHRotation(dim=16, seed=3, block_size=8)
+
+    actual = quantize_activations(
+        x,
+        rotation=rotation,
+        codebook=IdentityCodebook(),
+        eps=0.5,
+    )
+
+    assert torch.all(x.norm(dim=-1) > 0.5)
+    assert torch.allclose(actual, rotation.apply_to_activations(x), atol=1e-6, rtol=1e-6)
+
+
 def test_activation_quantization_rescales_with_raw_norm_so_zero_tokens_stay_zero():
     x = torch.zeros(2, 3, 16)
     rotation = RPBHRotation(dim=16, seed=3, block_size=8)

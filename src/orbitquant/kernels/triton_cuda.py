@@ -120,10 +120,11 @@ def _permute_sign_normalize_activation_kernel(
     source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norms = tl.load(norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
+    denom = tl.maximum(norms, eps)
     values = tl.load(input_ptr + rows * dim + source_cols, mask=mask, other=0.0).to(
         tl.float32
     )
-    tl.store(work_ptr + offsets, values * signs / (norms + eps), mask=mask)
+    tl.store(work_ptr + offsets, values * signs / denom, mask=mask)
 
 
 @triton.jit
