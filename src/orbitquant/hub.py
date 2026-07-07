@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
-from orbitquant.artifacts import validate_orbitquant_artifact
+from orbitquant.artifacts import refresh_artifact_checksums, validate_orbitquant_artifact
 from orbitquant.artifacts.checksums import is_ignored_artifact_relative_path
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
@@ -62,6 +64,7 @@ _REQUIRED_METRICS_BY_SUITE = {
         "vbench_overall_consistency",
     ),
 }
+_COMPACT_RAW_EVAL_ASSET_MARKERS = ("_geneval-", "_vbench-")
 
 
 def inspect_model_metadata(model_id: str, *, revision: str | None = None) -> dict[str, Any]:
@@ -217,6 +220,105 @@ def _parse_sha256sums_bytes(payload: bytes) -> dict[str, str]:
         if digest and relative_path:
             entries[relative_path] = digest
     return entries
+
+
+def _copy_artifact_file(source_path: Path, artifact_path: Path, output_path: Path) -> None:
+    relative_path = source_path.relative_to(artifact_path)
+    target_path = output_path / relative_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, target_path)
+
+
+def _is_raw_eval_asset(relative_path: str) -> bool:
+    if not relative_path.startswith("assets/"):
+        return False
+    name = Path(relative_path).name
+    return any(marker in name for marker in _COMPACT_RAW_EVAL_ASSET_MARKERS)
+
+
+def _copy_report_dir(report_dir: Path, artifact_path: Path, output_path: Path) -> list[str]:
+    copied = []
+    report_dir = report_dir.resolve()
+    artifact_root = artifact_path.resolve()
+    if report_dir.is_relative_to(artifact_root):
+        target_root = output_path / report_dir.relative_to(artifact_root)
+    else:
+        target_root = output_path / "reports" / "native" / report_dir.name
+    for source_path in sorted(report_dir.rglob("*")):
+        if not source_path.is_file():
+            continue
+        relative_path = source_path.relative_to(report_dir)
+        target_path = target_root / relative_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        copied.append(target_path.relative_to(output_path).as_posix())
+    return copied
+
+
+def stage_compact_upload_artifact(
+    artifact_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    report_dirs: list[str | Path] | None = None,
+    validate_tensors: bool = True,
+) -> dict[str, Any]:
+    """Create a compact upload copy with metrics and proof assets but without raw eval dumps."""
+
+    artifact_path = Path(artifact_dir)
+    output_path = Path(output_dir)
+    artifact_root = artifact_path.resolve()
+    output_root = output_path.resolve(strict=False)
+    if output_root == artifact_root or output_root.is_relative_to(artifact_root):
+        raise RuntimeError("staging output directory must be outside the source artifact")
+    if output_path.exists() and any(output_path.iterdir()):
+        raise RuntimeError(f"staging output directory is not empty: {output_path}")
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    source_validation = validate_orbitquant_artifact(
+        artifact_path,
+        validate_checksums_enabled=True,
+        validate_tensors=validate_tensors,
+    )
+    copied_files = []
+    omitted_raw_eval_assets = []
+    for source_path in sorted(artifact_path.rglob("*")):
+        if not source_path.is_file():
+            continue
+        relative_path = source_path.relative_to(artifact_path).as_posix()
+        if is_ignored_artifact_relative_path(relative_path):
+            continue
+        if _is_raw_eval_asset(relative_path):
+            omitted_raw_eval_assets.append(relative_path)
+            continue
+        _copy_artifact_file(source_path, artifact_path, output_path)
+        copied_files.append(relative_path)
+
+    copied_reports = []
+    for report_dir in report_dirs or []:
+        path = Path(report_dir)
+        if not path.is_dir():
+            raise RuntimeError(f"report directory missing: {path}")
+        copied_reports.extend(_copy_report_dir(path, artifact_path, output_path))
+
+    checksum_refresh = refresh_artifact_checksums(output_path)
+    staged_validation = validate_orbitquant_artifact(
+        output_path,
+        validate_checksums_enabled=True,
+        validate_tensors=validate_tensors,
+    )
+    return {
+        "enabled": True,
+        "artifact_dir": str(output_path),
+        "profile": "compact",
+        "source_validation": source_validation,
+        "validation": staged_validation,
+        "copied_file_count": len(set(copied_files) | set(copied_reports)),
+        "copied_report_file_count": len(copied_reports),
+        "omitted_raw_eval_asset_count": len(omitted_raw_eval_assets),
+        "omitted_raw_eval_assets": omitted_raw_eval_assets[:50],
+        "omitted_raw_eval_asset_overflow": max(0, len(omitted_raw_eval_assets) - 50),
+        "checksum_refresh": checksum_refresh,
+    }
 
 
 def audit_hf_artifact_repos(
@@ -530,21 +632,48 @@ def upload_orbitquant_artifact(
     commit_message: str | None = None,
     replace_repo_files: bool = False,
     validate_tensors: bool = True,
+    upload_profile: str = "full",
+    report_dirs: list[str | Path] | None = None,
+    staging_dir: str | Path | None = None,
     dry_run: bool = False,
     api: HfApi | None = None,
 ) -> dict[str, Any]:
     """Validate and upload an OrbitQuant artifact directory to a HF model repo."""
 
     artifact_path = Path(artifact_dir)
-    validation = validate_orbitquant_artifact(
-        artifact_path,
-        validate_checksums_enabled=True,
-        validate_tensors=validate_tensors,
-    )
+    if upload_profile not in {"full", "compact"}:
+        raise ValueError(f"unsupported upload profile: {upload_profile}")
+    temp_staging = None
+    if upload_profile == "compact":
+        if staging_dir is None:
+            temp_staging = tempfile.TemporaryDirectory(prefix="orbitquant-hf-upload-")
+            upload_path = Path(temp_staging.name) / "artifact"
+        else:
+            upload_path = Path(staging_dir)
+        try:
+            staging = stage_compact_upload_artifact(
+                artifact_path,
+                upload_path,
+                report_dirs=report_dirs,
+                validate_tensors=validate_tensors,
+            )
+        except Exception:
+            if temp_staging is not None:
+                temp_staging.cleanup()
+            raise
+        validation = staging["validation"]
+    else:
+        upload_path = artifact_path
+        staging = {"enabled": False, "profile": "full"}
+        validation = validate_orbitquant_artifact(
+            artifact_path,
+            validate_checksums_enabled=True,
+            validate_tensors=validate_tensors,
+        )
     upload_kwargs = {
         "repo_id": repo_id,
         "repo_type": "model",
-        "folder_path": str(artifact_path),
+        "folder_path": str(upload_path),
         "revision": revision,
         "commit_message": commit_message or "Upload OrbitQuant artifact",
         "ignore_patterns": list(_DEFAULT_IGNORE_PATTERNS),
@@ -558,6 +687,8 @@ def upload_orbitquant_artifact(
         "revision": revision,
         "create_repo": create_repo,
         "replace_repo_files": replace_repo_files,
+        "upload_profile": upload_profile,
+        "staging": staging,
         "dry_run": dry_run,
         "validation": validation,
         "upload": None,
@@ -566,28 +697,32 @@ def upload_orbitquant_artifact(
             key: value for key, value in upload_kwargs.items() if key != "folder_path"
         },
     }
-    if dry_run:
+    try:
+        if dry_run:
+            return result
+
+        api = HfApi() if api is None else api
+        if create_repo:
+            repo_url = api.create_repo(
+                repo_id=repo_id,
+                repo_type="model",
+                private=private,
+                exist_ok=True,
+            )
+            result["created_repo_url"] = str(repo_url)
+        commit_info = api.upload_folder(**upload_kwargs)
+        upload_payload = _commit_info_payload(commit_info)
+        result["upload"] = upload_payload
+
+        audit_revision = upload_payload["commit_oid"] or revision
+        uploaded_info = api.model_info(repo_id, revision=audit_revision)
+        result["uploaded_repo"] = {
+            "repo_id": repo_id,
+            "sha": uploaded_info.sha,
+            "private": uploaded_info.private,
+            "gated": uploaded_info.gated,
+        }
         return result
-
-    api = HfApi() if api is None else api
-    if create_repo:
-        repo_url = api.create_repo(
-            repo_id=repo_id,
-            repo_type="model",
-            private=private,
-            exist_ok=True,
-        )
-        result["created_repo_url"] = str(repo_url)
-    commit_info = api.upload_folder(**upload_kwargs)
-    upload_payload = _commit_info_payload(commit_info)
-    result["upload"] = upload_payload
-
-    audit_revision = upload_payload["commit_oid"] or revision
-    uploaded_info = api.model_info(repo_id, revision=audit_revision)
-    result["uploaded_repo"] = {
-        "repo_id": repo_id,
-        "sha": uploaded_info.sha,
-        "private": uploaded_info.private,
-        "gated": uploaded_info.gated,
-    }
-    return result
+    finally:
+        if temp_staging is not None:
+            temp_staging.cleanup()

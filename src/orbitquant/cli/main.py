@@ -471,6 +471,24 @@ def main(argv: list[str] | None = None) -> int:
     upload_parser.add_argument("--no-create-repo", action="store_true")
     upload_parser.add_argument("--replace-repo-files", action="store_true")
     upload_parser.add_argument("--skip-tensor-validation", action="store_true")
+    upload_parser.add_argument(
+        "--upload-profile",
+        default="full",
+        choices=["full", "compact"],
+        help=(
+            "full uploads the artifact directory as-is; compact stages a validated "
+            "copy with metrics/proof assets and without raw GenEval/VBench image dumps"
+        ),
+    )
+    upload_parser.add_argument(
+        "--report-dir",
+        action="append",
+        help="native report directory to include when --upload-profile compact is used",
+    )
+    upload_parser.add_argument(
+        "--staging-dir",
+        help="optional directory for the compact staged upload copy; must be empty",
+    )
     upload_parser.add_argument("--dry-run", action="store_true")
 
     audit_hf_parser = subparsers.add_parser(
@@ -881,6 +899,9 @@ def main(argv: list[str] | None = None) -> int:
                     commit_message=args.commit_message,
                     replace_repo_files=args.replace_repo_files,
                     validate_tensors=not args.skip_tensor_validation,
+                    upload_profile=args.upload_profile,
+                    report_dirs=args.report_dir,
+                    staging_dir=args.staging_dir,
                     dry_run=args.dry_run,
                 ),
                 indent=2,

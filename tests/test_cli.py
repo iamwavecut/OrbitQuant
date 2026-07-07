@@ -1934,6 +1934,12 @@ def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, m
                 "--no-create-repo",
                 "--replace-repo-files",
                 "--skip-tensor-validation",
+                "--upload-profile",
+                "compact",
+                "--report-dir",
+                "/tmp/orbitquant-report",
+                "--staging-dir",
+                "/tmp/orbitquant-stage",
                 "--dry-run",
             ]
         )
@@ -1954,6 +1960,9 @@ def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, m
             "commit_message": "upload artifact",
             "replace_repo_files": True,
             "validate_tensors": False,
+            "upload_profile": "compact",
+            "report_dirs": ["/tmp/orbitquant-report"],
+            "staging_dir": "/tmp/orbitquant-stage",
             "dry_run": True,
         },
     }

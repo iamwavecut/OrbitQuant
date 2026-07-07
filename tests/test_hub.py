@@ -4,7 +4,7 @@ import pytest
 import torch
 
 import orbitquant.hub as hub_module
-from orbitquant.artifacts import save_orbitquant_artifact
+from orbitquant.artifacts import refresh_artifact_checksums, save_orbitquant_artifact
 from orbitquant.artifacts.checksums import read_sha256sums
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
@@ -12,6 +12,7 @@ from orbitquant.hub import (
     audit_hf_artifact_repos,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
+    stage_compact_upload_artifact,
     upload_orbitquant_artifact,
 )
 from orbitquant.modeling import quantize_linear_modules
@@ -133,6 +134,56 @@ def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path
     assert fake_api.create_repo_calls == []
     assert fake_api.upload_folder_calls == []
     assert fake_api.model_info_calls == []
+
+
+def test_stage_compact_upload_artifact_omits_raw_eval_assets_and_copies_reports(
+    tmp_path,
+):
+    _write_artifact(tmp_path)
+    raw_eval_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_geneval-00000.png"
+    raw_eval_metadata = raw_eval_asset.with_suffix(".png.json")
+    visual_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
+    comparison_asset = (
+        tmp_path
+        / "assets"
+        / "original_vs_orbitquant_flux2-native_seed0_W4A4_simple-object.webp"
+    )
+    raw_eval_asset.write_bytes(b"raw eval image")
+    raw_eval_metadata.write_text('{"prompt_id":"geneval-00000"}\n', encoding="utf-8")
+    visual_asset.write_bytes(b"visual image")
+    comparison_asset.write_bytes(b"comparison")
+    report_dir = tmp_path.parent / f"{tmp_path.name}-report"
+    report_matrix = report_dir / "assets" / "image_generation_comparison_matrix.webp"
+    report_matrix.parent.mkdir(parents=True)
+    report_matrix.write_bytes(b"report matrix")
+    refresh_artifact_checksums(tmp_path)
+
+    stage_dir = tmp_path.parent / f"{tmp_path.name}-stage"
+    result = stage_compact_upload_artifact(
+        tmp_path,
+        stage_dir,
+        report_dirs=[report_dir],
+        validate_tensors=False,
+    )
+
+    staged_checksums = read_sha256sums(stage_dir / "SHA256SUMS")
+    assert result["validation"]["valid"] is True
+    assert result["omitted_raw_eval_asset_count"] == 2
+    assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
+    assert not (stage_dir / raw_eval_metadata.relative_to(tmp_path)).exists()
+    assert (stage_dir / visual_asset.relative_to(tmp_path)).is_file()
+    assert (stage_dir / comparison_asset.relative_to(tmp_path)).is_file()
+    staged_report = (
+        stage_dir
+        / "reports"
+        / "native"
+        / report_dir.name
+        / "assets"
+        / "image_generation_comparison_matrix.webp"
+    )
+    assert staged_report.is_file()
+    assert raw_eval_asset.relative_to(tmp_path).as_posix() not in staged_checksums
+    assert staged_report.relative_to(stage_dir).as_posix() in staged_checksums
 
 
 def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
@@ -319,6 +370,36 @@ def test_upload_orbitquant_artifact_creates_uploads_and_audits_model_repo(tmp_pa
         {"repo_id": "WaveCut/example-orbitquant", "revision": "uploaded-sha"}
     ]
     assert result["validation"]["tensor_validation"] == "skipped"
+
+
+def test_upload_orbitquant_artifact_can_upload_compact_staged_copy(tmp_path):
+    _write_artifact(tmp_path)
+    raw_eval_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_geneval-00000.png"
+    visual_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
+    raw_eval_asset.write_bytes(b"raw eval image")
+    visual_asset.write_bytes(b"visual image")
+    refresh_artifact_checksums(tmp_path)
+    stage_dir = tmp_path.parent / f"{tmp_path.name}-upload-stage"
+    fake_api = FakeHfApi()
+
+    result = upload_orbitquant_artifact(
+        tmp_path,
+        repo_id="WaveCut/example-orbitquant",
+        upload_profile="compact",
+        staging_dir=stage_dir,
+        validate_tensors=False,
+        api=fake_api,
+    )
+
+    assert result["upload_profile"] == "compact"
+    assert result["staging"]["enabled"] is True
+    assert result["staging"]["omitted_raw_eval_asset_count"] == 1
+    assert len(fake_api.upload_folder_calls) == 1
+    assert fake_api.upload_folder_calls[0]["folder_path"] == str(stage_dir)
+    assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
+    assert (stage_dir / visual_asset.relative_to(tmp_path)).is_file()
+    assert result["validation"]["valid"] is True
+    assert result["upload"]["commit_oid"] == "uploaded-sha"
 
 
 def test_upload_orbitquant_artifact_rejects_invalid_artifact_before_hub_calls(tmp_path):
