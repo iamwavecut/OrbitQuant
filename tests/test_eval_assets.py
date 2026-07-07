@@ -43,3 +43,23 @@ def test_create_video_contact_sheet_samples_fixed_indices(tmp_path):
     assert output_path.is_file()
     with Image.open(output_path) as sheet:
         assert sheet.size == (48, 12)
+
+
+def test_create_video_contact_sheet_accepts_float_frames_from_video_pipelines(tmp_path):
+    frames = [
+        np.full((12, 16, 3), fill_value=value, dtype=np.float32)
+        for value in (0.0, 0.5, 1.0)
+    ]
+    output_path = tmp_path / "wan_float_contact_sheet.webp"
+
+    result = create_video_contact_sheet(
+        frames,
+        output_path,
+        sample_indices=[0, 1, 2],
+        columns=3,
+    )
+
+    assert result == output_path
+    with Image.open(output_path) as sheet:
+        assert sheet.size == (48, 12)
+        assert sheet.mode == "RGB"

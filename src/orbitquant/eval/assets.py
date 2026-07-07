@@ -12,6 +12,11 @@ def _as_rgb_image(value: str | Path | Image.Image | np.ndarray) -> Image.Image:
     if isinstance(value, Image.Image):
         return value.convert("RGB")
     if isinstance(value, np.ndarray):
+        if np.issubdtype(value.dtype, np.floating):
+            value = np.nan_to_num(value, nan=0.0, posinf=255.0, neginf=0.0)
+            if value.size and value.min() >= 0.0 and value.max() <= 1.0:
+                value = value * 255.0
+            value = np.clip(value, 0.0, 255.0).astype(np.uint8)
         return Image.fromarray(value).convert("RGB")
     return Image.open(value).convert("RGB")
 
