@@ -949,7 +949,7 @@ def upload_orbitquant_artifact(
     commit_message: str | None = None,
     replace_repo_files: bool = False,
     validate_tensors: bool = True,
-    upload_profile: str = "full",
+    upload_profile: str = "compact",
     report_dirs: list[str | Path] | None = None,
     staging_dir: str | Path | None = None,
     dry_run: bool = False,

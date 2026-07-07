@@ -18,9 +18,10 @@ def test_readme_documents_component_artifact_usage():
     assert "ZImagePipeline" in readme
     assert "WanPipeline" in readme
     assert "832x480, 81 frames, 50 steps, guidance 5.0" in readme
-    assert "orbitquant upload-artifact --upload-profile compact" in readme
-    assert "omits `reports/` logs and raw eval dumps" in readme
+    assert "`orbitquant upload-artifact` uses the compact upload profile by default" in readme
+    assert "omits\n`reports/` logs and raw eval dumps" in readme
+    assert "These diffusion artifacts are not standalone `transformers.AutoModel` repos" in readme
     assert 'quantization_device="cuda"' in readme
-    assert "Small range smoke generations are not used as quality evidence" in readme
+    assert "not used\nas quality evidence" in readme
     assert "RunPod" not in readme
     assert "REMOTE_STAGE" not in readme

@@ -2007,6 +2007,44 @@ def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, m
     }
 
 
+def test_cli_upload_artifact_defaults_to_compact_profile(capsys, tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_upload_artifact(artifact, **kwargs):
+        seen["artifact"] = artifact
+        seen["kwargs"] = kwargs
+        return {
+            "artifact_dir": artifact,
+            "repo_id": kwargs["repo_id"],
+            "private": kwargs["private"],
+            "dry_run": kwargs["dry_run"],
+            "validation": {"valid": True},
+        }
+
+    monkeypatch.setattr(cli_main, "upload_orbitquant_artifact", fake_upload_artifact)
+
+    assert (
+        main(
+            [
+                "upload-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--repo-id",
+                "WaveCut/example-orbitquant",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["repo_id"] == "WaveCut/example-orbitquant"
+    assert seen["artifact"] == str(tmp_path)
+    assert seen["kwargs"]["upload_profile"] == "compact"
+    assert seen["kwargs"]["report_dirs"] is None
+    assert seen["kwargs"]["staging_dir"] is None
+
+
 def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monkeypatch):
     seen = {}
 

@@ -9,9 +9,10 @@ The library targets Hugging Face Diffusers pipelines and stores compact
 transformer-component artifacts that can be patched back into the original
 pipeline.
 
-This repository is still pre-release. The artifact format, public API, and
-kernel backends are being hardened against native FLUX, Z-Image, and Wan
-generation workloads.
+The repository contains the Python package, quantization code, artifact tools,
+and validation helpers. Generated images, videos, raw logs, and metric dumps are
+local evidence inputs; published model repositories should contain compact
+artifacts, usage instructions, provenance, and selected final comparison assets.
 
 ## What It Provides
 
@@ -22,7 +23,7 @@ generation workloads.
   checksums.
 - Diffusers helper APIs for quantizing, saving, loading, and validating
   transformer-component artifacts.
-- Native image/video generation helpers for producing BF16-vs-OrbitQuant
+- Native image/video generation helpers for producing final BF16-vs-OrbitQuant
   comparison assets.
 
 Text encoders, VAE, embeddings, timestep MLPs, and final projection heads are
@@ -87,9 +88,14 @@ result = pipe(
 )
 ```
 
-Use the model-specific Diffusers class when available. The published artifact
-cards include full code-only examples for the matching pipeline and native
-generation settings.
+Use the model-specific Diffusers class when available. Published artifact cards
+include code-only examples for the matching pipeline and native generation
+settings.
+
+These diffusion artifacts are not standalone `transformers.AutoModel` repos.
+OrbitQuant integrates with Hugging Face configuration and quantization
+mechanisms, but the published FLUX, Z-Image, and Wan artifacts are Diffusers
+transformer-component artifacts and should be loaded through Diffusers.
 
 ## Quantize A Pipeline Component
 
@@ -149,7 +155,7 @@ orbitquant quantize \
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
 
-## Native Targets
+## Published Artifact Settings
 
 The current target matrix follows the agreed native settings:
 
@@ -160,8 +166,9 @@ The current target matrix follows the agreed native settings:
 | `z-image-native` | `Tongyi-MAI/Z-Image-Turbo` | `ZImagePipeline` | 1024x1024, 10 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
 | `wan-native` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `WanPipeline` | 832x480, 81 frames, 50 steps, guidance 5.0 | W4A6, W4A4 |
 
-Small range smoke generations are not used as quality evidence. User-facing
-comparison assets are generated at the native settings above.
+User-facing comparison assets are generated at the native settings above. Small
+low-resolution range checks are useful only for local debugging and are not used
+as quality evidence.
 
 ## Comparison Assets
 
@@ -173,12 +180,12 @@ Hugging Face model card embeds them directly:
 - `assets/*generation_comparison_matrix.webp`
 - Wan contact-sheet comparisons for video artifacts
 
-Use `orbitquant upload-artifact --upload-profile compact` for model repos. The
-compact profile promotes final report comparison matrices into `assets/` and
-omits `reports/` logs and raw eval dumps from the uploaded repository. Local raw
-logs and intermediate eval outputs should stay outside the model repo. Model
-cards should describe the artifact, show how to use it, state the source
-model/provenance, and display final comparison assets.
+`orbitquant upload-artifact` uses the compact upload profile by default. The
+compact profile promotes final comparison matrices into `assets/` and omits
+`reports/` logs and raw eval dumps from the uploaded repository. Local raw logs
+and intermediate eval outputs should stay outside the model repo. Model cards
+describe the artifact, show how to use it, state source provenance, and display
+final comparison assets.
 
 ## Artifact Layout
 

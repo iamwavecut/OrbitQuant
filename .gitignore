@@ -9,4 +9,4 @@ dist/
 build/
 *.egg-info/
 /artifacts/
-reports/assets/
+/reports/

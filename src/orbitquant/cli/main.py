@@ -490,11 +490,12 @@ def main(argv: list[str] | None = None) -> int:
     upload_parser.add_argument("--skip-tensor-validation", action="store_true")
     upload_parser.add_argument(
         "--upload-profile",
-        default="full",
+        default="compact",
         choices=["full", "compact"],
         help=(
-            "full uploads the artifact directory as-is; compact stages a validated "
-            "copy with final proof assets and without raw eval dumps or report logs"
+            "compact stages a validated upload copy with final proof assets and "
+            "without raw eval dumps or report logs; full uploads the artifact "
+            "directory as-is"
         ),
     )
     upload_parser.add_argument(

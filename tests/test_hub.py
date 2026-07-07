@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -501,6 +502,7 @@ def test_upload_orbitquant_artifact_creates_uploads_and_audits_model_repo(tmp_pa
         commit_message="upload test artifact",
         replace_repo_files=True,
         validate_tensors=False,
+        upload_profile="full",
         api=fake_api,
     )
 
@@ -566,6 +568,32 @@ def test_upload_orbitquant_artifact_can_upload_compact_staged_copy(tmp_path):
     assert (stage_dir / visual_asset.relative_to(tmp_path)).is_file()
     assert result["validation"]["valid"] is True
     assert result["upload"]["commit_oid"] == "uploaded-sha"
+
+
+def test_upload_orbitquant_artifact_defaults_to_compact_staged_copy(tmp_path):
+    _write_artifact(tmp_path)
+    raw_eval_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_geneval-00000.png"
+    visual_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
+    raw_eval_asset.write_bytes(b"raw eval image")
+    visual_asset.write_bytes(b"visual image")
+    refresh_artifact_checksums(tmp_path)
+    fake_api = FakeHfApi()
+
+    result = upload_orbitquant_artifact(
+        tmp_path,
+        repo_id="WaveCut/example-orbitquant",
+        validate_tensors=False,
+        api=fake_api,
+    )
+
+    assert result["upload_profile"] == "compact"
+    assert result["staging"]["enabled"] is True
+    assert result["staging"]["omitted_raw_eval_asset_count"] == 1
+    assert result["staging"]["omitted_raw_eval_assets"] == [
+        "assets/flux2-native_seed0_W4A4_geneval-00000.png"
+    ]
+    upload_path = Path(fake_api.upload_folder_calls[0]["folder_path"])
+    assert upload_path != tmp_path
 
 
 def test_upload_orbitquant_artifact_rejects_invalid_artifact_before_hub_calls(tmp_path):
