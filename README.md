@@ -232,8 +232,9 @@ Each artifact is intentionally inspectable without executing code:
   checksums.
 - `orbitquant_codebooks.safetensors`: Lloyd-Max centroids and boundaries.
 - `orbitquant_rotations.safetensors`: deterministic RPBH rotation metadata.
-- `benchmark/*.jsonl` and `benchmark/*.csv`: imported metrics and native
-  generation metadata.
+- `benchmark/summary.json`: compact validation and imported-metric summary.
+- Local working artifacts may also contain raw `benchmark/*.jsonl` and
+  `benchmark/*.csv` records; compact published artifacts omit those raw files.
 - `assets/`: final comparison matrices embedded by the model card.
 - `SHA256SUMS`: checksums for artifact files.
 

@@ -11,10 +11,15 @@ URL, or signed-off audit note.
 - [ ] Release wording separates the paper-aligned subset from extra targets:
   FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 are paper targets; FLUX.2 Klein is
   an additional target unless the paper scope is expanded.
-- [ ] Native metrics are complete for every advertised release artifact. Image
-  artifacts include GenEval overall and per-task scores; Wan artifacts include
-  all required VBench dimensions. Any nonzero missing-required-metric count is
-  a release blocker.
+- [ ] Native artifact validation is complete for every advertised release
+  artifact. At minimum this includes native-resolution BF16-vs-OrbitQuant
+  comparison assets, load validation, finite-output checks, manifests, and
+  checksums.
+- [ ] Release-grade metrics are complete before making paper reproduction or
+  metric-table claims. Image paper-target artifacts then include GenEval
+  overall and per-task scores; Wan artifacts then include all required VBench
+  dimensions. Missing release metrics block only those metric/reproduction
+  claims, not ordinary compact artifact development.
 - [ ] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1, proving quantized, AdaLN
   INT4, and skipped modules match the paper policy.

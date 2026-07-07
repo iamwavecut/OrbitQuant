@@ -8,9 +8,12 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "arXiv 2607.02461" in release_gates
     assert "paper-aligned subset" in release_gates
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
-    assert "GenEval overall and per-task scores" in release_gates
-    assert "all required VBench dimensions" in release_gates
-    assert "missing-required-metric count is\n  a release blocker" in release_gates
+    assert "native-resolution BF16-vs-OrbitQuant\n  comparison assets" in release_gates
+    assert "finite-output checks" in release_gates
+    assert "paper reproduction or\n  metric-table claims" in release_gates
+    assert "GenEval\n  overall and per-task scores" in release_gates
+    assert "all required VBench\n  dimensions" in release_gates
+    assert "Missing release metrics block only those metric/reproduction\n  claims" in release_gates
     assert "Full-model module classification inventories" in release_gates
     assert "CUDA/Triton, CPU, Metal/MPS, ROCm, and XPU" in release_gates
     assert (

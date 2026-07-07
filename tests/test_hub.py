@@ -540,54 +540,25 @@ def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
     assert result["rows"][0]["bit_setting"] == "W4A4"
 
 
-def test_upload_orbitquant_artifact_creates_uploads_and_audits_model_repo(tmp_path):
+def test_upload_orbitquant_artifact_rejects_raw_full_upload_profile(tmp_path):
     _write_artifact(tmp_path)
     fake_api = FakeHfApi()
 
-    result = upload_orbitquant_artifact(
-        tmp_path,
-        repo_id="WaveCut/example-orbitquant",
-        private=False,
-        revision="main",
-        commit_message="upload test artifact",
-        replace_repo_files=True,
-        validate_tensors=False,
-        upload_profile="full",
-        api=fake_api,
-    )
+    with pytest.raises(ValueError, match="unsupported upload profile: full"):
+        upload_orbitquant_artifact(
+            tmp_path,
+            repo_id="WaveCut/example-orbitquant",
+            private=False,
+            revision="main",
+            commit_message="upload test artifact",
+            replace_repo_files=True,
+            validate_tensors=False,
+            upload_profile="full",
+            api=fake_api,
+        )
 
-    assert fake_api.create_repo_calls == [
-        {
-            "repo_id": "WaveCut/example-orbitquant",
-            "repo_type": "model",
-            "private": False,
-            "exist_ok": True,
-        }
-    ]
-    assert len(fake_api.upload_folder_calls) == 1
-    upload_call = fake_api.upload_folder_calls[0]
-    assert upload_call["repo_id"] == "WaveCut/example-orbitquant"
-    assert upload_call["repo_type"] == "model"
-    assert upload_call["folder_path"] == str(tmp_path)
-    assert upload_call["revision"] == "main"
-    assert upload_call["commit_message"] == "upload test artifact"
-    assert upload_call["delete_patterns"] == "*"
-    assert ".gitattributes" in upload_call["ignore_patterns"]
-    assert ".gitignore" in upload_call["ignore_patterns"]
-    assert ".cache/**" in upload_call["ignore_patterns"]
-    assert "*/.cache/**" in upload_call["ignore_patterns"]
-    assert result["upload"]["commit_oid"] == "uploaded-sha"
-    assert result["upload"]["commit_url"].endswith("/commit/uploaded-sha")
-    assert result["uploaded_repo"] == {
-        "repo_id": "WaveCut/example-orbitquant",
-        "sha": "uploaded-sha",
-        "private": True,
-        "gated": False,
-    }
-    assert fake_api.model_info_calls == [
-        {"repo_id": "WaveCut/example-orbitquant", "revision": "uploaded-sha"}
-    ]
-    assert result["validation"]["tensor_validation"] == "skipped"
+    assert fake_api.create_repo_calls == []
+    assert fake_api.upload_folder_calls == []
 
 
 def test_upload_orbitquant_artifact_can_upload_compact_staged_copy(tmp_path):
@@ -1218,13 +1189,15 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     assert "# OrbitQuant HF Artifact Audit" in markdown
     assert "- Release eval applicable: 1 / 2" in markdown
     assert "- Release eval ready: 0 / 1" in markdown
+    assert "- Missing release metrics: 2" in markdown
+    assert "Missing required metrics" not in markdown
     assert (
         "| flux2-native | W4A4 | `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` | "
         "yes | yes | yes | n/a | abcdef123456 |  |"
     ) in markdown
     assert (
         "| flux1-schnell-native | W4A4 | `WaveCut/FLUX.1-schnell-OrbitQuant-W4A4` | "
-        "yes | yes | yes | no | 123456abcdef | 2 missing |"
+        "yes | yes | yes | no | 123456abcdef | 2 release metrics missing |"
     ) in markdown
     assert (
         "`WaveCut/FLUX.1-schnell-OrbitQuant-W4A4`: "

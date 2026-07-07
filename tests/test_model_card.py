@@ -118,12 +118,12 @@ def test_model_card_ignores_contact_sheets_for_published_artifacts():
         )
     )
 
-    assert "Release readiness: blocked" in card
+    assert "Validation status: comparison asset missing" in card
     assert f"![{contact_sheet}]({contact_sheet})" not in card
     assert f"![{single_sample}]({single_sample})" not in card
 
 
-def test_model_card_marks_release_blocked_without_promoted_comparison_assets():
+def test_model_card_marks_missing_promoted_comparison_assets_without_logs():
     card = render_model_card(
         _manifest_for_model(
             "black-forest-labs/FLUX.1-schnell",
@@ -136,7 +136,7 @@ def test_model_card_marks_release_blocked_without_promoted_comparison_assets():
         )
     )
 
-    assert "Release readiness: blocked" in card
+    assert "Validation status: comparison asset missing" in card
     assert "does not include a generation comparison matrix" in card
     for forbidden in (
         "reports/",

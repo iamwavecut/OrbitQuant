@@ -119,6 +119,39 @@ def test_z_image_policy_covers_attention_ffn_and_adaln_but_skips_final_layer():
     assert decisions["all_final_layer.adaLN_modulation.0"].action == "bf16_skip"
 
 
+def test_z_image_policy_matches_current_diffusers_tiny_module_names():
+    pytest.importorskip("diffusers")
+    from diffusers import ZImageTransformer2DModel
+
+    model = ZImageTransformer2DModel(
+        in_channels=4,
+        dim=256,
+        n_layers=1,
+        n_refiner_layers=1,
+        n_heads=2,
+        n_kv_heads=2,
+        cap_feat_dim=32,
+        axes_dims=[32, 48, 48],
+        axes_lens=[64, 32, 32],
+    )
+
+    decisions = classify_linear_modules(model, OrbitQuantConfig(target_policy="z_image"))
+
+    assert decisions["noise_refiner.0.attention.to_q"].action == "orbitquant"
+    assert decisions["noise_refiner.0.feed_forward.w1"].action == "orbitquant"
+    assert decisions["noise_refiner.0.adaLN_modulation.0"].action == "adaln_int4_rtn"
+    assert decisions["context_refiner.0.attention.to_out.0"].action == "orbitquant"
+    assert decisions["context_refiner.0.feed_forward.w3"].action == "orbitquant"
+    assert decisions["layers.0.attention.to_k"].action == "orbitquant"
+    assert decisions["layers.0.feed_forward.w2"].action == "orbitquant"
+    assert decisions["layers.0.adaLN_modulation.0"].action == "adaln_int4_rtn"
+    assert decisions["all_x_embedder.2-1"].action == "bf16_skip"
+    assert decisions["t_embedder.mlp.0"].action == "bf16_skip"
+    assert decisions["cap_embedder.1"].action == "bf16_skip"
+    assert decisions["all_final_layer.2-1.linear"].action == "bf16_skip"
+    assert decisions["all_final_layer.2-1.adaLN_modulation.1"].action == "bf16_skip"
+
+
 class TinyWanNames(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -131,6 +164,7 @@ class TinyWanNames(torch.nn.Module):
                         "ffn": torch.nn.ModuleDict(
                             {"net": torch.nn.ModuleList([torch.nn.Linear(16, 32)])}
                         ),
+                        "norm1": torch.nn.ModuleDict({"linear": torch.nn.Linear(16, 32)}),
                     }
                 )
             ]
@@ -144,7 +178,9 @@ def test_wan_policy_covers_self_cross_attention_and_ffn_but_skips_time_projectio
     assert decisions["blocks.0.attn1.to_q"].action == "orbitquant"
     assert decisions["blocks.0.attn2.add_k_proj"].action == "orbitquant"
     assert decisions["blocks.0.ffn.net.0"].action == "orbitquant"
+    assert decisions["blocks.0.norm1.linear"].action == "bf16_skip"
     assert decisions["time_proj"].action == "bf16_skip"
+    assert {decision.action for decision in decisions.values()}.isdisjoint({"adaln_int4_rtn"})
 
 
 def test_target_policy_changes_transformer_block_scope():

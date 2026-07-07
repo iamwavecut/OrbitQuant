@@ -313,8 +313,9 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             [
                 "## Visual Comparison",
                 "",
-                "Release readiness: blocked. This artifact does not include a "
-                "generation comparison matrix or promoted comparison asset yet.",
+                "Validation status: comparison asset missing. This artifact does "
+                "not include a generation comparison matrix or promoted comparison "
+                "asset yet.",
                 "",
             ]
         )

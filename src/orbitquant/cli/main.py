@@ -504,11 +504,10 @@ def main(argv: list[str] | None = None) -> int:
     upload_parser.add_argument(
         "--upload-profile",
         default="compact",
-        choices=["full", "compact"],
+        choices=["compact"],
         help=(
             "compact stages a validated upload copy with final proof assets and "
-            "without raw eval dumps or report logs; full uploads the artifact "
-            "directory as-is"
+            "without raw eval dumps or report logs"
         ),
     )
     upload_parser.add_argument(

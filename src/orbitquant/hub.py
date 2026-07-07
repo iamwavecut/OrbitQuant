@@ -835,7 +835,7 @@ def _missing_metrics_count_label(row: dict[str, Any]) -> str:
     count = len(row.get("missing_required_metrics") or [])
     if count == 0:
         return ""
-    return f"{count} missing"
+    return f"{count} release metrics missing"
 
 
 def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
@@ -855,7 +855,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
             f"- Release eval ready: {payload.get('release_eval_ready_count', 0)} / "
             f"{release_eval_applicable_count}"
         ),
-        f"- Missing required metrics: {payload.get('missing_required_metric_count', 0)}",
+        f"- Missing release metrics: {payload.get('missing_required_metric_count', 0)}",
         f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
         f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
         f"- Forbidden files: {payload.get('forbidden_file_count', 0)}",
@@ -864,7 +864,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         "",
         (
             "| Suite | Bits | Repo | Private | Artifact | Native Smoke | Release Eval | "
-            "SHA | Missing Metrics | Forbidden Files |"
+            "SHA | Missing Release Metrics | Forbidden Files |"
         ),
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
@@ -1316,35 +1316,26 @@ def upload_orbitquant_artifact(
     """Validate and upload an OrbitQuant artifact directory to a HF model repo."""
 
     artifact_path = Path(artifact_dir)
-    if upload_profile not in {"full", "compact"}:
+    if upload_profile != "compact":
         raise ValueError(f"unsupported upload profile: {upload_profile}")
     temp_staging = None
-    if upload_profile == "compact":
-        if staging_dir is None:
-            temp_staging = tempfile.TemporaryDirectory(prefix="orbitquant-hf-upload-")
-            upload_path = Path(temp_staging.name) / "artifact"
-        else:
-            upload_path = Path(staging_dir)
-        try:
-            staging = stage_compact_upload_artifact(
-                artifact_path,
-                upload_path,
-                report_dirs=report_dirs,
-                validate_tensors=validate_tensors,
-            )
-        except Exception:
-            if temp_staging is not None:
-                temp_staging.cleanup()
-            raise
-        validation = staging["validation"]
+    if staging_dir is None:
+        temp_staging = tempfile.TemporaryDirectory(prefix="orbitquant-hf-upload-")
+        upload_path = Path(temp_staging.name) / "artifact"
     else:
-        upload_path = artifact_path
-        staging = {"enabled": False, "profile": "full"}
-        validation = validate_orbitquant_artifact(
+        upload_path = Path(staging_dir)
+    try:
+        staging = stage_compact_upload_artifact(
             artifact_path,
-            validate_checksums_enabled=True,
+            upload_path,
+            report_dirs=report_dirs,
             validate_tensors=validate_tensors,
         )
+    except Exception:
+        if temp_staging is not None:
+            temp_staging.cleanup()
+        raise
+    validation = staging["validation"]
     upload_kwargs = {
         "repo_id": repo_id,
         "repo_type": "model",

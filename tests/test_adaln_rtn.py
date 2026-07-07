@@ -24,6 +24,22 @@ def test_int4_rtn_linear_preserves_shape_and_freezes_parameters():
     assert quantized.group_size == 8
 
 
+def test_int4_rtn_default_matches_paper_group64_and_bf16_activation_path():
+    torch.manual_seed(0)
+    source = torch.nn.Linear(65, 9)
+    x = torch.randn(2, 3, 65, dtype=torch.bfloat16)
+    config = OrbitQuantConfig()
+
+    quantized = RTNInt4Linear.from_linear(source, config=config, module_name="block.modulation")
+    actual = quantized(x)
+
+    assert quantized.group_size == 64
+    assert quantized.scales.dtype == torch.bfloat16
+    assert actual.dtype == torch.bfloat16
+    assert actual.shape == (2, 3, 9)
+    assert torch.isfinite(actual).all()
+
+
 def test_int4_rtn_rejects_non_positive_group_size():
     source = torch.nn.Linear(16, 8)
     config = OrbitQuantConfig(adaln_group_size=1)

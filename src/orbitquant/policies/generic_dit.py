@@ -122,7 +122,8 @@ _POLICY_RULES: dict[str, PolicyRules] = {
     ),
     "wan": PolicyRules(
         block_tokens=("blocks",),
-        modulation_scopes=("blocks",),
+        modulation_tokens=(),
+        modulation_scopes=(),
         projection_tokens=("attn1", "attn2", "ffn", "to_q", "to_k", "to_v", "to_out"),
     ),
 }
