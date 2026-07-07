@@ -32,7 +32,8 @@ orbitquant quantize \
   --target-policy flux2 \
   --weight-bits 4 \
   --activation-bits 4 \
-  --activation-kernel-backend auto \
+  --activation-kernel-backend triton_cuda \
+  --device cuda \
   --output ./artifacts/flux2-klein-w4a4
 ```
 
@@ -44,7 +45,7 @@ orbitquant generate \
   --prompt "A small red cube on a white table" \
   --output ./artifacts/native-smoke/flux2 \
   --bit-setting W4A4 \
-  --activation-kernel-backend auto
+  --activation-kernel-backend triton_cuda
 ```
 
 Validate an artifact before publishing or moving it:
@@ -161,6 +162,29 @@ orbitquant external-eval-script \
   > run-external-eval.sh
 ```
 
+For GenEval, set:
+
+```bash
+export GENEVAL_DIR=/path/to/geneval
+export GENEVAL_OBJECT_DETECTOR=/path/to/mask2former/checkpoints
+```
+
+The generated script runs `orbitquant export-geneval` to create the upstream
+`00000/metadata.jsonl` and `00000/samples/*.png` folder layout, then calls
+`${GENEVAL_DIR}/evaluation/evaluate_images.py`, summarizes the resulting
+JSONL with `orbitquant summarize-geneval-results`, and records the normalized
+JSON metrics into the artifact. GenEval export requires prompt records with
+GenEval metadata (`tag`, `include`, and optional `exclude`); the visual prompt
+pack fails loudly instead of pretending to be a GenEval suite.
+
+For VBench, the generated script runs `orbitquant export-vbench`, then
+`vbench evaluate --mode custom_input`, then `orbitquant summarize-vbench-results`.
+The custom-input path covers the VBench dimensions supported by upstream for
+arbitrary videos: subject consistency, background consistency, motion smoothness,
+dynamic degree, aesthetic quality, and imaging quality. Paper-style standard
+VBench dimensions such as scene and overall consistency require generating the
+official VBench prompt suite, not only exporting the visual comparison pack.
+
 Validate a generated native sample and its metadata after copying artifacts back
 from a pod:
 
@@ -269,8 +293,9 @@ repeating the CPU-only offline codebook solve for every new quantization run.
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
 The current `triton_cuda` path uses real Triton kernels for runtime activation
 norm calculation, RPBH/FWHT rotation, codebook lookup, norm rescale, packed
-weight dequantization, offline low-bit weight packing, and offline weight
-RPBH/FWHT-to-codebook indexing during artifact creation. It also uses Triton for
+weight dequantization, offline low-bit pack/unpack, and offline weight
+RPBH/FWHT-to-codebook indexing with direct packed-byte output during artifact
+creation. It also uses Triton for
 AdaLN INT4 RTN group scale calculation, quantize+pack, and runtime dequantization
 instead of round-tripping through CPU unpack/pack. CUDA low-bit unpack also stays
 on CUDA and the CUDA pack path fails loudly if Triton is unavailable, instead of

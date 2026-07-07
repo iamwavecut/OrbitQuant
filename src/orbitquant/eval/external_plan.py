@@ -6,12 +6,21 @@ from typing import Any
 
 from orbitquant.eval.native_settings import NativeSuite, list_native_suites
 
+VBENCH_CUSTOM_INPUT_DIMENSIONS = (
+    "subject_consistency",
+    "background_consistency",
+    "motion_smoothness",
+    "dynamic_degree",
+    "aesthetic_quality",
+    "imaging_quality",
+)
+
 
 def _artifact_name(suite_name: str, bit_setting: str) -> str:
     return f"{suite_name}-{bit_setting.lower()}"
 
 
-def _cmd(parts: list[str]) -> str:
+def _cmd(parts: list[str | Path]) -> str:
     return " ".join(shlex.quote(str(part)) for part in parts)
 
 
@@ -19,36 +28,125 @@ def _metrics_json_path(metrics_root: Path, artifact_name: str, split: str, metri
     return metrics_root / f"{artifact_name}_{split}_{metric}.json"
 
 
-def _eval_command(
+def _export_dir_path(metrics_root: Path, artifact_name: str, split: str, metric: str) -> Path:
+    return metrics_root / "exports" / artifact_name / split / metric
+
+
+def _geneval_results_jsonl_path(metrics_root: Path, artifact_name: str, split: str) -> Path:
+    return metrics_root / f"{artifact_name}_{split}_geneval_results.jsonl"
+
+
+def _vbench_results_dir_path(metrics_root: Path, artifact_name: str, split: str) -> Path:
+    return metrics_root / f"{artifact_name}_{split}_vbench_output"
+
+
+def _export_command(
     suite: NativeSuite,
     *,
     artifact_dir: Path,
     split: str,
-    metrics_json: Path,
+    export_dir: Path,
 ) -> str:
     if suite.metric == "geneval":
         return _cmd(
             [
-                "geneval",
-                "--metadata-dir",
-                artifact_dir / "benchmark",
+                "orbitquant",
+                "export-geneval",
+                "--artifact",
+                artifact_dir,
                 "--split",
                 split,
-                "--output-json",
-                metrics_json,
+                "--output",
+                export_dir,
+            ]
+        )
+    if suite.metric == "vbench":
+        return _cmd(
+            [
+                "orbitquant",
+                "export-vbench",
+                "--artifact",
+                artifact_dir,
+                "--split",
+                split,
+                "--output",
+                export_dir,
+            ]
+        )
+    raise ValueError(f"native suite {suite.name!r} has no external metric export")
+
+
+def _eval_command(
+    suite: NativeSuite,
+    *,
+    export_dir: Path,
+    metrics_root: Path,
+    artifact_name: str,
+    split: str,
+) -> str:
+    if suite.metric == "geneval":
+        return " ".join(
+            [
+                "python",
+                '"${GENEVAL_DIR}/evaluation/evaluate_images.py"',
+                _cmd([export_dir]),
+                "--outfile",
+                _cmd([_geneval_results_jsonl_path(metrics_root, artifact_name, split)]),
+                "--model-path",
+                '"${GENEVAL_OBJECT_DETECTOR}"',
             ]
         )
     if suite.metric == "vbench":
         return _cmd(
             [
                 "vbench",
-                "--input-dir",
-                artifact_dir / "assets",
-                "--output-json",
-                metrics_json,
+                "evaluate",
+                "--dimension",
+                " ".join(VBENCH_CUSTOM_INPUT_DIMENSIONS),
+                "--videos_path",
+                export_dir,
+                "--mode",
+                "custom_input",
+                "--prompt_file",
+                export_dir / "vbench_prompts.json",
+                "--output_path",
+                _vbench_results_dir_path(metrics_root, artifact_name, split),
             ]
         )
     raise ValueError(f"native suite {suite.name!r} has no external metric runner")
+
+
+def _summarize_command(
+    suite: NativeSuite,
+    *,
+    metrics_root: Path,
+    artifact_name: str,
+    split: str,
+    metrics_json: Path,
+) -> str:
+    if suite.metric == "geneval":
+        return _cmd(
+            [
+                "orbitquant",
+                "summarize-geneval-results",
+                "--results-jsonl",
+                _geneval_results_jsonl_path(metrics_root, artifact_name, split),
+                "--output",
+                metrics_json,
+            ]
+        )
+    if suite.metric == "vbench":
+        return _cmd(
+            [
+                "orbitquant",
+                "summarize-vbench-results",
+                "--results-dir",
+                _vbench_results_dir_path(metrics_root, artifact_name, split),
+                "--output",
+                metrics_json,
+            ]
+        )
+    raise ValueError(f"native suite {suite.name!r} has no external metric summarizer")
 
 
 def _import_command(
@@ -88,10 +186,31 @@ def _preflight_lines(plan: dict[str, Any]) -> list[str]:
     if "geneval" in metrics:
         lines.extend(
             [
-                "if ! command -v geneval >/dev/null 2>&1; then",
-                "  echo 'missing required GenEval CLI: geneval' >&2",
-                "  exit 127",
+                ": \"${GENEVAL_DIR:?set GENEVAL_DIR to the GenEval checkout}\"",
+                (
+                    ": \"${GENEVAL_OBJECT_DETECTOR:?set GENEVAL_OBJECT_DETECTOR "
+                    "to the Mask2Former checkpoint directory}\""
+                ),
+                "if [ ! -f \"${GENEVAL_DIR}/evaluation/evaluate_images.py\" ]; then",
+                "  echo 'missing GenEval evaluate_images.py under GENEVAL_DIR' >&2",
+                "  exit 1",
                 "fi",
+                "if [ ! -d \"${GENEVAL_OBJECT_DETECTOR}\" ]; then",
+                "  echo 'missing GenEval object detector directory' >&2",
+                "  exit 1",
+                "fi",
+                "python - <<'PY'",
+                "import importlib.util",
+                (
+                    "missing = [name for name in ('mmdet', 'open_clip') "
+                    "if importlib.util.find_spec(name) is None]"
+                ),
+                "if missing:",
+                (
+                    "    raise SystemExit('missing GenEval Python dependencies: ' "
+                    "+ ', '.join(missing))"
+                ),
+                "PY",
             ]
         )
     if "vbench" in metrics:
@@ -101,6 +220,11 @@ def _preflight_lines(plan: dict[str, Any]) -> list[str]:
                 "  echo 'missing required VBench CLI: vbench' >&2",
                 "  exit 127",
                 "fi",
+                (
+                    "echo 'VBench custom_input dimensions: "
+                    + " ".join(VBENCH_CUSTOM_INPUT_DIMENSIONS)
+                    + "'"
+                ),
             ]
         )
     for artifact_dir in artifact_dirs:
@@ -133,9 +257,9 @@ def build_external_eval_plan(
             artifact_name = _artifact_name(suite.name, bit_setting)
             artifact_dir = output_path / artifact_name
             for split in ("original", "orbitquant"):
-                metrics_json = _metrics_json_path(
-                    metrics_path, artifact_name, split, str(suite.metric)
-                )
+                metric = str(suite.metric)
+                metrics_json = _metrics_json_path(metrics_path, artifact_name, split, metric)
+                export_dir = _export_dir_path(metrics_path, artifact_name, split, metric)
                 jobs.append(
                     {
                         "suite": suite.name,
@@ -144,10 +268,25 @@ def build_external_eval_plan(
                         "split": split,
                         "metric": suite.metric,
                         "artifact_dir": str(artifact_dir),
+                        "export_dir": str(export_dir),
                         "metrics_json": str(metrics_json),
-                        "eval_command": _eval_command(
+                        "export_command": _export_command(
                             suite,
                             artifact_dir=artifact_dir,
+                            split=split,
+                            export_dir=export_dir,
+                        ),
+                        "eval_command": _eval_command(
+                            suite,
+                            export_dir=export_dir,
+                            metrics_root=metrics_path,
+                            artifact_name=artifact_name,
+                            split=split,
+                        ),
+                        "summarize_command": _summarize_command(
+                            suite,
+                            metrics_root=metrics_path,
+                            artifact_name=artifact_name,
                             split=split,
                             metrics_json=metrics_json,
                         ),
@@ -192,7 +331,10 @@ def build_external_eval_script(
             [
                 f"# {job['suite']} {job['bit_setting']} {job['split']} {job['metric']}",
                 _cmd(["mkdir", "-p", Path(str(job["metrics_json"])).parent]),
+                _cmd(["mkdir", "-p", Path(str(job["export_dir"])).parent]),
+                str(job["export_command"]),
                 str(job["eval_command"]),
+                str(job["summarize_command"]),
                 str(job["import_command"]),
                 "",
             ]

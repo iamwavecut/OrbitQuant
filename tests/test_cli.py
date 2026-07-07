@@ -214,7 +214,9 @@ def test_cli_external_eval_plan_lists_metric_runner_import_commands(capsys, tmp_
     assert job["metric"] == "vbench"
     assert job["artifact_dir"].endswith("wan-native-w4a6")
     assert job["metrics_json"].endswith("wan-native-w4a6_orbitquant_vbench.json")
-    assert "vbench" in job["eval_command"]
+    assert "orbitquant export-vbench" in job["export_command"]
+    assert "vbench evaluate" in job["eval_command"]
+    assert "orbitquant summarize-vbench-results" in job["summarize_command"]
     assert "orbitquant record-metrics" in job["import_command"]
     assert "--metric-prefix vbench" in job["import_command"]
     assert "--split orbitquant" in job["import_command"]
@@ -243,7 +245,9 @@ def test_cli_external_eval_script_prints_metric_runner_script(capsys, tmp_path):
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert "if ! command -v vbench >/dev/null 2>&1; then" in script
     assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a6'} ]; then" in script
-    assert "vbench --input-dir" in script
+    assert "orbitquant export-vbench" in script
+    assert "vbench evaluate" in script
+    assert "orbitquant summarize-vbench-results" in script
     assert "orbitquant record-metrics" in script
     assert "--metric-prefix vbench" in script
     assert "orbitquant report" in script

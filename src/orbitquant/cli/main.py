@@ -19,6 +19,11 @@ from orbitquant.artifacts import (
 from orbitquant.benchmarks import benchmark_orbit_linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
+from orbitquant.eval.external_export import export_geneval_artifact, export_vbench_artifact
+from orbitquant.eval.external_metrics import (
+    summarize_geneval_results,
+    summarize_vbench_results,
+)
 from orbitquant.eval.external_plan import build_external_eval_plan, build_external_eval_script
 from orbitquant.eval.metrics import load_metric_json
 from orbitquant.eval.native_plan import build_native_eval_plan, build_native_run_script
@@ -267,6 +272,37 @@ def main(argv: list[str] | None = None) -> int:
     external_eval_script_parser.add_argument("--output-root", default="artifacts/native")
     external_eval_script_parser.add_argument("--metrics-root", default="metrics/native")
     external_eval_script_parser.add_argument("--report-output", default="reports/native")
+
+    export_geneval_parser = subparsers.add_parser(
+        "export-geneval", help="export generated artifact images to GenEval folder layout"
+    )
+    export_geneval_parser.add_argument("--artifact", required=True)
+    export_geneval_parser.add_argument("--split", required=True, choices=["original", "orbitquant"])
+    export_geneval_parser.add_argument("--output", required=True)
+
+    export_vbench_parser = subparsers.add_parser(
+        "export-vbench", help="export generated artifact videos to VBench custom input layout"
+    )
+    export_vbench_parser.add_argument("--artifact", required=True)
+    export_vbench_parser.add_argument("--split", required=True, choices=["original", "orbitquant"])
+    export_vbench_parser.add_argument("--output", required=True)
+    export_vbench_parser.add_argument(
+        "--link-mode",
+        default="symlink",
+        choices=["symlink", "hardlink", "copy"],
+    )
+
+    summarize_geneval_parser = subparsers.add_parser(
+        "summarize-geneval-results", help="summarize GenEval results.jsonl to JSON metrics"
+    )
+    summarize_geneval_parser.add_argument("--results-jsonl", required=True)
+    summarize_geneval_parser.add_argument("--output", required=True)
+
+    summarize_vbench_parser = subparsers.add_parser(
+        "summarize-vbench-results", help="summarize VBench JSON outputs to JSON metrics"
+    )
+    summarize_vbench_parser.add_argument("--results-dir", required=True)
+    summarize_vbench_parser.add_argument("--output", required=True)
 
     native_script_parser = subparsers.add_parser(
         "native-script", help="print a bash script for the native quant/eval matrix"
@@ -533,6 +569,35 @@ def main(argv: list[str] | None = None) -> int:
                 output_root=args.output_root,
                 metrics_root=args.metrics_root,
                 report_output_dir=args.report_output,
+            )
+        )
+        return 0
+    if args.command == "export-geneval":
+        result = export_geneval_artifact(args.artifact, args.output, split=args.split)
+        print(json.dumps(result.__dict__, indent=2))
+        return 0
+    if args.command == "export-vbench":
+        result = export_vbench_artifact(
+            args.artifact,
+            args.output,
+            split=args.split,
+            link_mode=args.link_mode,
+        )
+        print(json.dumps(result.__dict__, indent=2))
+        return 0
+    if args.command == "summarize-geneval-results":
+        print(
+            json.dumps(
+                summarize_geneval_results(args.results_jsonl, args.output),
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "summarize-vbench-results":
+        print(
+            json.dumps(
+                summarize_vbench_results(args.results_dir, args.output),
+                indent=2,
             )
         )
         return 0

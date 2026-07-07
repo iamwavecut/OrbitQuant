@@ -16,7 +16,9 @@ def test_build_external_eval_plan_emits_geneval_import_commands(tmp_path):
     assert first["metric"] == "geneval"
     assert first["artifact_dir"].endswith("flux1-schnell-native-w4a4")
     assert first["metrics_json"].endswith("flux1-schnell-native-w4a4_original_geneval.json")
-    assert "geneval" in first["eval_command"]
+    assert "orbitquant export-geneval" in first["export_command"]
+    assert '"${GENEVAL_DIR}/evaluation/evaluate_images.py"' in first["eval_command"]
+    assert "orbitquant summarize-geneval-results" in first["summarize_command"]
     assert "orbitquant record-metrics" in first["import_command"]
     assert "--metric-prefix geneval" in first["import_command"]
     assert "--split original" in first["import_command"]
@@ -38,7 +40,10 @@ def test_build_external_eval_plan_emits_vbench_import_commands(tmp_path):
     assert job["metric"] == "vbench"
     assert job["suite"] == "wan-native"
     assert job["metrics_json"].endswith("wan-native-w4a6_orbitquant_vbench.json")
-    assert "vbench" in job["eval_command"]
+    assert "orbitquant export-vbench" in job["export_command"]
+    assert "vbench evaluate" in job["eval_command"]
+    assert "--mode custom_input" in job["eval_command"]
+    assert "orbitquant summarize-vbench-results" in job["summarize_command"]
     assert "--metric-prefix vbench" in job["import_command"]
     assert "--split orbitquant" in job["import_command"]
 
@@ -66,7 +71,9 @@ def test_build_external_eval_script_runs_vbench_import_and_report(tmp_path):
     assert "if ! command -v vbench >/dev/null 2>&1; then" in script
     assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a6'} ]; then" in script
     assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a4'} ]; then" in script
-    assert script.count("vbench --input-dir") == 4
+    assert script.count("orbitquant export-vbench") == 4
+    assert script.count("vbench evaluate") == 4
+    assert script.count("orbitquant summarize-vbench-results") == 4
     assert script.count("orbitquant record-metrics") == 4
     assert "--metric-prefix vbench" in script
     assert "--split original" in script
