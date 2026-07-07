@@ -226,10 +226,65 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
     )
 
 
+def _native_settings_section(source_model_id: str) -> list[str]:
+    rows = {
+        "black-forest-labs/FLUX.2-klein-4B": [
+            ("Pipeline", "`Flux2KleinPipeline`"),
+            ("Resolution", "`1024x1024`"),
+            ("Inference steps", "`4`"),
+            ("Guidance scale", "`1.0`"),
+            ("Output", "image"),
+            ("Scope", "extra target; not an OrbitQuant paper reproduction model"),
+        ],
+        "black-forest-labs/FLUX.1-schnell": [
+            ("Pipeline", "`FluxPipeline`"),
+            ("Resolution", "`1024x1024`"),
+            ("Inference steps", "`4`"),
+            ("Guidance scale", "`0.0`"),
+            ("Output", "image"),
+            ("Scope", "paper image target"),
+        ],
+        "Tongyi-MAI/Z-Image-Turbo": [
+            ("Pipeline", "`ZImagePipeline`"),
+            ("Resolution", "`1024x1024`"),
+            ("Inference steps", "`10`"),
+            ("Guidance scale", "`0.0`"),
+            ("Output", "image"),
+            ("Scope", "paper image target"),
+        ],
+        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": [
+            ("Pipeline", "`WanPipeline`"),
+            ("Resolution", "`832x480`"),
+            ("Frames", "`81`"),
+            ("Inference steps", "`50`"),
+            ("Guidance scale", "`5.0`"),
+            ("Export FPS", "`16`"),
+            ("Output", "video"),
+            ("Scope", "paper video target"),
+        ],
+    }.get(source_model_id)
+    if rows is None:
+        return []
+
+    lines = [
+        "## Native Settings",
+        "",
+        "Use these settings when comparing this artifact against the BF16 source "
+        "model or the visual assets below:",
+        "",
+        "| Setting | Value |",
+        "| --- | --- |",
+    ]
+    lines.extend(f"| {name} | {value} |" for name, value in rows)
+    lines.append("")
+    return lines
+
+
 def render_model_card(manifest: OrbitQuantManifest) -> str:
     data = manifest.to_dict()
     bits = f"W{data['weight_bits']}A{data['activation_bits']}"
     comparison_assets = _comparison_assets(data["checksums"])
+    native_settings_lines = _native_settings_section(data["source_model_id"])
     comparison_lines = []
     if comparison_assets:
         comparison_lines.extend(
@@ -291,6 +346,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             "",
             _usage_snippet(data["source_model_id"], bits),
             "",
+            *native_settings_lines,
             "## Quantization",
             "",
             f"- Method: `{data['quant_method']}`",

@@ -60,6 +60,7 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     assert "- Codebook version: `1`" in card
     assert "- Target policy: `z_image`" in card
     assert "- Quantized transformer modules: `1`" in card
+    assert "## Native Settings" in card
     assert "## Visual Comparison" in card
     assert (
         "![assets/original_vs_orbitquant_z-image-native_seed0_W3A3_simple-object.webp]"
@@ -100,6 +101,10 @@ def test_model_card_uses_flux2_native_code_example():
     assert "width=1024" in card
     assert "num_inference_steps=4" in card
     assert "guidance_scale=1.0" in card
+    assert "| Pipeline | `Flux2KleinPipeline` |" in card
+    assert "| Resolution | `1024x1024` |" in card
+    assert "| Guidance scale | `1.0` |" in card
+    assert "| Scope | extra target; not an OrbitQuant paper reproduction model |" in card
 
 
 def test_model_card_uses_flux1_schnell_native_code_example():
@@ -111,6 +116,10 @@ def test_model_card_uses_flux1_schnell_native_code_example():
     assert "width=1024" in card
     assert "num_inference_steps=4" in card
     assert "guidance_scale=0.0" in card
+    assert "| Pipeline | `FluxPipeline` |" in card
+    assert "| Inference steps | `4` |" in card
+    assert "| Guidance scale | `0.0` |" in card
+    assert "| Scope | paper image target |" in card
 
 
 def test_model_card_uses_z_image_native_code_example():
@@ -122,6 +131,10 @@ def test_model_card_uses_z_image_native_code_example():
     assert "width=1024" in card
     assert "num_inference_steps=10" in card
     assert "guidance_scale=0.0" in card
+    assert "| Pipeline | `ZImagePipeline` |" in card
+    assert "| Inference steps | `10` |" in card
+    assert "| Guidance scale | `0.0` |" in card
+    assert "| Scope | paper image target |" in card
 
 
 def test_model_card_uses_wan_native_code_example():
@@ -137,3 +150,8 @@ def test_model_card_uses_wan_native_code_example():
     assert "num_frames=81" in card
     assert "num_inference_steps=50" in card
     assert "guidance_scale=5.0" in card
+    assert "| Pipeline | `WanPipeline` |" in card
+    assert "| Resolution | `832x480` |" in card
+    assert "| Frames | `81` |" in card
+    assert "| Export FPS | `16` |" in card
+    assert "| Scope | paper video target |" in card
