@@ -5,6 +5,7 @@ import torch
 from orbitquant.codebooks import LloydMaxCodebook
 from orbitquant.functional import quantize_activations
 from orbitquant.rotations import RPBHRotation
+from orbitquant.rotations.fwht import fwht
 
 BackendAvailability = dict[str, bool]
 BackendCapabilities = dict[str, dict[str, object]]
@@ -170,6 +171,7 @@ def _mps_quantize_activations(
     rotation: RPBHRotation,
     codebook: LloydMaxCodebook,
     eps: float,
+    constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
     if not _mps_metal_available():
         return _reference_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
@@ -178,8 +180,25 @@ def _mps_quantize_activations(
     original_dtype = x.dtype
     work = x.to(torch.float32)
     norms = work.norm(dim=-1, keepdim=True)
-    rotated = rotation.apply_to_activations(work / (norms + eps))
-    quantized = quantize_rotated_activations_with_mps(rotated, norms, codebook)
+    unit = work / (norms + eps)
+    if constant_tensors is None:
+        rotated = rotation.apply_to_activations(unit)
+    else:
+        permutation = constant_tensors["permutation"].to(device=x.device)
+        signs = constant_tensors["signs"].to(device=x.device, dtype=unit.dtype)
+        rotated = unit.index_select(dim=-1, index=permutation)
+        rotated = rotated * signs
+        rotated = rotated.reshape(
+            *rotated.shape[:-1], rotation.num_blocks, rotation.block_size
+        )
+        rotated = fwht(rotated) * rotation.normalization
+        rotated = rotated.reshape(*unit.shape)
+    quantized = quantize_rotated_activations_with_mps(
+        rotated,
+        norms,
+        codebook,
+        constant_tensors=constant_tensors,
+    )
     return quantized.to(original_dtype)
 
 
@@ -215,7 +234,13 @@ def quantize_activations_kernel(
     if selected == "cpu":
         return _reference_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
     if selected == "mps":
-        return _mps_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
+        return _mps_quantize_activations(
+            x,
+            rotation=rotation,
+            codebook=codebook,
+            eps=eps,
+            constant_tensors=constant_tensors,
+        )
     if selected == "triton_cuda":
         return _triton_cuda_quantize_activations(
             x,

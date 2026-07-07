@@ -264,8 +264,9 @@ def test_mps_dispatch_uses_backend_function_with_reference_equivalent_output(mon
     codebook = get_codebook(dim=16, bits=4)
     calls = []
 
-    def fake_mps_backend(input_tensor, *, rotation, codebook, eps):
+    def fake_mps_backend(input_tensor, *, rotation, codebook, eps, constant_tensors=None):
         calls.append(input_tensor.shape)
+        assert constant_tensors is None
         return quantize_activations(input_tensor, rotation=rotation, codebook=codebook, eps=eps)
 
     monkeypatch.setattr(dispatch_module, "_mps_quantize_activations", fake_mps_backend)
@@ -282,6 +283,44 @@ def test_mps_dispatch_uses_backend_function_with_reference_equivalent_output(mon
 
     assert torch.allclose(actual, expected)
     assert calls == [x.shape]
+
+
+def test_mps_dispatch_passes_preloaded_constants_to_backend(monkeypatch):
+    torch.manual_seed(0)
+    x = torch.randn(2, 3, 16)
+    rotation = RPBHRotation(dim=16, seed=3, block_size=8)
+    codebook = get_codebook(dim=16, bits=4)
+    constants = {
+        "permutation": rotation.permutation.clone(),
+        "signs": rotation.signs.clone(),
+        "centroids": codebook.centroids.clone(),
+        "boundaries": codebook.boundaries.clone(),
+    }
+    calls = []
+
+    def fake_mps_backend(input_tensor, *, rotation, codebook, eps, constant_tensors=None):
+        calls.append(constant_tensors)
+        return quantize_activations(input_tensor, rotation=rotation, codebook=codebook, eps=eps)
+
+    monkeypatch.setattr(dispatch_module, "_mps_quantize_activations", fake_mps_backend)
+    monkeypatch.setattr(
+        dispatch_module,
+        "available_backends",
+        lambda: {"cpu": True, "mps": True, "triton_cuda": False},
+    )
+
+    expected = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
+    actual = quantize_activations_kernel(
+        x,
+        rotation=rotation,
+        codebook=codebook,
+        eps=1e-12,
+        backend="mps",
+        constant_tensors=constants,
+    )
+
+    assert torch.allclose(actual, expected)
+    assert calls == [constants]
 
 
 def test_mps_backend_matches_reference_without_full_reference_fallback(monkeypatch):

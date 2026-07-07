@@ -77,6 +77,8 @@ def quantize_rotated_activations_with_mps(
     rotated: torch.Tensor,
     norms: torch.Tensor,
     codebook: LloydMaxCodebook,
+    *,
+    constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
     if rotated.device.type != "mps":
         raise RuntimeError("mps backend requires MPS tensors")
@@ -86,8 +88,14 @@ def quantize_rotated_activations_with_mps(
         return torch.empty_like(rotated_contiguous, dtype=torch.float32)
 
     row_norms = norms.contiguous().reshape(-1).to(device=rotated.device, dtype=torch.float32)
-    centroids = codebook.centroids.to(device=rotated.device, dtype=torch.float32).contiguous()
-    boundaries = codebook.boundaries.to(device=rotated.device, dtype=torch.float32).contiguous()
+    if constant_tensors is None:
+        centroids = codebook.centroids.to(device=rotated.device, dtype=torch.float32)
+        boundaries = codebook.boundaries.to(device=rotated.device, dtype=torch.float32)
+    else:
+        centroids = constant_tensors["centroids"].to(device=rotated.device, dtype=torch.float32)
+        boundaries = constant_tensors["boundaries"].to(device=rotated.device, dtype=torch.float32)
+    centroids = centroids.contiguous()
+    boundaries = boundaries.contiguous()
     output = torch.empty_like(flat, dtype=torch.float32)
 
     shader = _codebook_rescale_shader()
