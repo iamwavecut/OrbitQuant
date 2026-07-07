@@ -93,6 +93,19 @@ def test_hf_registration_populates_auto_mappings_when_dependencies_are_installed
         assert transformers_auto.AUTO_QUANTIZATION_CONFIG_MAPPING["orbitquant"] is OrbitQuantConfig
 
 
+def test_transformers_auto_factories_build_orbitquant_config_and_quantizer():
+    pytest.importorskip("transformers")
+    register_hf_quantizers()
+    from transformers.quantizers.auto import AutoHfQuantizer, AutoQuantizationConfig
+
+    config = AutoQuantizationConfig.from_dict(OrbitQuantConfig(block_size=8).to_dict())
+    quantizer = AutoHfQuantizer.from_config(config)
+
+    assert isinstance(config, OrbitQuantConfig)
+    assert isinstance(quantizer, OrbitQuantizer)
+    assert quantizer.quantization_config is config
+
+
 def test_quantizer_inherits_hf_base_classes_when_dependencies_are_installed():
     result = register_hf_quantizers()
     quantizer = OrbitQuantizer(OrbitQuantConfig())
