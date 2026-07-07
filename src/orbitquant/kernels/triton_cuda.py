@@ -19,6 +19,76 @@ triton, tl = _load_triton()
 
 
 @triton.jit
+def _row_norm_kernel(
+    input_ptr,
+    norms_ptr,
+    rows: tl.constexpr,
+    dim: tl.constexpr,
+    eps: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    row = tl.program_id(0)
+    offsets = tl.arange(0, block_size)
+    mask = (row < rows) & (offsets < dim)
+    values = tl.load(input_ptr + row * dim + offsets, mask=mask, other=0.0).to(tl.float32)
+    squared_sum = tl.sum(values * values, axis=0)
+    norm = tl.sqrt(squared_sum)
+    norm = tl.maximum(norm, eps)
+    tl.store(norms_ptr + row, norm, mask=row < rows)
+
+
+@triton.jit
+def _permute_sign_normalize_activation_kernel(
+    input_ptr,
+    norms_ptr,
+    permutation_ptr,
+    signs_ptr,
+    work_ptr,
+    total: tl.constexpr,
+    dim: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = offsets < total
+    rows = offsets // dim
+    cols = offsets % dim
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
+    norms = tl.load(norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
+    values = tl.load(input_ptr + rows * dim + source_cols, mask=mask, other=0.0).to(
+        tl.float32
+    )
+    tl.store(work_ptr + offsets, values * signs / norms, mask=mask)
+
+
+@triton.jit
+def _quantize_activation_work_rescale_kernel(
+    work_ptr,
+    norms_ptr,
+    centroids_ptr,
+    boundaries_ptr,
+    output_ptr,
+    total: tl.constexpr,
+    dim: tl.constexpr,
+    levels: tl.constexpr,
+    inv_sqrt_block: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = offsets < total
+    values = tl.load(work_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    values = values * inv_sqrt_block
+    indices = tl.zeros((block_size,), dtype=tl.int32)
+    for idx in tl.static_range(0, levels - 1):
+        boundary = tl.load(boundaries_ptr + idx)
+        indices += (values > boundary).to(tl.int32)
+    centroids = tl.load(centroids_ptr + indices)
+    rows = offsets // dim
+    norms = tl.load(norms_ptr + rows, mask=mask, other=0.0).to(tl.float32)
+    tl.store(output_ptr + offsets, centroids * norms, mask=mask)
+
+
+@triton.jit
 def _codebook_rescale_kernel(
     rotated_ptr,
     norms_ptr,
@@ -41,6 +111,35 @@ def _codebook_rescale_kernel(
     rows = offsets // dim
     norms = tl.load(norms_ptr + rows, mask=mask, other=0.0).to(tl.float32)
     tl.store(output_ptr + offsets, centroids * norms, mask=mask)
+
+
+@triton.jit
+def _fwht_stage_kernel(
+    work_ptr,
+    total_pairs: tl.constexpr,
+    in_features: tl.constexpr,
+    num_blocks: tl.constexpr,
+    orbit_block_size: tl.constexpr,
+    stage_width: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    pair_offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = pair_offsets < total_pairs
+    pairs_per_orbit_block: tl.constexpr = orbit_block_size // 2
+    row_block = pair_offsets // pairs_per_orbit_block
+    pair_in_orbit_block = pair_offsets % pairs_per_orbit_block
+    rows = row_block // num_blocks
+    orbit_blocks = row_block % num_blocks
+    groups = pair_in_orbit_block // stage_width
+    inner = pair_in_orbit_block % stage_width
+    left_cols = orbit_blocks * orbit_block_size + groups * (stage_width * 2) + inner
+    right_cols = left_cols + stage_width
+    left_offsets = rows * in_features + left_cols
+    right_offsets = rows * in_features + right_cols
+    left = tl.load(work_ptr + left_offsets, mask=mask, other=0.0).to(tl.float32)
+    right = tl.load(work_ptr + right_offsets, mask=mask, other=0.0).to(tl.float32)
+    tl.store(work_ptr + left_offsets, left + right, mask=mask)
+    tl.store(work_ptr + right_offsets, left - right, mask=mask)
 
 
 @triton.jit
@@ -335,6 +434,89 @@ def quantize_rotated_activations_with_triton(
         levels=centroids.numel(),
     )
     return output.reshape_as(rotated_contiguous)
+
+
+def quantize_activations_with_triton(
+    x: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook: LloydMaxCodebook,
+    eps: float,
+) -> torch.Tensor:
+    if not x.is_cuda:
+        raise RuntimeError("triton_cuda activation quantization requires CUDA tensors")
+    if x.shape[-1] != rotation.dim:
+        raise ValueError(f"expected last dimension {rotation.dim}, got {x.shape[-1]}")
+
+    triton, _ = _load_triton()
+    original_shape = x.shape
+    dim = int(rotation.dim)
+    input_contiguous = x.contiguous().reshape(-1, dim)
+    rows = input_contiguous.shape[0]
+    total = rows * dim
+    output = torch.empty_like(input_contiguous)
+    if total == 0:
+        return output.reshape(original_shape)
+
+    norms = torch.empty(rows, device=x.device, dtype=torch.float32)
+    work = torch.empty(total, device=x.device, dtype=torch.float32)
+    permutation = rotation.permutation.to(device=x.device, dtype=torch.int64).contiguous()
+    signs = rotation.signs.to(device=x.device, dtype=torch.int8).contiguous()
+    centroids = codebook.centroids.to(device=x.device, dtype=torch.float32).contiguous()
+    boundaries = codebook.boundaries.to(device=x.device, dtype=torch.float32).contiguous()
+
+    norm_block_size = triton.next_power_of_2(dim)
+    _row_norm_kernel[(rows,)](
+        input_contiguous,
+        norms,
+        rows=rows,
+        dim=dim,
+        eps=float(eps),
+        block_size=norm_block_size,
+        num_warps=8,
+    )
+
+    element_block_size = 256
+    _permute_sign_normalize_activation_kernel[(triton.cdiv(total, element_block_size),)](
+        input_contiguous,
+        norms,
+        permutation,
+        signs,
+        work,
+        total=total,
+        dim=dim,
+        block_size=element_block_size,
+    )
+
+    orbit_block_size = int(rotation.block_size)
+    num_blocks = int(rotation.num_blocks)
+    total_pairs = rows * num_blocks * (orbit_block_size // 2)
+    stage_width = 1
+    while stage_width < orbit_block_size:
+        _fwht_stage_kernel[(triton.cdiv(total_pairs, element_block_size),)](
+            work,
+            total_pairs=total_pairs,
+            in_features=dim,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+        stage_width *= 2
+
+    _quantize_activation_work_rescale_kernel[(triton.cdiv(total, element_block_size),)](
+        work,
+        norms,
+        centroids,
+        boundaries,
+        output,
+        total=total,
+        dim=dim,
+        levels=centroids.numel(),
+        inv_sqrt_block=float(rotation.normalization),
+        block_size=element_block_size,
+    )
+    return output.reshape(original_shape)
 
 
 def quantize_adaln_weight_with_triton(

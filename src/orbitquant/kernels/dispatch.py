@@ -77,7 +77,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized": bool(available["triton_cuda"]),
             "full_fusion": False,
             "optimized_stage": (
-                "codebook_lookup_rescale,packed_weight_dequant,"
+                "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
                 "lowbit_pack,weight_rotation_fwht_quant,"
                 "adaln_rtn_quant_pack,adaln_rtn_dequant"
             ),
@@ -89,10 +89,10 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "device_types": ["cuda"],
             "implementation": "triton_codebook_rescale",
             "notes": (
-                "Activation norm and RPBH rotation still run in PyTorch; Triton handles "
-                "runtime codebook lookup, packed weight dequant, offline low-bit pack, "
-                "offline weight RPBH/FWHT codebook indexing, and AdaLN INT4 RTN "
-                "quantize/pack/dequant."
+                "Triton handles runtime activation norm, RPBH/FWHT rotation, codebook "
+                "lookup/rescale, packed weight dequant, offline low-bit pack, offline "
+                "weight RPBH/FWHT codebook indexing, and AdaLN INT4 RTN "
+                "quantize/pack/dequant. Matmul is still the BF16 PyTorch linear path."
             ),
         },
     }
@@ -161,14 +161,9 @@ def _triton_cuda_quantize_activations(
     codebook: LloydMaxCodebook,
     eps: float,
 ) -> torch.Tensor:
-    from orbitquant.kernels.triton_cuda import quantize_rotated_activations_with_triton
+    from orbitquant.kernels.triton_cuda import quantize_activations_with_triton
 
-    original_dtype = x.dtype
-    work = x.to(torch.float32)
-    norms = work.norm(dim=-1, keepdim=True).clamp_min(eps)
-    rotated = rotation.apply_to_activations(work / norms)
-    quantized = quantize_rotated_activations_with_triton(rotated, norms, codebook)
-    return quantized.to(original_dtype)
+    return quantize_activations_with_triton(x, rotation=rotation, codebook=codebook, eps=eps)
 
 
 def quantize_activations_kernel(

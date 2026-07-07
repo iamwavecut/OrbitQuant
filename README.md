@@ -184,17 +184,17 @@ Current artifacts include:
 - `SHA256SUMS`: checksums for all artifact files.
 
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
-The current `triton_cuda` path keeps norm and RPBH rotation in PyTorch but uses
-real Triton kernels for codebook lookup, norm rescale, packed weight
-dequantization, offline low-bit weight packing, and offline weight
+The current `triton_cuda` path uses real Triton kernels for runtime activation
+norm calculation, RPBH/FWHT rotation, codebook lookup, norm rescale, packed
+weight dequantization, offline low-bit weight packing, and offline weight
 RPBH/FWHT-to-codebook indexing during artifact creation. It also uses Triton for
 AdaLN INT4 RTN group scale calculation, quantize+pack, and runtime dequantization
 instead of round-tripping through CPU unpack/pack. On Apple Silicon, `mps`
-uses Metal shaders for the same runtime lookup/rescale and packed weight dequant
-stages when `torch.mps.compile_shader` is available. Otherwise it falls back to
-the reference PyTorch path on MPS tensors. Full fused activation
-norm+RPBH+lookup+matmul kernels are still separate work. The reference PyTorch
-path remains the correctness baseline.
+uses Metal shaders for runtime lookup/rescale and packed weight dequant stages
+when `torch.mps.compile_shader` is available. Otherwise it falls back to the
+reference PyTorch path on MPS tensors. Full fused activation+packed-weight matmul
+kernels are still separate work. The reference PyTorch path remains the
+correctness baseline.
 
 Inspect backend availability and optimization status on the current machine:
 
@@ -204,8 +204,8 @@ orbitquant kernel-info
 
 `kernel-info` reports whether `mps` is using `metal_codebook_rescale` or the
 `torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
-as partial optimization because activation norm/RPBH and matmul are not fused
-today. The `weight_dequant_optimized` field records whether packed weight
+as partial optimization because matmul is still the BF16 PyTorch linear path.
+The `weight_dequant_optimized` field records whether packed weight
 dequantization avoids the CPU unpack path for that backend. The
 `weight_pack_optimized` field records whether artifact creation can pack low-bit
 weight indices without a CPU round-trip. The `weight_quant_optimized` field
