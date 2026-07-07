@@ -249,8 +249,10 @@ Hugging Face model card embeds it directly:
 `orbitquant upload-artifact` uses the compact upload profile by default. The
 compact profile promotes final comparison matrices into `assets/` and uploads
 only the compact artifact files required for use, validation, and the model
-card. Model cards describe the artifact, show how to use it, state source
-provenance, and display final comparison matrices.
+card. Existing remote files are replaced by default so stale raw assets from
+older uploads do not remain in the model repository. Model cards describe the
+artifact, show how to use it, state source provenance, and display final
+comparison matrices.
 
 ## Artifact Layout
 

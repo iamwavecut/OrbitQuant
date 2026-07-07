@@ -24,6 +24,7 @@ def test_readme_documents_component_artifact_usage():
     assert "832x480, 81 frames, 50 steps, guidance 5.0" in readme
     assert "`orbitquant upload-artifact` uses the compact upload profile by default" in readme
     assert "uploads\nonly the compact artifact files required for use" in readme
+    assert "Existing remote files are replaced by default" in readme
     assert "These diffusion artifacts are not standalone `transformers.AutoModel` repos" in readme
     assert 'quantization_device="cuda"' in readme
     assert "not used\nas quality evidence" in readme

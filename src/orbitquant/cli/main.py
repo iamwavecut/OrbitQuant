@@ -554,7 +554,22 @@ def main(argv: list[str] | None = None) -> int:
     upload_parser.add_argument("--commit-message")
     upload_parser.add_argument("--public", action="store_true")
     upload_parser.add_argument("--no-create-repo", action="store_true")
-    upload_parser.add_argument("--replace-repo-files", action="store_true")
+    upload_replace_group = upload_parser.add_mutually_exclusive_group()
+    upload_replace_group.add_argument(
+        "--replace-repo-files",
+        action="store_true",
+        default=True,
+        help=(
+            "replace existing remote repo files before uploading the compact artifact "
+            "(default)"
+        ),
+    )
+    upload_replace_group.add_argument(
+        "--no-replace-repo-files",
+        dest="replace_repo_files",
+        action="store_false",
+        help="upload compact files without deleting stale remote files first",
+    )
     upload_parser.add_argument("--skip-tensor-validation", action="store_true")
     upload_parser.add_argument(
         "--upload-profile",

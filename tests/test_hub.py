@@ -290,6 +290,53 @@ def test_stage_compact_upload_artifact_keeps_one_direct_comparison_matrix(tmp_pa
     assert "assets/video_generation_comparison_matrix.webp" not in staged_checksums
 
 
+def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
+    _write_artifact(tmp_path)
+    allowed_matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    raw_png = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
+    raw_png_sidecar = raw_png.with_suffix(".png.json")
+    raw_webp = tmp_path / "assets" / "original_vs_orbitquant_seed0.webp"
+    contact_sheet = tmp_path / "assets" / "wan_contact_sheet.webp"
+    raw_video = tmp_path / "assets" / "wan-native_seed0_W4A4_motion.mp4"
+    nested_raw = tmp_path / "assets" / "nested" / "debug_frame.png"
+    for path, payload in (
+        (allowed_matrix, b"matrix"),
+        (raw_png, b"png"),
+        (raw_png_sidecar, b"json"),
+        (raw_webp, b"webp"),
+        (contact_sheet, b"contact"),
+        (raw_video, b"mp4"),
+        (nested_raw, b"nested"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    refresh_artifact_checksums(tmp_path)
+
+    stage_dir = tmp_path.parent / f"{tmp_path.name}-asset-allowlist-stage"
+    result = stage_compact_upload_artifact(tmp_path, stage_dir, validate_tensors=False)
+
+    staged_files = {
+        path.relative_to(stage_dir).as_posix()
+        for path in stage_dir.rglob("*")
+        if path.is_file()
+    }
+    assert "assets/image_generation_comparison_matrix.webp" in staged_files
+    assert not any(path.endswith(".png") for path in staged_files)
+    assert not any(path.endswith(".png.json") for path in staged_files)
+    assert not any(path.endswith(".mp4") for path in staged_files)
+    assert "assets/original_vs_orbitquant_seed0.webp" not in staged_files
+    assert "assets/wan_contact_sheet.webp" not in staged_files
+    assert "assets/nested/debug_frame.png" not in staged_files
+    assert set(result["omitted_raw_eval_assets"]) >= {
+        "assets/flux2-native_seed0_W4A4_simple-object.png",
+        "assets/flux2-native_seed0_W4A4_simple-object.png.json",
+        "assets/original_vs_orbitquant_seed0.webp",
+        "assets/wan_contact_sheet.webp",
+        "assets/wan-native_seed0_W4A4_motion.mp4",
+        "assets/nested/debug_frame.png",
+    }
+
+
 def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
     tmp_path,
     monkeypatch,
@@ -702,6 +749,8 @@ def test_upload_orbitquant_artifact_defaults_to_compact_staged_copy(tmp_path):
     )
 
     assert result["upload_profile"] == "compact"
+    assert result["replace_repo_files"] is True
+    assert result["upload_kwargs"]["delete_patterns"] == "*"
     assert result["staging"]["enabled"] is True
     assert result["staging"]["omitted_raw_eval_asset_count"] == 6
     assert set(result["staging"]["omitted_raw_eval_assets"]) == {
@@ -714,6 +763,23 @@ def test_upload_orbitquant_artifact_defaults_to_compact_staged_copy(tmp_path):
     }
     upload_path = Path(fake_api.upload_folder_calls[0]["folder_path"])
     assert upload_path != tmp_path
+
+
+def test_upload_orbitquant_artifact_can_opt_out_of_remote_file_replacement(tmp_path):
+    _write_artifact(tmp_path)
+    fake_api = FakeHfApi()
+
+    result = upload_orbitquant_artifact(
+        tmp_path,
+        repo_id="WaveCut/example-orbitquant",
+        replace_repo_files=False,
+        validate_tensors=False,
+        api=fake_api,
+    )
+
+    assert result["replace_repo_files"] is False
+    assert result["upload_kwargs"]["delete_patterns"] is None
+    assert fake_api.upload_folder_calls[0]["delete_patterns"] is None
 
 
 def test_upload_orbitquant_artifact_rejects_invalid_artifact_before_hub_calls(tmp_path):

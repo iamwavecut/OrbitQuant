@@ -1350,7 +1350,7 @@ def upload_orbitquant_artifact(
     create_repo: bool = True,
     revision: str | None = None,
     commit_message: str | None = None,
-    replace_repo_files: bool = False,
+    replace_repo_files: bool = True,
     validate_tensors: bool = True,
     upload_profile: str = "compact",
     report_dirs: list[str | Path] | None = None,
