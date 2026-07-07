@@ -1397,6 +1397,10 @@ def test_cli_generate_pack_defers_comparison_creation_until_after_jobs(
 
     output = json.loads(capsys.readouterr().out)
     assert len(comparison_calls) == 1
+    assert comparison_calls[0]["kwargs"]["comparison_keys"] == {
+        ("flux2-native", 3, "simple-object"),
+        ("flux2-native", 3, "counting"),
+    }
     assert output["run_count"] == 2
     assert output["artifact_comparisons"] == ["assets/fake-comparison.webp"]
     assert [item["comparisons"] for item in output["outputs"]] == [[], []]

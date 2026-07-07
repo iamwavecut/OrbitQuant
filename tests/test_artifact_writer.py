@@ -692,6 +692,67 @@ def test_create_artifact_image_comparisons_pairs_original_and_orbitquant_outputs
         assert sheet.size[0] == 32
 
 
+def test_create_artifact_image_comparisons_can_filter_current_prompt_pack(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    for prompt_id in ["simple-object", "geneval-00000-single-object"]:
+        original_path = tmp_path / "assets" / f"flux2-native_seed3_original_{prompt_id}.png"
+        orbitquant_path = tmp_path / "assets" / f"flux2-native_seed3_W4A4_{prompt_id}.png"
+        Image.new("RGB", (16, 16), "red").save(original_path)
+        Image.new("RGB", (16, 16), "blue").save(orbitquant_path)
+        record_artifact_asset(tmp_path, original_path)
+        record_artifact_asset(tmp_path, orbitquant_path)
+        record_artifact_metrics(
+            tmp_path,
+            split="original",
+            metrics={"generated_samples": 1},
+            metadata={
+                "suite": "flux2-native",
+                "seed": 3,
+                "bit_setting": "original",
+                "prompt_record": {"id": prompt_id},
+                "output_path": str(original_path),
+            },
+        )
+        record_artifact_metrics(
+            tmp_path,
+            split="orbitquant",
+            metrics={"generated_samples": 1},
+            metadata={
+                "suite": "flux2-native",
+                "seed": 3,
+                "bit_setting": "W4A4",
+                "prompt_record": {"id": prompt_id},
+                "output_path": str(orbitquant_path),
+            },
+        )
+
+    comparisons = create_artifact_image_comparisons(
+        tmp_path,
+        comparison_keys={("flux2-native", 3, "simple-object")},
+    )
+
+    assert comparisons == [
+        "assets/original_vs_orbitquant_flux2-native_seed3_W4A4_simple-object.webp"
+    ]
+    assert (tmp_path / comparisons[0]).is_file()
+    assert not (
+        tmp_path
+        / "assets"
+        / "original_vs_orbitquant_flux2-native_seed3_W4A4_geneval-00000-single-object.webp"
+    ).exists()
+
+
 def test_create_artifact_image_comparisons_pairs_video_contact_sheets(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4, target_policy="wan")

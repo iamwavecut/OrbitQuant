@@ -86,6 +86,7 @@ def _indexed_records(artifact_path: Path, split: str) -> dict[tuple[str, str, st
 def create_artifact_image_comparisons(
     artifact_dir: str | Path,
     *,
+    comparison_keys: set[tuple[Any, Any, Any]] | None = None,
     validate_checksums_enabled: bool = True,
     refresh_checksums_enabled: bool = True,
 ) -> list[str]:
@@ -99,8 +100,15 @@ def create_artifact_image_comparisons(
     )
     original_records = _indexed_records(artifact_path, "original")
     orbitquant_records = _indexed_records(artifact_path, "orbitquant")
+    selected_keys = (
+        None
+        if comparison_keys is None
+        else {(str(suite), str(seed), str(prompt_id)) for suite, seed, prompt_id in comparison_keys}
+    )
     created = []
     for key, orbitquant in sorted(orbitquant_records.items()):
+        if selected_keys is not None and key not in selected_keys:
+            continue
         original = original_records.get(key)
         if original is None:
             continue

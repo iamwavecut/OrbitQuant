@@ -1029,6 +1029,9 @@ def main(argv: list[str] | None = None) -> int:
             prompt_ids=args.prompt_id,
             prompt_limit=args.prompt_limit,
         )
+        comparison_keys = {
+            (suite.name, int(job["seed"]), str(job["prompt_record"]["id"])) for job in jobs
+        }
         pending_jobs = []
         skipped_outputs = []
         for job in jobs:
@@ -1088,6 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
             if create_pack_comparisons:
                 artifact_comparisons = create_artifact_image_comparisons(
                     artifact_path,
+                    comparison_keys=comparison_keys,
                     validate_checksums_enabled=not args.skip_artifact_checksums,
                     refresh_checksums_enabled=not args.skip_artifact_checksums,
                 )
@@ -1188,6 +1192,7 @@ def main(argv: list[str] | None = None) -> int:
         if create_pack_comparisons:
             artifact_comparisons = create_artifact_image_comparisons(
                 artifact_path,
+                comparison_keys=comparison_keys,
                 validate_checksums_enabled=not args.skip_artifact_checksums,
                 refresh_checksums_enabled=not args.skip_artifact_checksums,
             )
