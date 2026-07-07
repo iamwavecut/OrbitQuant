@@ -114,14 +114,27 @@ def _record_generated_artifact(
     prompt_record: dict[str, Any] | None,
     seed: int,
     bit_setting: str | None,
+    validate_checksums_enabled: bool = True,
 ) -> tuple[dict[str, Any], list[str]]:
     if _path_is_relative_to(result.output_path, artifact_path):
-        record_artifact_asset(artifact_path, result.output_path)
+        record_artifact_asset(
+            artifact_path,
+            result.output_path,
+            validate_checksums_enabled=validate_checksums_enabled,
+        )
     if _path_is_relative_to(result.metadata_path, artifact_path):
-        record_artifact_asset(artifact_path, result.metadata_path)
+        record_artifact_asset(
+            artifact_path,
+            result.metadata_path,
+            validate_checksums_enabled=validate_checksums_enabled,
+        )
     for asset_path in result.asset_paths:
         if _path_is_relative_to(asset_path, artifact_path):
-            record_artifact_asset(artifact_path, asset_path)
+            record_artifact_asset(
+                artifact_path,
+                asset_path,
+                validate_checksums_enabled=validate_checksums_enabled,
+            )
     metrics = {
         "generated_samples": 1,
         "wall_time_seconds": result.metadata["wall_time_seconds"],
@@ -153,8 +166,12 @@ def _record_generated_artifact(
             "pipeline_class": result.metadata["pipeline_class"],
             "scheduler": result.metadata["scheduler"],
         },
+        validate_checksums_enabled=validate_checksums_enabled,
     )
-    return metrics_record, create_artifact_image_comparisons(artifact_path)
+    return metrics_record, create_artifact_image_comparisons(
+        artifact_path,
+        validate_checksums_enabled=validate_checksums_enabled,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -317,6 +334,14 @@ def main(argv: list[str] | None = None) -> int:
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
     )
     generate_pack_parser.add_argument("--resume-existing", action="store_true")
+    generate_pack_parser.add_argument(
+        "--skip-artifact-checksums",
+        action="store_true",
+        help=(
+            "skip SHA256 validation during generation; run validate-artifact separately "
+            "when auditing local or uploaded artifacts"
+        ),
+    )
     generate_pack_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
@@ -423,12 +448,15 @@ def main(argv: list[str] | None = None) -> int:
             pipeline = DiffusionPipeline.from_pretrained(model_id, **load_kwargs)
         else:
             pipeline = load_pipeline_for_suite(suite, model_id=model_id, **load_kwargs)
-        pipeline.to(device)
         try:
             component = getattr(pipeline, args.component)
         except AttributeError as exc:
             raise ValueError(f"pipeline has no component {args.component!r}") from exc
-        summary = quantize_linear_modules(component, config)
+        summary = quantize_linear_modules(
+            component,
+            config,
+            quantization_device=device,
+        )
         metadata = inspect_model_metadata(model_id, revision=args.revision)
         manifest = save_orbitquant_artifact(
             component,
@@ -525,7 +553,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "generate-pack":
         suite = get_native_suite(args.suite)
         artifact_path = Path(args.artifact)
-        artifact_validation = validate_orbitquant_artifact(artifact_path)
+        artifact_validation = validate_orbitquant_artifact(
+            artifact_path,
+            validate_checksums_enabled=False,
+            validate_tensors=False,
+        )
         artifact_config = OrbitQuantConfig.from_dict(
             json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
         )
@@ -622,6 +654,8 @@ def main(argv: list[str] | None = None) -> int:
                 pipeline,
                 artifact_path,
                 component=args.component,
+                validate_checksums=not args.skip_artifact_checksums,
+                device=args.device,
             )
         outputs = []
         for job in pending_jobs:
@@ -659,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
                 prompt_record=prompt_record,
                 seed=seed,
                 bit_setting=bit_setting,
+                validate_checksums_enabled=not args.skip_artifact_checksums,
             )
             outputs.append(
                 {

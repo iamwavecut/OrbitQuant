@@ -44,9 +44,14 @@ def quantize_pipeline(
     config: OrbitQuantConfig,
     *,
     component: str = "transformer",
+    quantization_device: str | torch.device | None = None,
 ) -> QuantizationSummary:
     target = _get_pipeline_component(pipeline, component)
-    return quantize_linear_modules(target, config)
+    return quantize_linear_modules(
+        target,
+        config,
+        quantization_device=quantization_device,
+    )
 
 
 def save_quantized_pipeline_component(
@@ -79,7 +84,15 @@ def load_quantized_pipeline_component(
     *,
     component: str = "transformer",
     strict: bool = True,
+    validate_checksums: bool = True,
+    device: str | torch.device | None = None,
 ) -> OrbitQuantManifest:
     _validate_artifact_component(artifact_dir, component)
     target = _get_pipeline_component(pipeline, component)
-    return load_orbitquant_artifact(target, artifact_dir, strict=strict)
+    return load_orbitquant_artifact(
+        target,
+        artifact_dir,
+        strict=strict,
+        validate_checksums=validate_checksums,
+        device=device,
+    )

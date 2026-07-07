@@ -50,3 +50,16 @@ def test_quantize_linear_modules_keeps_dtype_overridden_modules_unquantized():
     assert summary.quantized_modules == []
     assert summary.adaln_modules == ["transformer_blocks.0.modulation"]
     assert "transformer_blocks.0.attn.to_q" in summary.skipped_modules
+
+
+def test_quantize_linear_modules_fails_loud_for_unavailable_cuda_device(monkeypatch):
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    try:
+        quantize_linear_modules(model, config, quantization_device="cuda")
+    except RuntimeError as exc:
+        assert "CUDA quantization device requested" in str(exc)
+    else:
+        raise AssertionError("unavailable CUDA quantization device was accepted")

@@ -25,6 +25,49 @@ def write_sha256sums(root: str | Path, output: str | Path | None = None) -> Path
     return output_path
 
 
+def _read_sha256sums(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    entries: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        digest, _, relative_path = line.partition("  ")
+        if digest and relative_path:
+            entries[relative_path] = digest
+    return entries
+
+
+def write_sha256sums_from_manifest(
+    root: str | Path,
+    checksums: dict[str, str],
+    output: str | Path | None = None,
+) -> Path:
+    root_path = Path(root)
+    output_path = root_path / "SHA256SUMS" if output is None else Path(output)
+    entries = _read_sha256sums(output_path)
+    entries.update(checksums)
+
+    manifest_path = root_path / "orbitquant_manifest.json"
+    if manifest_path.is_file():
+        entries["orbitquant_manifest.json"] = sha256_file(manifest_path)
+    readme_path = root_path / "README.md"
+    if readme_path.is_file() and "README.md" not in entries:
+        entries["README.md"] = sha256_file(readme_path)
+
+    entries = {
+        relative_path: digest
+        for relative_path, digest in entries.items()
+        if relative_path != "SHA256SUMS" and (root_path / relative_path).is_file()
+    }
+    output_path.write_text(
+        "\n".join(f"{digest}  {relative_path}" for relative_path, digest in sorted(entries.items()))
+        + ("\n" if entries else ""),
+        encoding="utf-8",
+    )
+    return output_path
+
+
 def validate_checksums(root: str | Path, checksums: dict[str, str]) -> None:
     root_path = Path(root)
     for relative_path, expected in checksums.items():

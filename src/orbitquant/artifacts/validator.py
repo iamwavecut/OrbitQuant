@@ -79,7 +79,12 @@ def _validate_model_index(
         raise RuntimeError("model_index mismatch: " + "; ".join(mismatches))
 
 
-def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
+def validate_orbitquant_artifact(
+    artifact_dir: str | Path,
+    *,
+    validate_checksums_enabled: bool = True,
+    validate_tensors: bool = True,
+) -> dict[str, Any]:
     artifact_path = Path(artifact_dir)
     validate_required_artifact_files(artifact_path)
     model_index = json.loads((artifact_path / "model_index.json").read_text(encoding="utf-8"))
@@ -89,23 +94,24 @@ def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
     manifest = OrbitQuantManifest.from_dict(
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
-    validate_checksums(artifact_path, manifest.checksums)
+    if validate_checksums_enabled:
+        validate_checksums(artifact_path, manifest.checksums)
     _validate_model_index(model_index, config=config, manifest=manifest)
-    state_dict = load_file(artifact_path / "model.safetensors")
-
     expected_shapes = manifest.module_shapes
-    missing = sorted(set(expected_shapes) - set(state_dict))
-    unexpected = sorted(set(state_dict) - set(expected_shapes))
-    shape_mismatches = {
-        name: {"expected": expected_shapes[name], "actual": list(state_dict[name].shape)}
-        for name in sorted(set(expected_shapes) & set(state_dict))
-        if expected_shapes[name] != list(state_dict[name].shape)
-    }
-    if missing or unexpected or shape_mismatches:
-        raise RuntimeError(
-            "artifact tensor shape mismatch: "
-            f"missing={missing}, unexpected={unexpected}, shape_mismatches={shape_mismatches}"
-        )
+    if validate_tensors:
+        state_dict = load_file(artifact_path / "model.safetensors")
+        missing = sorted(set(expected_shapes) - set(state_dict))
+        unexpected = sorted(set(state_dict) - set(expected_shapes))
+        shape_mismatches = {
+            name: {"expected": expected_shapes[name], "actual": list(state_dict[name].shape)}
+            for name in sorted(set(expected_shapes) & set(state_dict))
+            if expected_shapes[name] != list(state_dict[name].shape)
+        }
+        if missing or unexpected or shape_mismatches:
+            raise RuntimeError(
+                "artifact tensor shape mismatch: "
+                f"missing={missing}, unexpected={unexpected}, shape_mismatches={shape_mismatches}"
+            )
 
     return {
         "valid": True,
@@ -119,7 +125,9 @@ def validate_orbitquant_artifact(artifact_dir: str | Path) -> dict[str, Any]:
         "component": model_index["component"],
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
-        "tensor_count": len(state_dict),
+        "tensor_count": len(expected_shapes),
+        "tensor_validation": "checked" if validate_tensors else "skipped",
+        "checksum_validation": "checked" if validate_checksums_enabled else "skipped",
         "quantized_module_count": len(manifest.quantized_modules),
         "adaln_module_count": len(manifest.adaln_modules),
         "skipped_module_count": len(manifest.skipped_modules),

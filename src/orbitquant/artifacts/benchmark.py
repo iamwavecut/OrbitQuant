@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from orbitquant.artifacts.checksums import sha256_file, validate_checksums, write_sha256sums
+from orbitquant.artifacts.checksums import (
+    sha256_file,
+    validate_checksums,
+    write_sha256sums_from_manifest,
+)
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.validator import validate_required_artifact_files
 
@@ -53,7 +57,7 @@ def _record_count(jsonl_path: Path) -> int:
 
 def _write_manifest_with_refreshed_checksums(
     artifact_path: Path, manifest: OrbitQuantManifest, relative_paths: tuple[str, ...]
-) -> None:
+) -> dict[str, str]:
     checksums = dict(manifest.checksums)
     for relative_path in relative_paths:
         checksums[relative_path] = sha256_file(artifact_path / relative_path)
@@ -62,6 +66,7 @@ def _write_manifest_with_refreshed_checksums(
     (artifact_path / "orbitquant_manifest.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
+    return checksums
 
 
 def record_artifact_metrics(
@@ -70,6 +75,7 @@ def record_artifact_metrics(
     split: str,
     metrics: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    validate_checksums_enabled: bool = True,
 ) -> dict[str, Any]:
     normalized_split = split.lower()
     if normalized_split not in _VALID_METRIC_SPLITS:
@@ -80,7 +86,8 @@ def record_artifact_metrics(
     artifact_path = Path(artifact_dir)
     validate_required_artifact_files(artifact_path)
     manifest = _read_manifest(artifact_path)
-    validate_checksums(artifact_path, manifest.checksums)
+    if validate_checksums_enabled:
+        validate_checksums(artifact_path, manifest.checksums)
 
     record = {
         "split": normalized_split,
@@ -113,6 +120,8 @@ def record_artifact_metrics(
         f"benchmark/{normalized_split}.metrics.jsonl",
         f"benchmark/{normalized_split}.metrics.csv",
     )
-    _write_manifest_with_refreshed_checksums(artifact_path, manifest, changed_paths)
-    write_sha256sums(artifact_path)
+    checksums = _write_manifest_with_refreshed_checksums(
+        artifact_path, manifest, changed_paths
+    )
+    write_sha256sums_from_manifest(artifact_path, checksums)
     return record

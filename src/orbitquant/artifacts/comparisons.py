@@ -83,11 +83,19 @@ def _indexed_records(artifact_path: Path, split: str) -> dict[tuple[str, str, st
     return records
 
 
-def create_artifact_image_comparisons(artifact_dir: str | Path) -> list[str]:
+def create_artifact_image_comparisons(
+    artifact_dir: str | Path,
+    *,
+    validate_checksums_enabled: bool = True,
+) -> list[str]:
     from orbitquant.eval.assets import create_image_comparison_sheet
 
     artifact_path = Path(artifact_dir)
-    validate_orbitquant_artifact(artifact_path)
+    validate_orbitquant_artifact(
+        artifact_path,
+        validate_checksums_enabled=validate_checksums_enabled,
+        validate_tensors=validate_checksums_enabled,
+    )
     original_records = _indexed_records(artifact_path, "original")
     orbitquant_records = _indexed_records(artifact_path, "orbitquant")
     created = []
@@ -112,5 +120,11 @@ def create_artifact_image_comparisons(artifact_dir: str | Path) -> list[str]:
             output_path,
             labels=("BF16", f"OrbitQuant {bit_setting}"),
         )
-        created.append(record_artifact_asset(artifact_path, output_path))
+        created.append(
+            record_artifact_asset(
+                artifact_path,
+                output_path,
+                validate_checksums_enabled=validate_checksums_enabled,
+            )
+        )
     return created

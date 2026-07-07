@@ -52,23 +52,42 @@ def _apply_dtype_override(module: torch.nn.Module, decision: PolicyDecision) -> 
     module.to(dtype=_TORCH_DTYPE_BY_NAME[decision.dtype])
 
 
+def _quantization_device(device: str | torch.device | None) -> torch.device | None:
+    if device is None:
+        return None
+    torch_device = torch.device(device)
+    if torch_device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA quantization device requested but CUDA is not available")
+    if torch_device.type == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("MPS quantization device requested but MPS is not available")
+    return torch_device
+
+
 def quantize_linear_modules(
-    model: torch.nn.Module, config: OrbitQuantConfig
+    model: torch.nn.Module,
+    config: OrbitQuantConfig,
+    *,
+    quantization_device: str | torch.device | None = None,
 ) -> QuantizationSummary:
     decisions = classify_linear_modules(model, config)
     modules = dict(model.named_modules())
     summary = QuantizationSummary()
+    target_device = _quantization_device(quantization_device)
 
     for name, decision in decisions.items():
         module = modules[name]
         if not isinstance(module, torch.nn.Linear):
             continue
         if decision.action == "orbitquant":
+            if target_device is not None and module.weight.device != target_device:
+                module.to(device=target_device)
             replacement = OrbitQuantLinear.from_linear(module, config=config, module_name=name)
             parent, child_name = _parent_and_child(model, name)
             _set_child(parent, child_name, replacement)
             summary.quantized_modules.append(name)
         elif decision.action == "adaln_int4_rtn":
+            if target_device is not None and module.weight.device != target_device:
+                module.to(device=target_device)
             replacement = RTNInt4Linear.from_linear(module, config=config, module_name=name)
             parent, child_name = _parent_and_child(model, name)
             _set_child(parent, child_name, replacement)

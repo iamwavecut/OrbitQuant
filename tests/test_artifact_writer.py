@@ -161,6 +161,33 @@ def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path
     assert "benchmark/orbitquant.metrics.csv" in result["required_files"]
     assert "assets/.gitkeep" in result["required_files"]
     assert "model_index.json" in result["required_files"]
+    assert result["checksum_validation"] == "checked"
+    assert result["tensor_validation"] == "checked"
+
+
+def test_validate_orbitquant_artifact_can_skip_heavy_checksum_and_tensor_passes(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    result = validate_orbitquant_artifact(
+        tmp_path,
+        validate_checksums_enabled=False,
+        validate_tensors=False,
+    )
+
+    assert result["valid"] is True
+    assert result["checksum_validation"] == "skipped"
+    assert result["tensor_validation"] == "skipped"
 
 
 def test_validate_orbitquant_artifact_rejects_model_index_manifest_mismatch(tmp_path):
@@ -288,6 +315,43 @@ def test_record_artifact_metrics_rejects_corrupted_artifact_before_refreshing_ch
     manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
     assert manifest == original_manifest
     assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
+
+
+def test_record_artifact_metrics_can_skip_heavy_checksum_preflight(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    original_manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    original_model_checksum = original_manifest["checksums"]["model.safetensors"]
+    with (tmp_path / "model.safetensors").open("ab") as handle:
+        handle.write(b"corruption")
+
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={"generated_samples": 1},
+        validate_checksums_enabled=False,
+    )
+
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    sha_lines = (tmp_path / "SHA256SUMS").read_text().splitlines()
+    assert manifest["checksums"]["model.safetensors"] == original_model_checksum
+    assert f"{original_model_checksum}  model.safetensors" in sha_lines
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "checksum mismatch for model.safetensors" in str(exc)
+    else:
+        raise AssertionError("strict artifact validation accepted a stale model checksum")
 
 
 def test_record_artifact_asset_adds_asset_to_manifest_and_validation(tmp_path):
@@ -522,6 +586,28 @@ def test_load_orbitquant_artifact_rejects_checksum_mismatch(tmp_path):
         assert "checksum mismatch" in str(exc)
     else:
         raise AssertionError("load_orbitquant_artifact accepted a corrupted artifact")
+
+
+def test_load_orbitquant_artifact_can_skip_checksum_validation_for_trusted_local_runs(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    (tmp_path / "benchmark" / "summary.json").write_text('{"status":"changed"}\n')
+
+    restored = TinyArtifactModel()
+    manifest = load_orbitquant_artifact(restored, tmp_path, validate_checksums=False)
+
+    assert manifest.source_model_id == "example/model"
+    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
 
 
 def test_load_orbitquant_artifact_rejects_missing_required_layout_file(tmp_path):
