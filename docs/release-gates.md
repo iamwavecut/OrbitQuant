@@ -6,7 +6,8 @@ URL, or signed-off audit note.
 
 - [ ] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
-  deviations are intentional.
+  deviations are intentional. The required audit checklist is
+  [paper-methodology-audit.md](paper-methodology-audit.md).
 - [ ] Release wording separates the paper-aligned subset from extra targets:
   FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 are paper targets; FLUX.2 Klein is
   an additional target unless the paper scope is expanded.
