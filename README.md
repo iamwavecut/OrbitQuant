@@ -68,6 +68,21 @@ only after the artifact and native eval report are ready for release. For very
 large artifacts that were already deep-validated locally, `--skip-tensor-validation`
 keeps checksum validation but avoids loading all safetensors before upload.
 
+Audit the expected private Hugging Face artifact matrix without downloading
+large weight files:
+
+```bash
+orbitquant audit-hf-artifacts \
+  --namespace WaveCut \
+  --output ./reports/native/hf-artifact-audit.json
+```
+
+The audit checks expected repo names from the native suite matrix, required
+artifact files, manifest/model-bit consistency, native smoke metadata, and
+paper-target required metrics. It reports `artifact_ready`,
+`native_smoke_ready`, and `release_eval_ready` separately so visual smoke
+artifacts are not confused with GenEval/VBench completion.
+
 Prepare a native GPU run on an RTX PRO 6000 96GB pod:
 
 ```bash

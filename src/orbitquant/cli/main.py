@@ -34,7 +34,11 @@ from orbitquant.eval.native_runner import (
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
 from orbitquant.eval.report import generate_native_eval_report
-from orbitquant.hub import inspect_model_metadata, upload_orbitquant_artifact
+from orbitquant.hub import (
+    audit_hf_artifact_repos,
+    inspect_model_metadata,
+    upload_orbitquant_artifact,
+)
 from orbitquant.kernels import backend_capabilities
 from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
 from orbitquant.pipeline import load_quantized_pipeline_component
@@ -324,6 +328,14 @@ def main(argv: list[str] | None = None) -> int:
     upload_parser.add_argument("--skip-tensor-validation", action="store_true")
     upload_parser.add_argument("--dry-run", action="store_true")
 
+    audit_hf_parser = subparsers.add_parser(
+        "audit-hf-artifacts", help="audit private/public HF OrbitQuant artifact repos"
+    )
+    audit_hf_parser.add_argument("--namespace", default="WaveCut")
+    audit_hf_parser.add_argument("--suite", action="append")
+    audit_hf_parser.add_argument("--revision")
+    audit_hf_parser.add_argument("--output")
+
     validate_generation_parser = subparsers.add_parser(
         "validate-generation", help="validate a native generation output and metadata pair"
     )
@@ -603,6 +615,20 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+    if args.command == "audit-hf-artifacts":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        payload = audit_hf_artifact_repos(
+            namespace=args.namespace,
+            suites=suites,
+            revision=args.revision,
+        )
+        rendered = json.dumps(payload, indent=2)
+        if args.output is not None:
+            Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
         return 0
     if args.command == "validate-generation":
         suite = get_native_suite(args.suite)

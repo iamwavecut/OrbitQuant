@@ -1472,3 +1472,51 @@ def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, m
             "dry_run": True,
         },
     }
+
+
+def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_audit_hf_artifacts(*, namespace, suites, revision):
+        seen["namespace"] = namespace
+        seen["suites"] = [suite.name for suite in suites]
+        seen["revision"] = revision
+        return {
+            "namespace": namespace,
+            "repo_count": 1,
+            "existing_count": 1,
+            "artifact_ready_count": 1,
+            "native_smoke_ready_count": 1,
+            "release_eval_ready_count": 0,
+            "rows": [{"repo_id": "WaveCut/example"}],
+        }
+
+    monkeypatch.setattr(cli_main, "audit_hf_artifact_repos", fake_audit_hf_artifacts)
+    output_path = tmp_path / "audit.json"
+
+    assert (
+        main(
+            [
+                "audit-hf-artifacts",
+                "--namespace",
+                "WaveCut",
+                "--suite",
+                "flux2-native",
+                "--revision",
+                "main",
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text())
+    assert output == written
+    assert output["repo_count"] == 1
+    assert seen == {
+        "namespace": "WaveCut",
+        "suites": ["flux2-native"],
+        "revision": "main",
+    }
