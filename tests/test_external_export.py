@@ -78,7 +78,7 @@ def test_export_geneval_artifact_writes_upstream_folder_layout(tmp_path):
     assert (tmp_path / "geneval-export" / "orbitquant_geneval_export.json").is_file()
 
 
-def test_export_geneval_artifact_fails_loud_for_visual_prompt_records(tmp_path):
+def test_export_geneval_artifact_fails_loud_when_no_geneval_records_exist(tmp_path):
     _write_artifact(tmp_path)
     image_path = tmp_path / "assets" / "sample.png"
     Image.new("RGB", (8, 8), "blue").save(image_path)
@@ -96,9 +96,53 @@ def test_export_geneval_artifact_fails_loud_for_visual_prompt_records(tmp_path):
     try:
         export_geneval_artifact(tmp_path, tmp_path / "geneval-export", split="orbitquant")
     except ValueError as exc:
-        assert "not GenEval-compatible" in str(exc)
+        assert "no GenEval-compatible image records" in str(exc)
     else:
-        raise AssertionError("visual prompt record was accepted as GenEval metadata")
+        raise AssertionError("visual-only artifact was accepted as GenEval metadata")
+
+
+def test_export_geneval_artifact_skips_visual_rows_in_mixed_artifact(tmp_path):
+    _write_artifact(tmp_path)
+    geneval_image_path = tmp_path / "assets" / "geneval-sample.png"
+    Image.new("RGB", (8, 8), "red").save(geneval_image_path)
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={"generated_samples": 1},
+        metadata={
+            "output_path": str(tmp_path / "assets" / "missing-visual-row.png"),
+            "prompt_record": {"id": "visual-only", "prompt": "a missing visual row"},
+        },
+        validate_checksums_enabled=False,
+    )
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={"generated_samples": 1},
+        metadata={
+            "output_path": str(geneval_image_path),
+            "prompt_record": {
+                "id": "red-cup",
+                "prompt": "a red cup",
+                "geneval": {
+                    "tag": "single_object",
+                    "include": [{"class": "cup", "count": 1, "color": "red"}],
+                    "exclude": [],
+                },
+            },
+        },
+        validate_checksums_enabled=False,
+    )
+
+    result = export_geneval_artifact(
+        tmp_path,
+        tmp_path / "geneval-export",
+        split="orbitquant",
+    )
+
+    assert result.sample_count == 1
+    assert result.prompt_count == 1
+    assert (tmp_path / "geneval-export" / "00000" / "samples" / "00000.png").is_file()
 
 
 def test_export_vbench_artifact_writes_video_folder_and_prompt_file(tmp_path):

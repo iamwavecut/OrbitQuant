@@ -64,6 +64,13 @@ def _prompt_text(record: dict[str, Any]) -> str | None:
     return None
 
 
+def _has_geneval_metadata(record: dict[str, Any]) -> bool:
+    prompt_record = _prompt_record(record)
+    if isinstance(prompt_record.get("geneval"), dict):
+        return True
+    return "tag" in prompt_record and "include" in prompt_record
+
+
 def _geneval_metadata(record: dict[str, Any]) -> dict[str, Any]:
     prompt_record = _prompt_record(record)
     source = prompt_record.get("geneval", prompt_record)
@@ -138,6 +145,8 @@ def export_geneval_artifact(
     records = _read_jsonl(artifact_path / "benchmark" / f"{split}.metrics.jsonl")
     groups: dict[str, dict[str, Any]] = {}
     for record in records:
+        if not _has_geneval_metadata(record):
+            continue
         source_path = _record_output_path(artifact_path, record)
         if source_path is None or source_path.suffix.lower() not in _IMAGE_SUFFIXES:
             continue
