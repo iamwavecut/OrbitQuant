@@ -31,14 +31,16 @@ left in source precision by default.
 
 ## Install
 
+Until a PyPI release is available, install the package directly from GitHub:
+
 ```bash
-pip install -e ".[hf,eval,dev]"
+pip install "orbitquant[hf] @ git+https://github.com/iamwavecut/OrbitQuant.git"
 ```
 
-For runtime-only use from a checked-out package:
+For local development from a checkout:
 
 ```bash
-pip install -e ".[hf]"
+pip install -e ".[hf,eval,dev]"
 ```
 
 For CUDA validation on hosts that already ship a vendor-matched PyTorch/Triton
@@ -309,8 +311,8 @@ Each artifact is intentionally inspectable without executing code:
 - `orbitquant_codebooks.safetensors`: Lloyd-Max centroids and boundaries.
 - `orbitquant_rotations.safetensors`: deterministic RPBH rotation metadata.
 - `benchmark/summary.json`: compact validation and imported-metric summary.
-- Generated artifacts may include raw `benchmark/*.jsonl` and `benchmark/*.csv`
-  records; compact published artifacts omit those raw files.
+- Local validation outputs may include raw `benchmark/*.jsonl` and
+  `benchmark/*.csv` records; compact published artifacts omit those raw files.
 - `assets/`: final comparison matrices embedded by the model card.
 - `SHA256SUMS`: checksums for artifact files.
 

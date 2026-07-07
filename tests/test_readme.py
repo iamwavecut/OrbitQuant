@@ -5,6 +5,11 @@ def test_readme_documents_component_artifact_usage():
     readme = Path("README.md").read_text(encoding="utf-8")
 
     assert "snapshot_download" in readme
+    assert (
+        'pip install "orbitquant[hf] @ git+https://github.com/iamwavecut/OrbitQuant.git"'
+        in readme
+    )
+    assert 'pip install -e ".[hf,eval,dev]"' in readme
     assert "load_quantized_pipeline_component" in readme
     assert "Published OrbitQuant model repos are component artifacts" in readme
     assert "DiffusionPipeline.from_pretrained" in readme
@@ -34,7 +39,8 @@ def test_readme_documents_component_artifact_usage():
     assert "These diffusion artifacts are not standalone `transformers.AutoModel` repos" in readme
     assert 'quantization_device="cuda"' in readme
     assert "not accepted as published quality evidence" in readme
-    assert "Generated artifacts may include raw `benchmark/*.jsonl`" in readme
+    assert "Local validation outputs may include raw `benchmark/*.jsonl`" in readme
+    assert "compact published artifacts omit those raw files" in readme
     assert "outside the current release claim boundary" in " ".join(readme.split())
     assert "## Release Metrics" in readme
     assert "Full GenEval and VBench runs are release evidence" in readme
