@@ -653,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:
     repair_native_smoke_parser.add_argument("--repo-id")
     repair_native_smoke_parser.add_argument("--namespace", default="WaveCut")
     repair_native_smoke_parser.add_argument("--suite", action="append")
+    repair_native_smoke_parser.add_argument("--native-smoke-backup-root")
     repair_native_smoke_parser.add_argument("--revision")
     repair_native_smoke_parser.add_argument("--commit-message")
     repair_native_smoke_parser.add_argument("--dry-run", action="store_true")
@@ -1222,6 +1223,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = repair_hf_native_smoke_proof(
                 repo_id=args.repo_id,
                 suite=suites[0],
+                native_smoke_backup_root=args.native_smoke_backup_root,
                 revision=args.revision,
                 commit_message=args.commit_message,
                 dry_run=args.dry_run,
@@ -1230,6 +1232,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = repair_hf_native_smoke_proof_matrix(
                 namespace=args.namespace,
                 suites=suites,
+                native_smoke_backup_root=args.native_smoke_backup_root,
                 revision=args.revision,
                 commit_message=args.commit_message,
                 dry_run=args.dry_run,

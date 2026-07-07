@@ -285,6 +285,53 @@ def _legacy_compact_summary_without_native_smoke(
     )
 
 
+def _write_native_smoke_backup(
+    backup_root,
+    *,
+    repo_id,
+    suite,
+    bit_setting,
+    prompt_ids=("simple-object", "counting"),
+):
+    assets = backup_root / repo_id.replace("/", "__") / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    extension = "mp4" if suite.frames is not None else "png"
+    for prompt_id in prompt_ids:
+        for split_token, quantization in (
+            ("original", None),
+            (
+                bit_setting,
+                {
+                    "config": {
+                        "weight_bits": int(bit_setting.split("A", maxsplit=1)[0][1:]),
+                        "activation_bits": int(bit_setting.split("A", maxsplit=1)[1]),
+                    }
+                },
+            ),
+        ):
+            media_path = (
+                assets
+                / f"{suite.name}_seed0_{split_token}_{prompt_id}.{extension}"
+            )
+            media_path.write_bytes(b"not empty")
+            metadata = {
+                "suite": suite.name,
+                "model_id": suite.model_id,
+                "prompt": f"prompt for {prompt_id}",
+                "seed": 0,
+                "height": suite.height,
+                "width": suite.width,
+                "frames": suite.frames,
+                "steps": suite.steps,
+                "guidance": suite.guidance,
+                "quantization": quantization,
+            }
+            (media_path.with_suffix(media_path.suffix + ".json")).write_text(
+                json.dumps(metadata, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+
 def _expected_missing_geneval_metrics():
     return [
         {"split": split, "metric": metric}
@@ -1186,6 +1233,94 @@ def test_repair_hf_native_smoke_proof_removes_recovered_pair_claim(
     )
 
 
+def test_repair_hf_native_smoke_proof_restores_from_local_backup_without_raw_upload(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    (tmp_path / "benchmark" / "summary.json").write_text(
+        _legacy_compact_summary_without_native_smoke(suite),
+        encoding="utf-8",
+    )
+    refresh_artifact_checksums(tmp_path)
+    backup_root = tmp_path / "native-backup"
+    _write_native_smoke_backup(
+        backup_root,
+        repo_id=repo_id,
+        suite=suite,
+        bit_setting="W4A4",
+    )
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof(
+        repo_id=repo_id,
+        suite=suite,
+        native_smoke_backup_root=backup_root,
+        revision="main",
+        commit_message="restore native smoke proof",
+        api=fake_api,
+    )
+
+    assert result["commit"]["commit_oid"] == "repair-sha"
+    assert result["backup_skipped_reason"] is None
+    assert result["proof_source"] == "local_paired_native_smoke_backup"
+    assert result["changed_files"] == [
+        "benchmark/summary.json",
+        "orbitquant_manifest.json",
+        "README.md",
+        "SHA256SUMS",
+    ]
+    operation_by_path = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in fake_api.create_commit_calls[0]["operations"]
+    }
+    assert sorted(operation_by_path) == sorted(result["changed_files"])
+
+    repaired_summary = json.loads(operation_by_path["benchmark/summary.json"])
+    proof = repaired_summary["native_smoke"]
+    assert proof["proof_source"] == "local_paired_native_smoke_backup"
+    assert proof["comparison_asset_path"] == "assets/image_generation_comparison_matrix.webp"
+    assert proof["paired_prompt_seed_count"] == 2
+    assert proof["paired_prompt_seed_keys"] == [
+        ["flux2-native", "0", "counting"],
+        ["flux2-native", "0", "simple-object"],
+    ]
+    assert proof["splits"]["original"]["generated_samples"] == 2
+    assert proof["splits"]["orbitquant"]["generated_samples"] == 2
+    assert proof["splits"]["original"]["nonempty_output_count"] == 2
+    assert proof["splits"]["orbitquant"]["nonempty_output_count"] == 2
+    assert proof["splits"]["original"]["native_settings"] == [
+        {
+            "suite": suite.name,
+            "height": suite.height,
+            "width": suite.width,
+            "frames": suite.frames,
+            "steps": suite.steps,
+            "guidance": suite.guidance,
+        }
+    ]
+    assert "## Native Validation Proof" in operation_by_path["README.md"].decode("utf-8")
+
+
 def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
     tmp_path,
     monkeypatch,
@@ -1334,6 +1469,67 @@ def test_repair_hf_native_smoke_proof_matrix_skips_compact_summary_without_raw_p
     assert result["rows"][0]["repair_skipped_reason"] == (
         "raw_paired_native_smoke_evidence_missing"
     )
+
+
+def test_repair_hf_native_smoke_proof_matrix_uses_local_backup(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    (tmp_path / "benchmark" / "summary.json").write_text(
+        _legacy_compact_summary_without_native_smoke(suite),
+        encoding="utf-8",
+    )
+    refresh_artifact_checksums(tmp_path)
+    backup_root = tmp_path / "native-backup"
+    _write_native_smoke_backup(
+        backup_root,
+        repo_id=repo_id,
+        suite=suite,
+        bit_setting="W4A4",
+        prompt_ids=("simple-object",),
+    )
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof_matrix(
+        suites=[suite],
+        native_smoke_backup_root=backup_root,
+        dry_run=True,
+        api=fake_api,
+    )
+
+    assert result["repo_count"] == 1
+    assert result["changed_repo_count"] == 1
+    assert result["skipped_repo_count"] == 0
+    assert result["error_count"] == 0
+    assert result["rows"][0]["repo_id"] == repo_id
+    assert result["rows"][0]["proof_source"] == "local_paired_native_smoke_backup"
+    assert result["rows"][0]["backup_skipped_reason"] is None
+    assert result["rows"][0]["changed_files"] == [
+        "benchmark/summary.json",
+        "orbitquant_manifest.json",
+        "README.md",
+        "SHA256SUMS",
+    ]
 
 
 def test_upload_orbitquant_artifact_rejects_raw_full_upload_profile(tmp_path):

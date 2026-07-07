@@ -509,6 +509,152 @@ def _recover_native_smoke_proof_from_compact_summary(
     )
 
 
+def _native_smoke_backup_repo_dir(backup_root: Path, repo_id: str) -> Path | None:
+    repo_dir_name = repo_id.replace("/", "__")
+    candidates = [backup_root / repo_dir_name]
+    if backup_root.name == repo_dir_name:
+        candidates.append(backup_root)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _native_smoke_backup_media_path(sidecar_path: Path) -> Path | None:
+    if not sidecar_path.name.endswith((".png.json", ".mp4.json")):
+        return None
+    media_path = sidecar_path.with_suffix("")
+    if not media_path.is_file() or media_path.stat().st_size <= 0:
+        return None
+    return media_path
+
+
+def _native_smoke_backup_record_from_sidecar(
+    sidecar_path: Path,
+    *,
+    suite: NativeSuite,
+    bit_setting: str,
+) -> tuple[str, dict[str, Any]] | None:
+    media_path = _native_smoke_backup_media_path(sidecar_path)
+    if media_path is None:
+        return None
+    parts = media_path.stem.split("_", maxsplit=3)
+    if len(parts) != 4:
+        return None
+    suite_name, seed_token, split_token, prompt_id = parts
+    if suite_name != suite.name or not seed_token.startswith("seed"):
+        return None
+    if split_token == "original":
+        split = "original"
+    elif split_token.upper() == bit_setting.upper():
+        split = "orbitquant"
+    else:
+        return None
+
+    metadata = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    if _native_settings_from_metadata(metadata) != _native_smoke_expected_settings(suite):
+        return None
+
+    seed = seed_token.removeprefix("seed")
+    generated_frames = int(metadata.get("frames") or 0) if suite.frames is not None else 0
+    record_metadata = dict(metadata)
+    record_metadata.update(
+        {
+            "seed": seed,
+            "output_path": str(media_path.resolve()),
+            "prompt_record": {"id": prompt_id},
+        }
+    )
+    return (
+        split,
+        {
+            "metrics": {
+                "generated_samples": 1,
+                "generated_frames": generated_frames,
+            },
+            "metadata": record_metadata,
+        },
+    )
+
+
+def _native_smoke_record_pair_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    metadata = record.get("metadata") if isinstance(record, dict) else {}
+    if not isinstance(metadata, dict):
+        return ("", "", "")
+    return (
+        str(metadata.get("suite") or ""),
+        str(metadata.get("seed") or ""),
+        _prompt_id_from_metadata(metadata),
+    )
+
+
+def _native_smoke_proof_from_backup_assets(
+    backup_root: str | Path,
+    *,
+    repo_id: str,
+    suite: NativeSuite,
+    bit_setting: str,
+    file_names: set[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    comparison_asset_path = _preferred_published_card_asset(file_names)
+    if comparison_asset_path is None:
+        return None, "comparison_asset_missing"
+
+    root = Path(backup_root)
+    repo_dir = _native_smoke_backup_repo_dir(root, repo_id)
+    if repo_dir is None:
+        return None, "native_smoke_backup_repo_missing"
+
+    split_records: dict[str, list[dict[str, Any]]] = {
+        "original": [],
+        "orbitquant": [],
+    }
+    for sidecar_path in sorted((repo_dir / "assets").glob("*.json")):
+        parsed = _native_smoke_backup_record_from_sidecar(
+            sidecar_path,
+            suite=suite,
+            bit_setting=bit_setting,
+        )
+        if parsed is None:
+            continue
+        split, record = parsed
+        split_records[split].append(record)
+
+    original_pairs = {
+        _native_smoke_record_pair_key(record) for record in split_records["original"]
+    }
+    orbitquant_pairs = {
+        _native_smoke_record_pair_key(record) for record in split_records["orbitquant"]
+    }
+    paired_keys = sorted(original_pairs & orbitquant_pairs)
+    if not paired_keys:
+        return None, "native_smoke_backup_pairs_missing"
+    paired_key_set = set(paired_keys)
+    paired_records = {
+        split: [
+            record
+            for record in records
+            if _native_smoke_record_pair_key(record) in paired_key_set
+        ]
+        for split, records in split_records.items()
+    }
+    splits = {
+        split: _native_smoke_split_summary(repo_dir, records)
+        for split, records in paired_records.items()
+    }
+    return (
+        {
+            "proof_format": "orbitquant-native-smoke-v1",
+            "proof_source": "local_paired_native_smoke_backup",
+            "comparison_asset_path": comparison_asset_path,
+            "paired_prompt_seed_count": len(paired_keys),
+            "paired_prompt_seed_keys": [list(item) for item in paired_keys],
+            "splits": splits,
+        },
+        None,
+    )
+
+
 def _lfs_sha256_by_file(siblings_by_file: dict[str, Any]) -> dict[str, str]:
     checksums = {}
     for filename, sibling in siblings_by_file.items():
@@ -1584,6 +1730,7 @@ def repair_hf_native_smoke_proof(
     *,
     repo_id: str,
     suite: NativeSuite,
+    native_smoke_backup_root: str | Path | None = None,
     revision: str | None = None,
     commit_message: str | None = None,
     dry_run: bool = False,
@@ -1614,6 +1761,9 @@ def repair_hf_native_smoke_proof(
         "dry_run": dry_run,
         "suite": suite.name,
         "existing_native_smoke_ready": current_status["ready"],
+        "native_smoke_backup_root": (
+            str(native_smoke_backup_root) if native_smoke_backup_root is not None else None
+        ),
         "repair_skipped_reason": None,
         "changed_files": [],
         "commit": None,
@@ -1659,8 +1809,22 @@ def repair_hf_native_smoke_proof(
         result["commit"] = _commit_info_payload(commit_info)
         return result
 
+    native_smoke: dict[str, Any] | None = None
+    skipped_reason: str | None = None
+    if native_smoke_backup_root is not None:
+        bit_setting = f"W{manifest.weight_bits}A{manifest.activation_bits}"
+        native_smoke, skipped_reason = _native_smoke_proof_from_backup_assets(
+            native_smoke_backup_root,
+            repo_id=repo_id,
+            suite=suite,
+            bit_setting=bit_setting,
+            file_names=file_names,
+        )
+        result["backup_skipped_reason"] = skipped_reason
+
     if (
-        isinstance(benchmark_summary.get("native_smoke"), dict)
+        native_smoke is None
+        and isinstance(benchmark_summary.get("native_smoke"), dict)
         and "native_smoke.raw_paired_native_smoke_evidence" in current_status["missing"]
     ):
         next_benchmark_summary = dict(benchmark_summary)
@@ -1728,11 +1892,12 @@ def repair_hf_native_smoke_proof(
         result["commit"] = _commit_info_payload(commit_info)
         return result
 
-    native_smoke, skipped_reason = _recover_native_smoke_proof_from_compact_summary(
-        benchmark_summary,
-        suite=suite,
-        file_names=file_names,
-    )
+    if native_smoke is None:
+        native_smoke, skipped_reason = _recover_native_smoke_proof_from_compact_summary(
+            benchmark_summary,
+            suite=suite,
+            file_names=file_names,
+        )
     if native_smoke is None:
         result["repair_skipped_reason"] = skipped_reason
         return result
@@ -1821,6 +1986,7 @@ def repair_hf_native_smoke_proof_matrix(
     *,
     namespace: str = "WaveCut",
     suites: list[NativeSuite] | None = None,
+    native_smoke_backup_root: str | Path | None = None,
     revision: str | None = None,
     commit_message: str | None = None,
     dry_run: bool = False,
@@ -1836,6 +2002,7 @@ def repair_hf_native_smoke_proof_matrix(
                 row = repair_hf_native_smoke_proof(
                     repo_id=repo_id,
                     suite=suite,
+                    native_smoke_backup_root=native_smoke_backup_root,
                     revision=revision,
                     commit_message=commit_message,
                     dry_run=dry_run,
