@@ -293,7 +293,7 @@ def _expected_missing_geneval_metrics():
     ]
 
 
-def test_recover_native_smoke_proof_from_compact_summary_matches_audit_gate():
+def test_recover_native_smoke_proof_from_compact_summary_requires_raw_pair_evidence():
     suite = NativeSuite(
         name="flux2-native",
         model_id="black-forest-labs/FLUX.2-klein-4B",
@@ -313,15 +313,34 @@ def test_recover_native_smoke_proof_from_compact_summary_matches_audit_gate():
         file_names=file_names,
     )
 
-    assert reason is None
-    assert proof is not None
-    status = hub_module._native_smoke_proof_status(
-        {"native_smoke": proof},
-        suite=suite,
-        file_names=file_names,
+    assert proof is None
+    assert reason == "raw_paired_native_smoke_evidence_missing"
+
+
+def test_native_smoke_proof_status_rejects_recovered_pair_claims():
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
     )
-    assert status["ready"] is True
-    assert status["missing"] == []
+    summary = json.loads(_native_smoke_summary(suite))
+    summary["native_smoke"]["proof_source"] = (
+        "recovered_from_compact_summary_and_published_comparison_matrix"
+    )
+
+    status = hub_module._native_smoke_proof_status(
+        summary,
+        suite=suite,
+        file_names={"assets/image_generation_comparison_matrix.webp"},
+    )
+
+    assert status["ready"] is False
+    assert "native_smoke.raw_paired_native_smoke_evidence" in status["missing"]
 
 
 def test_recover_native_smoke_proof_requires_uploaded_comparison_asset():
@@ -336,6 +355,7 @@ def test_recover_native_smoke_proof_requires_uploaded_comparison_asset():
         bit_settings=["W4A4"],
     )
     summary = json.loads(_legacy_compact_summary_without_native_smoke(suite))
+    summary.pop("raw_generation_records")
 
     proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
         summary,
@@ -361,6 +381,7 @@ def test_recover_native_smoke_proof_rejects_missing_generated_samples():
     summary = json.loads(
         _legacy_compact_summary_without_native_smoke(suite, generated_samples=0)
     )
+    summary.pop("raw_generation_records")
 
     proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
         summary,
@@ -385,6 +406,7 @@ def test_recover_native_smoke_proof_rejects_video_without_generated_frames():
         bit_settings=["W4A4"],
     )
     summary = json.loads(_legacy_compact_summary_without_native_smoke(suite))
+    summary.pop("raw_generation_records")
 
     proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
         summary,
@@ -1051,7 +1073,7 @@ def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
     assert result["rows"][0]["bit_setting"] == "W4A4"
 
 
-def test_repair_hf_native_smoke_proof_recovers_from_compact_summary(
+def test_repair_hf_native_smoke_proof_skips_compact_summary_without_raw_pair_evidence(
     tmp_path,
     monkeypatch,
 ):
@@ -1091,57 +1113,10 @@ def test_repair_hf_native_smoke_proof_recovers_from_compact_summary(
         api=fake_api,
     )
 
-    assert result["commit"]["commit_oid"] == "repair-sha"
-    assert result["repair_skipped_reason"] is None
-    assert result["changed_files"] == [
-        "benchmark/summary.json",
-        "orbitquant_manifest.json",
-        "README.md",
-        "SHA256SUMS",
-    ]
-    commit_call = fake_api.create_commit_calls[0]
-    assert commit_call["repo_id"] == repo_id
-    assert commit_call["revision"] == "main"
-    operation_by_path = {
-        operation.path_in_repo: operation.path_or_fileobj
-        for operation in commit_call["operations"]
-    }
-    repaired_summary = json.loads(operation_by_path["benchmark/summary.json"])
-    assert repaired_summary["native_smoke"]["proof_format"] == "orbitquant-native-smoke-v1"
-    assert (
-        repaired_summary["native_smoke"]["proof_source"]
-        == "recovered_from_compact_summary_and_published_comparison_matrix"
-    )
-    assert repaired_summary["native_smoke"]["comparison_asset_path"] == (
-        "assets/image_generation_comparison_matrix.webp"
-    )
-    assert repaired_summary["native_smoke"]["paired_prompt_seed_count"] == 1
-    assert repaired_summary["native_smoke"]["splits"]["original"]["native_settings"] == [
-        {
-            "suite": "flux2-native",
-            "height": 1024,
-            "width": 1024,
-            "frames": None,
-            "steps": 4,
-            "guidance": 1.0,
-        }
-    ]
-    assert (
-        repaired_summary["native_smoke"]["splits"]["orbitquant"]["nonempty_output_count"]
-        == 1
-    )
-    repaired_readme = operation_by_path["README.md"].decode("utf-8")
-    assert "## Native Validation Proof" in repaired_readme
-    assert "| Comparison matrix | `assets/image_generation_comparison_matrix.webp` |" in (
-        repaired_readme
-    )
-    assert "| Paired prompt/seed count | `1` |" in repaired_readme
-    repaired_manifest = json.loads(operation_by_path["orbitquant_manifest.json"])
-    sha_entries = hub_module._parse_sha256sums_bytes(operation_by_path["SHA256SUMS"])
-    assert repaired_manifest["checksums"]["benchmark/summary.json"] == sha_entries[
-        "benchmark/summary.json"
-    ]
-    assert "README.md" in sha_entries
+    assert result["commit"] is None
+    assert result["repair_skipped_reason"] == "raw_paired_native_smoke_evidence_missing"
+    assert result["changed_files"] == []
+    assert fake_api.create_commit_calls == []
 
 
 def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
@@ -1241,11 +1216,11 @@ def test_repair_hf_native_smoke_proof_skips_when_video_frames_are_insufficient(
 
     assert result["commit"] is None
     assert result["changed_files"] == []
-    assert result["repair_skipped_reason"] == "original.generated_frames_insufficient"
+    assert result["repair_skipped_reason"] == "raw_paired_native_smoke_evidence_missing"
     assert fake_api.create_commit_calls == []
 
 
-def test_repair_hf_native_smoke_proof_matrix_repairs_expected_suite_repo(
+def test_repair_hf_native_smoke_proof_matrix_skips_compact_summary_without_raw_pair_evidence(
     tmp_path,
     monkeypatch,
 ):
@@ -1283,12 +1258,15 @@ def test_repair_hf_native_smoke_proof_matrix_repairs_expected_suite_repo(
     )
 
     assert result["repo_count"] == 1
-    assert result["changed_repo_count"] == 1
-    assert result["skipped_repo_count"] == 0
+    assert result["changed_repo_count"] == 0
+    assert result["skipped_repo_count"] == 1
     assert result["error_count"] == 0
     assert result["rows"][0]["repo_id"] == repo_id
     assert result["rows"][0]["suite"] == "flux2-native"
     assert result["rows"][0]["bit_setting"] == "W4A4"
+    assert result["rows"][0]["repair_skipped_reason"] == (
+        "raw_paired_native_smoke_evidence_missing"
+    )
 
 
 def test_upload_orbitquant_artifact_rejects_raw_full_upload_profile(tmp_path):

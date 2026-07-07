@@ -14,8 +14,8 @@ weights or generating samples.
 
 Modes:
   current  Use the active project environment.
-  release  Create a clean venv with published Diffusers/Transformers releases.
-  dev      Create a clean venv with Diffusers/Transformers from GitHub main.
+  release  Create an HF overlay venv with published Diffusers/Transformers releases.
+  dev      Create an HF overlay venv with Diffusers/Transformers from GitHub main.
   all      Run current, release, then dev.
 EOF
 }
@@ -184,6 +184,8 @@ prepare_venv() {
   stage "$mode-env-start"
   mkdir -p "$VENV_ROOT"
   if [[ ! -x "$python_path" ]]; then
+    # Reuse the current Torch base so release/dev framework compatibility can be
+    # checked without repeatedly downloading large backend wheels.
     "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"
   fi
 

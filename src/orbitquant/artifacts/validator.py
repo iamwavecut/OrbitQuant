@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from pathlib import Path
 from typing import Any
 
+import torch
 from safetensors.torch import load_file
 
 from orbitquant.artifacts.checksums import validate_checksums, validate_sha256sums
@@ -24,6 +27,13 @@ _REQUIRED_ARTIFACT_FILES = (
 )
 
 _SHA256SUMS_REQUIRED_EXTRA_ENTRIES = ("README.md", "orbitquant_manifest.json")
+_CODEBOOK_KEY_RE = re.compile(
+    r"^dim(?P<dim>\d+)_bits(?P<bits>\d+)\.(?P<field>centroids|boundaries)$"
+)
+_ROTATION_KEY_RE = re.compile(
+    r"^dim(?P<dim>\d+)_seed(?P<seed>-?\d+)_block(?P<block>\d+)\."
+    r"(?P<field>permutation|inverse_permutation|signs|normalization)$"
+)
 
 
 def validate_required_artifact_files(artifact_path: Path) -> None:
@@ -90,6 +100,142 @@ def _validate_model_index(
         raise RuntimeError("model_index mismatch: " + "; ".join(mismatches))
 
 
+def _validate_codebook_tensors(
+    tensors: dict[str, torch.Tensor], *, config: OrbitQuantConfig
+) -> set[int]:
+    grouped: dict[tuple[int, int], dict[str, torch.Tensor]] = {}
+    unexpected: list[str] = []
+    for name, tensor in tensors.items():
+        match = _CODEBOOK_KEY_RE.match(name)
+        if match is None:
+            unexpected.append(name)
+            continue
+        dim = int(match.group("dim"))
+        bits = int(match.group("bits"))
+        field = match.group("field")
+        grouped.setdefault((dim, bits), {})[field] = tensor
+    if unexpected:
+        raise RuntimeError(f"artifact codebook tensor mismatch: unexpected={unexpected}")
+    if not grouped:
+        raise RuntimeError("artifact codebook tensor mismatch: no codebooks found")
+
+    allowed_bits = {config.weight_bits, config.activation_bits}
+    dims: set[int] = set()
+    mismatches: list[str] = []
+    for (dim, bits), fields in sorted(grouped.items()):
+        dims.add(dim)
+        if bits not in allowed_bits:
+            mismatches.append(f"dim{dim}_bits{bits}: unexpected bit width")
+            continue
+        missing = sorted({"centroids", "boundaries"} - set(fields))
+        if missing:
+            mismatches.append(f"dim{dim}_bits{bits}: missing {missing}")
+            continue
+        centroids = fields["centroids"].detach().cpu()
+        boundaries = fields["boundaries"].detach().cpu()
+        if centroids.dtype != torch.float32 or boundaries.dtype != torch.float32:
+            mismatches.append(f"dim{dim}_bits{bits}: expected float32 tensors")
+            continue
+        if tuple(centroids.shape) != (2**bits,):
+            mismatches.append(
+                f"dim{dim}_bits{bits}: centroids shape {tuple(centroids.shape)}"
+            )
+            continue
+        if tuple(boundaries.shape) != (2**bits - 1,):
+            mismatches.append(
+                f"dim{dim}_bits{bits}: boundaries shape {tuple(boundaries.shape)}"
+            )
+            continue
+        if not torch.isfinite(centroids).all() or not torch.isfinite(boundaries).all():
+            mismatches.append(f"dim{dim}_bits{bits}: non-finite values")
+            continue
+        if not torch.all(centroids[1:] > centroids[:-1]):
+            mismatches.append(f"dim{dim}_bits{bits}: centroids are not strictly sorted")
+        if boundaries.numel() and not torch.all(boundaries[1:] > boundaries[:-1]):
+            mismatches.append(f"dim{dim}_bits{bits}: boundaries are not strictly sorted")
+        if not torch.allclose(centroids, -torch.flip(centroids, dims=[0]), atol=1e-5):
+            mismatches.append(f"dim{dim}_bits{bits}: centroids are not symmetric")
+        expected_boundaries = (centroids[:-1] + centroids[1:]) / 2
+        if not torch.allclose(boundaries, expected_boundaries, atol=1e-6):
+            mismatches.append(f"dim{dim}_bits{bits}: boundaries are not midpoints")
+
+    if mismatches:
+        raise RuntimeError("artifact codebook tensor mismatch: " + "; ".join(mismatches))
+    return dims
+
+
+def _is_power_of_two(value: int) -> bool:
+    return value > 0 and (value & (value - 1)) == 0
+
+
+def _validate_rotation_tensors(
+    tensors: dict[str, torch.Tensor], *, config: OrbitQuantConfig
+) -> set[int]:
+    grouped: dict[tuple[int, int, int], dict[str, torch.Tensor]] = {}
+    unexpected: list[str] = []
+    for name, tensor in tensors.items():
+        match = _ROTATION_KEY_RE.match(name)
+        if match is None:
+            unexpected.append(name)
+            continue
+        dim = int(match.group("dim"))
+        seed = int(match.group("seed"))
+        block = int(match.group("block"))
+        field = match.group("field")
+        grouped.setdefault((dim, seed, block), {})[field] = tensor
+    if unexpected:
+        raise RuntimeError(f"artifact rotation tensor mismatch: unexpected={unexpected}")
+    if not grouped:
+        raise RuntimeError("artifact rotation tensor mismatch: no rotations found")
+
+    dims: set[int] = set()
+    mismatches: list[str] = []
+    for (dim, seed, block), fields in sorted(grouped.items()):
+        dims.add(dim)
+        prefix = f"dim{dim}_seed{seed}_block{block}"
+        if seed != config.rotation_seed:
+            mismatches.append(f"{prefix}: unexpected rotation seed")
+        if config.block_size != "paper" and block != config.block_size:
+            mismatches.append(f"{prefix}: unexpected explicit block size")
+        if not _is_power_of_two(block) or dim % block != 0:
+            mismatches.append(f"{prefix}: invalid block size")
+        missing = sorted(
+            {"permutation", "inverse_permutation", "signs", "normalization"} - set(fields)
+        )
+        if missing:
+            mismatches.append(f"{prefix}: missing {missing}")
+            continue
+        permutation = fields["permutation"].detach().cpu().to(torch.long)
+        inverse = fields["inverse_permutation"].detach().cpu().to(torch.long)
+        signs = fields["signs"].detach().cpu()
+        normalization = fields["normalization"].detach().cpu().to(torch.float32)
+        expected_range = torch.arange(dim, dtype=torch.long)
+        if tuple(permutation.shape) != (dim,) or not torch.equal(
+            torch.sort(permutation).values, expected_range
+        ):
+            mismatches.append(f"{prefix}: permutation is not a valid permutation")
+        if tuple(inverse.shape) != (dim,) or not torch.equal(
+            torch.sort(inverse).values, expected_range
+        ):
+            mismatches.append(f"{prefix}: inverse permutation is not valid")
+        elif tuple(permutation.shape) == (dim,) and not torch.equal(
+            inverse[permutation], expected_range
+        ):
+            mismatches.append(f"{prefix}: inverse permutation does not invert permutation")
+        if tuple(signs.shape) != (dim,) or not torch.isin(
+            signs.to(torch.int8), torch.tensor([-1, 1], dtype=torch.int8)
+        ).all():
+            mismatches.append(f"{prefix}: signs must be +/-1")
+        if tuple(normalization.shape) != (1,) or not torch.allclose(
+            normalization, torch.tensor([1.0 / math.sqrt(block)], dtype=torch.float32)
+        ):
+            mismatches.append(f"{prefix}: normalization mismatch")
+
+    if mismatches:
+        raise RuntimeError("artifact rotation tensor mismatch: " + "; ".join(mismatches))
+    return dims
+
+
 def validate_orbitquant_artifact(
     artifact_dir: str | Path,
     *,
@@ -115,6 +261,8 @@ def validate_orbitquant_artifact(
         sha256sums_entries = {}
     _validate_model_index(model_index, config=config, manifest=manifest)
     expected_shapes = manifest.module_shapes
+    codebook_validation = "skipped"
+    rotation_validation = "skipped"
     if validate_tensors:
         state_dict = load_file(artifact_path / "model.safetensors")
         missing = sorted(set(expected_shapes) - set(state_dict))
@@ -129,6 +277,21 @@ def validate_orbitquant_artifact(
                 "artifact tensor shape mismatch: "
                 f"missing={missing}, unexpected={unexpected}, shape_mismatches={shape_mismatches}"
             )
+        codebook_dims = _validate_codebook_tensors(
+            load_file(artifact_path / "orbitquant_codebooks.safetensors"),
+            config=config,
+        )
+        rotation_dims = _validate_rotation_tensors(
+            load_file(artifact_path / "orbitquant_rotations.safetensors"),
+            config=config,
+        )
+        if not rotation_dims.issubset(codebook_dims):
+            raise RuntimeError(
+                "artifact basis tensor mismatch: rotations without matching codebooks "
+                f"{sorted(rotation_dims - codebook_dims)}"
+            )
+        codebook_validation = "checked"
+        rotation_validation = "checked"
 
     return {
         "valid": True,
@@ -149,6 +312,8 @@ def validate_orbitquant_artifact(
         "quantization_staging_mode": manifest.quantization_staging_mode,
         "tensor_count": len(expected_shapes),
         "tensor_validation": "checked" if validate_tensors else "skipped",
+        "codebook_validation": codebook_validation,
+        "rotation_validation": rotation_validation,
         "checksum_validation": "checked" if validate_checksums_enabled else "skipped",
         "sha256sums_validation": "checked" if validate_checksums_enabled else "skipped",
         "sha256sums_entry_count": len(sha256sums_entries),

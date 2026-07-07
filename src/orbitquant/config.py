@@ -24,6 +24,11 @@ _SUPPORTED_RUNTIME_MODES = {
 _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
 _SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}
 _SUPPORTED_MODULE_DTYPES = {"bfloat16", "bf16", "float16", "fp16", "float32", "fp32"}
+_SUPPORTED_CODEBOOK_DTYPES = {"float32", "fp32"}
+_SUPPORTED_ROW_NORM_DTYPES = {"bfloat16", "bf16"}
+_SUPPORTED_ACTIVATION_NORM_DTYPES = {"float32", "fp32"}
+_SUPPORTED_WEIGHT_PACK_DTYPES = {"uint8"}
+_SUPPORTED_ADALN_POLICIES = {"int4_rtn"}
 
 
 class _QuantMethodName(str):
@@ -78,6 +83,16 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("only RPBH rotation is implemented")
         if self.codebook != "lloyd_max":
             raise ValueError("only Lloyd-Max codebooks are implemented")
+        if self.codebook_dtype.lower() not in _SUPPORTED_CODEBOOK_DTYPES:
+            raise ValueError("codebook_dtype must be 'float32'")
+        if self.row_norm_dtype.lower() not in _SUPPORTED_ROW_NORM_DTYPES:
+            raise ValueError("row_norm_dtype must be 'bfloat16'")
+        if self.activation_norm_dtype.lower() not in _SUPPORTED_ACTIVATION_NORM_DTYPES:
+            raise ValueError("activation_norm_dtype must be 'float32'")
+        if self.weight_pack_dtype.lower() not in _SUPPORTED_WEIGHT_PACK_DTYPES:
+            raise ValueError("weight_pack_dtype must be 'uint8'")
+        if self.adaln_policy not in _SUPPORTED_ADALN_POLICIES:
+            raise ValueError("adaln_policy must be 'int4_rtn'")
         if self.runtime_mode not in _SUPPORTED_RUNTIME_MODES:
             raise ValueError(f"runtime_mode must be one of {sorted(_SUPPORTED_RUNTIME_MODES)}")
         if self.activation_kernel_backend not in _SUPPORTED_ACTIVATION_KERNEL_BACKENDS:

@@ -422,6 +422,10 @@ def _native_smoke_proof_status(
         return {"ready": False, "missing": ["native_smoke_missing"], "proof": None}
     if proof.get("proof_format") != "orbitquant-native-smoke-v1":
         missing.append("native_smoke.proof_format")
+    if proof.get("proof_source") == (
+        "recovered_from_compact_summary_and_published_comparison_matrix"
+    ):
+        missing.append("native_smoke.raw_paired_native_smoke_evidence")
     comparison_asset_path = proof.get("comparison_asset_path")
     if not isinstance(comparison_asset_path, str) or not _is_published_card_asset(
         comparison_asset_path
@@ -462,6 +466,8 @@ def _recover_native_smoke_proof_from_compact_summary(
     suite: NativeSuite,
     file_names: set[str],
 ) -> tuple[dict[str, Any] | None, str | None]:
+    if summary.get("raw_generation_records") == "local-only":
+        return None, "raw_paired_native_smoke_evidence_missing"
     comparison_asset_path = _preferred_published_card_asset(file_names)
     if comparison_asset_path is None:
         return None, "comparison_asset_missing"

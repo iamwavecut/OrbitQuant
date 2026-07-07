@@ -159,10 +159,28 @@ class TinyWanNames(torch.nn.Module):
             [
                 torch.nn.ModuleDict(
                     {
-                        "attn1": torch.nn.ModuleDict({"to_q": torch.nn.Linear(16, 16)}),
-                        "attn2": torch.nn.ModuleDict({"add_k_proj": torch.nn.Linear(16, 16)}),
+                        "attn1": torch.nn.ModuleDict(
+                            {
+                                "to_q": torch.nn.Linear(16, 16),
+                                "to_k": torch.nn.Linear(16, 16),
+                                "to_v": torch.nn.Linear(16, 16),
+                                "to_out": torch.nn.Sequential(torch.nn.Linear(16, 16)),
+                            }
+                        ),
+                        "attn2": torch.nn.ModuleDict(
+                            {
+                                "to_q": torch.nn.Linear(16, 16),
+                                "to_k": torch.nn.Linear(16, 16),
+                                "to_v": torch.nn.Linear(16, 16),
+                                "to_out": torch.nn.Sequential(torch.nn.Linear(16, 16)),
+                            }
+                        ),
                         "ffn": torch.nn.ModuleDict(
-                            {"net": torch.nn.ModuleList([torch.nn.Linear(16, 32)])}
+                            {
+                                "net": torch.nn.ModuleList(
+                                    [torch.nn.Linear(16, 32), torch.nn.Linear(32, 16)]
+                                )
+                            }
                         ),
                         "norm1": torch.nn.ModuleDict({"linear": torch.nn.Linear(16, 32)}),
                     }
@@ -176,8 +194,15 @@ def test_wan_policy_covers_self_cross_attention_and_ffn_but_skips_time_projectio
     decisions = classify_linear_modules(TinyWanNames(), OrbitQuantConfig(target_policy="wan"))
 
     assert decisions["blocks.0.attn1.to_q"].action == "orbitquant"
-    assert decisions["blocks.0.attn2.add_k_proj"].action == "orbitquant"
+    assert decisions["blocks.0.attn1.to_k"].action == "orbitquant"
+    assert decisions["blocks.0.attn1.to_v"].action == "orbitquant"
+    assert decisions["blocks.0.attn1.to_out.0"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_q"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_k"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_v"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_out.0"].action == "orbitquant"
     assert decisions["blocks.0.ffn.net.0"].action == "orbitquant"
+    assert decisions["blocks.0.ffn.net.1"].action == "orbitquant"
     assert decisions["blocks.0.norm1.linear"].action == "bf16_skip"
     assert decisions["time_proj"].action == "bf16_skip"
     assert {decision.action for decision in decisions.values()}.isdisjoint({"adaln_int4_rtn"})
@@ -253,6 +278,13 @@ def test_wan_policy_matches_current_diffusers_tiny_module_names():
 
     assert decisions["condition_embedder.time_embedder.linear_1"].action == "bf16_skip"
     assert decisions["blocks.0.attn1.to_q"].action == "orbitquant"
+    assert decisions["blocks.0.attn1.to_k"].action == "orbitquant"
+    assert decisions["blocks.0.attn1.to_v"].action == "orbitquant"
+    assert decisions["blocks.0.attn1.to_out.0"].action == "orbitquant"
     assert decisions["blocks.0.attn2.to_q"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_k"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_v"].action == "orbitquant"
+    assert decisions["blocks.0.attn2.to_out.0"].action == "orbitquant"
     assert decisions["blocks.0.ffn.net.0.proj"].action == "orbitquant"
+    assert decisions["blocks.0.ffn.net.2"].action == "orbitquant"
     assert decisions["proj_out"].action == "bf16_skip"

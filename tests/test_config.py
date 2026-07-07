@@ -97,3 +97,21 @@ def test_orbit_quant_config_rejects_unknown_target_policy():
         assert "target_policy" in str(exc)
     else:
         raise AssertionError("unknown target_policy was accepted")
+
+
+def test_orbit_quant_config_rejects_unimplemented_serialized_knobs():
+    invalid_kwargs = [
+        {"row_norm_dtype": "float32"},
+        {"activation_norm_dtype": "bfloat16"},
+        {"codebook_dtype": "bfloat16"},
+        {"weight_pack_dtype": "int32"},
+        {"adaln_policy": "orbitquant"},
+    ]
+
+    for kwargs in invalid_kwargs:
+        try:
+            OrbitQuantConfig(**kwargs)
+        except ValueError as exc:
+            assert next(iter(kwargs)) in str(exc)
+        else:
+            raise AssertionError(f"unsupported OrbitQuantConfig kwargs accepted: {kwargs}")

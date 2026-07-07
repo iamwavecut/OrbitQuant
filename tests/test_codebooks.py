@@ -30,6 +30,55 @@ def test_lloyd_max_codebook_is_symmetric_and_sorted():
     assert torch.allclose(codebook.centroids, -torch.flip(codebook.centroids, dims=[0]), atol=1e-5)
 
 
+def test_lloyd_max_codebook_matches_deterministic_unit_sphere_oracle(monkeypatch):
+    monkeypatch.setenv("ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE", "1")
+    clear_codebook_cache()
+
+    codebook = get_codebook(dim=32, bits=3)
+
+    expected_centroids = torch.tensor(
+        [
+            -0.36600566,
+            -0.23213057,
+            -0.13146324,
+            -0.04273151,
+            0.04273151,
+            0.13146324,
+            0.23213057,
+            0.36600566,
+        ],
+        dtype=torch.float32,
+    )
+    expected_boundaries = torch.tensor(
+        [
+            -0.29906812,
+            -0.18179691,
+            -0.08709738,
+            0.0,
+            0.08709738,
+            0.18179691,
+            0.29906812,
+        ],
+        dtype=torch.float32,
+    )
+    torch.testing.assert_close(codebook.centroids, expected_centroids, atol=1e-6, rtol=0)
+    torch.testing.assert_close(codebook.boundaries, expected_boundaries, atol=1e-6, rtol=0)
+
+    generator = torch.Generator().manual_seed(123)
+    samples = torch.randn(4096, 32, generator=generator)
+    coordinates = (samples / samples.norm(dim=-1, keepdim=True)).flatten()
+    lloyd_mse = torch.mean((codebook.quantize(coordinates) - coordinates) ** 2)
+    uniform_centroids = torch.tensor(
+        [-0.875, -0.625, -0.375, -0.125, 0.125, 0.375, 0.625, 0.875],
+        dtype=torch.float32,
+    )
+    uniform_boundaries = (uniform_centroids[:-1] + uniform_centroids[1:]) / 2
+    uniform_indices = torch.bucketize(coordinates, uniform_boundaries)
+    uniform_mse = torch.mean((uniform_centroids[uniform_indices] - coordinates) ** 2)
+
+    assert lloyd_mse < uniform_mse * 0.2
+
+
 def test_lloyd_max_quantization_error_decreases_with_bits():
     torch.manual_seed(0)
     values = torch.randn(2048)

@@ -2,7 +2,7 @@ import json
 
 import torch
 from PIL import Image
-from safetensors.torch import load_file
+from safetensors.torch import load_file, save_file
 
 from orbitquant.artifacts import (
     create_artifact_image_comparisons,
@@ -466,6 +466,68 @@ def test_validate_orbitquant_artifact_rejects_model_index_manifest_mismatch(tmp_
         assert "source_model_id" in str(exc)
     else:
         raise AssertionError("validate_orbitquant_artifact accepted mismatched model_index")
+
+
+def test_validate_orbitquant_artifact_rejects_corrupted_codebook_semantics(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    codebook_path = tmp_path / "orbitquant_codebooks.safetensors"
+    tensors = load_file(codebook_path)
+    tensors["dim8_bits4.boundaries"] = torch.flip(tensors["dim8_bits4.boundaries"], dims=[0])
+    save_file(tensors, codebook_path)
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["checksums"]["orbitquant_codebooks.safetensors"] = sha256_file(codebook_path)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest["checksums"])
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "artifact codebook tensor mismatch" in str(exc)
+    else:
+        raise AssertionError("validate_orbitquant_artifact accepted a corrupted codebook")
+
+
+def test_validate_orbitquant_artifact_rejects_corrupted_rotation_semantics(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    rotation_path = tmp_path / "orbitquant_rotations.safetensors"
+    tensors = load_file(rotation_path)
+    tensors["dim8_seed0_block4.signs"] = torch.zeros_like(tensors["dim8_seed0_block4.signs"])
+    save_file(tensors, rotation_path)
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["checksums"]["orbitquant_rotations.safetensors"] = sha256_file(rotation_path)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest["checksums"])
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "artifact rotation tensor mismatch" in str(exc)
+    else:
+        raise AssertionError("validate_orbitquant_artifact accepted a corrupted rotation")
 
 
 def test_record_artifact_metrics_keeps_manifest_and_sha256sums_valid(tmp_path):

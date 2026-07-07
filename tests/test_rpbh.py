@@ -16,6 +16,18 @@ def test_rpbh_preserves_norms_and_is_deterministic():
     assert torch.allclose(y_a.norm(dim=-1), x.norm(dim=-1), atol=1e-5, rtol=1e-5)
 
 
+def test_rpbh_permutation_spreads_block_local_mass_before_hadamard():
+    rotation = RPBHRotation(dim=32, seed=0, block_size=4)
+    x = torch.zeros(32)
+    x[:4] = 1
+
+    y = rotation.apply_to_activations(x)
+    block_energy = y.reshape(rotation.num_blocks, rotation.block_size).square().sum(dim=-1)
+
+    assert not torch.equal(rotation.permutation, torch.arange(rotation.dim))
+    assert (block_energy > 1e-6).sum().item() > 1
+
+
 def test_rpbh_folds_weight_with_activation_rotation_identity():
     x = torch.randn(4, 16)
     weight = torch.randn(7, 16)

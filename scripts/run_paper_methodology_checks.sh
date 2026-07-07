@@ -86,6 +86,7 @@ stage inventory-contract-start
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -131,6 +132,32 @@ expected_counts = {
         "bf16_skip": 6,
     },
 }
+expected_module_list_hashes = {
+    "flux2-native": {
+        "quantized_modules": "6d79a8f00fa1a15e9ec2800d4568860853347f998eddb03c623c4be62482bbfb",
+        "adaln_modules": "e1605750dfcc3e7d6821ff951ff94077380c02dc84f55ead620f22c3fae58473",
+        "skipped_modules": "c3834abafcaf954a69e31ad64cb98436aeaf16ff36a5f6e382933b63bfb06f54",
+    },
+    "flux1-schnell-native": {
+        "quantized_modules": "7327a220588353bbaf8b5697326b278da40c8c79f617479fc55e55c6966f2563",
+        "adaln_modules": "d8f0d8f0716341fc7b618c0cd87e2ef1f8ec699d1071f47922150b54a4d497bd",
+        "skipped_modules": "3980cd68701b61ea2bd8af052f78014c7f6d4d63a16012664917ffca46b1f0e3",
+    },
+    "z-image-native": {
+        "quantized_modules": "3d43a43b2cd1369e10d3bc88bca11ef9960d8189d101dedaadfd79242539b526",
+        "adaln_modules": "e9cb615912b15212a065255dc35d08559b4277f2e381287107dbe35e6e4e4a59",
+        "skipped_modules": "e09dcfc87e2f64c3f620c6381b865c95594f80d31a73e3f8faea16a07f056a1a",
+    },
+    "wan-native": {
+        "quantized_modules": "3110e1ac320e60bc85f1e0556a982c222af93e604a624bce24ff1cd6efa69c00",
+        "adaln_modules": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "skipped_modules": "f0a09fe0938a413a1321bf49bb9de450f3232ca4b77e989c1c5b037e0ff8fec5",
+    },
+}
+
+def module_list_hash(values):
+    payload = json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 summary = {"suites": {}, "claim_boundary": "config_inventory_only"}
 for suite in suites:
@@ -178,6 +205,13 @@ for suite in suites:
         raise SystemExit(f"{path}: no OrbitQuant modules selected")
     if skipped_module_count <= 0:
         raise SystemExit(f"{path}: no BF16 skips selected")
+    for list_name, expected_hash in expected_module_list_hashes[suite].items():
+        actual_hash = module_list_hash(data.get(list_name, []))
+        if actual_hash != expected_hash:
+            raise SystemExit(
+                f"{path}: {list_name} changed; expected sha256 {expected_hash}, "
+                f"got {actual_hash}"
+            )
     if suite == "wan-native" and adaln_module_count != 0:
         raise SystemExit(f"{path}: Wan should not classify AdaLN INT4 modules")
     if suite != "wan-native" and adaln_module_count <= 0:
@@ -187,6 +221,10 @@ for suite in suites:
         "component_class": data["component_class"],
         "linear_module_count": data["linear_module_count"],
         "action_counts": action_counts,
+        "module_list_hashes": {
+            key: module_list_hash(data[key])
+            for key in ("quantized_modules", "adaln_modules", "skipped_modules")
+        },
     }
 
 summary_path.parent.mkdir(parents=True, exist_ok=True)

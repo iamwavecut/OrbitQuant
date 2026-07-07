@@ -48,6 +48,7 @@ Status legend:
 | Quantization uses nearest fixed centroids, with no zero-point, learned scale, per-channel range, or timestep/prompt range. | Pass | `LloydMaxCodebook.quantize_indices()` and `quantize()` in `src/orbitquant/codebooks/lloyd_max.py` | `torch.bucketize` against midpoint boundaries is equivalent to nearest-centroid lookup for sorted Lloyd-Max centroids. |
 | RPBH uses uniform random permutation, Rademacher signs, per-block Walsh-Hadamard transform, and `1 / sqrt(block_size)` normalization. | Pass | `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/rotations/fwht.py`, `tests/test_rpbh.py` | The implementation applies permutation first, then signs, then block FWHT and normalization. |
 | RPBH stores compact permutation/sign metadata, not dense rotation matrices. | Pass | `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/artifacts/writer.py` | Artifact rotation tensors are permutation, inverse permutation, signs, and normalization metadata. |
+| Compact artifact sidecar files are inspectable for basis semantics. | Pass | `src/orbitquant/artifacts/validator.py`, `tests/test_artifact_writer.py` | Validation checks codebook tensor names, centroid/boundary shapes, sorting, symmetry, midpoint boundaries, and rotation permutation/inverse/sign/normalization semantics. Checksums alone are not treated as sufficient evidence. |
 | Default paper block-size policy is the largest power of two dividing the input dimension. | Pass | `RPBHRotation.__post_init__()` in `src/orbitquant/rotations/rpbh.py`; `tests/test_rpbh.py` | Degenerate dimensions warn and fall back to signs/permutation only. |
 | Weight rotation is folded offline so activations and weights share the same basis. | Pass | `OrbitQuantLinear.from_linear()` in `src/orbitquant/layers.py`; `tests/test_rpbh.py`; `tests/test_orbit_linear.py` | For PyTorch `linear(x, W, b)`, the code stores `W @ R` and computes `(x @ R) @ (W @ R).T + b`. |
 | No inverse rotation is used in runtime quantized forward. | Pass | `OrbitQuantLinear.forward()` in `src/orbitquant/layers.py` | Inverse rotation appears only in `_dequantize()` conversion back to ordinary linear modules. |
@@ -94,6 +95,9 @@ Required before final publication:
   inventory summary with `orbitquant validate-artifact --policy-inventory`.
 - Treat access failures for gated models as model-access blockers only, not as
   method blockers.
+- The lightweight paper gate pins exact module-list hashes in addition to
+  aggregate counts. A count-preserving swap from a paper projection to an
+  unrelated module must fail the gate.
 
 ## Native Setting Provenance
 
@@ -136,6 +140,11 @@ is:
 - Native settings from `src/orbitquant/eval/native_settings.py`.
 - Finite, nonblank output checks.
 - Compact artifact validation, checksums, manifest, and load test.
+
+Published comparison matrices and aggregate compact metrics are not enough to
+reconstruct paired proof after the fact. `native_smoke` readiness requires a
+proof block derived from raw local records before upload; recovered proof claims
+from compact summaries are rejected by the HF artifact audit.
 
 Full metric runs are required only before saying that an artifact reproduces
 the paper's GenEval or VBench numbers.
