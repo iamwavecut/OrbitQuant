@@ -47,6 +47,33 @@ def test_orbit_linear_quantized_forward_is_finite_and_shape_preserving():
     assert "_activation_codebook_centroids" not in quantized.state_dict()
 
 
+def test_orbit_linear_state_dict_contains_no_activation_calibration_state():
+    torch.manual_seed(1)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+
+    assert set(quantized.state_dict()) == {"bias", "packed_weight_indices", "row_norms"}
+
+
+def test_orbit_linear_shares_codebooks_by_dimension_and_bits_not_module_name():
+    torch.manual_seed(1)
+    source_a = torch.nn.Linear(16, 7)
+    source_b = torch.nn.Linear(16, 9)
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=3, rotation_seed=11, block_size=8)
+
+    quantized_a = OrbitQuantLinear.from_linear(
+        source_a, config=config, module_name="blocks.0.attn.to_q"
+    )
+    quantized_b = OrbitQuantLinear.from_linear(
+        source_b, config=config, module_name="blocks.37.ff.linear_out"
+    )
+
+    assert quantized_a.weight_codebook is quantized_b.weight_codebook
+    assert quantized_a.activation_codebook is quantized_b.activation_codebook
+
+
 def test_orbit_linear_weight_indices_quantize_rotated_unit_directions():
     torch.manual_seed(2)
     source = torch.nn.Linear(16, 7)

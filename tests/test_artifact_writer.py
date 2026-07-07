@@ -34,6 +34,25 @@ class TinyArtifactModel(torch.nn.Module):
         )
 
 
+class TinySharedCodebookArtifactModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "attn": torch.nn.ModuleDict(
+                            {
+                                "to_q": torch.nn.Linear(8, 8),
+                                "to_k": torch.nn.Linear(8, 8),
+                            }
+                        )
+                    }
+                )
+            ]
+        )
+
+
 def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(tmp_path):
     model = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)
@@ -135,6 +154,49 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").read_text() == "metric,value\n"
     assert any(name.endswith(".centroids") for name in codebook_tensors)
     assert any(name.endswith(".permutation") for name in rotation_tensors)
+
+
+def test_saved_artifact_contains_no_activation_calibration_state_and_deduplicates_basis(
+    tmp_path,
+):
+    model = TinySharedCodebookArtifactModel()
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=3, block_size=4)
+    summary = quantize_linear_modules(model, config)
+
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    model_tensors = load_file(tmp_path / "model.safetensors")
+    codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
+    rotation_tensors = load_file(tmp_path / "orbitquant_rotations.safetensors")
+
+    assert set(model_tensors) == {
+        "transformer_blocks.0.attn.to_k.bias",
+        "transformer_blocks.0.attn.to_k.packed_weight_indices",
+        "transformer_blocks.0.attn.to_k.row_norms",
+        "transformer_blocks.0.attn.to_q.bias",
+        "transformer_blocks.0.attn.to_q.packed_weight_indices",
+        "transformer_blocks.0.attn.to_q.row_norms",
+    }
+    assert set(codebook_tensors) == {
+        "dim8_bits3.boundaries",
+        "dim8_bits3.centroids",
+        "dim8_bits4.boundaries",
+        "dim8_bits4.centroids",
+    }
+    assert set(rotation_tensors) == {
+        "dim8_seed0_block4.inverse_permutation",
+        "dim8_seed0_block4.normalization",
+        "dim8_seed0_block4.permutation",
+        "dim8_seed0_block4.signs",
+    }
 
 
 def test_sha256sums_ignore_huggingface_local_dir_cache_metadata(tmp_path):

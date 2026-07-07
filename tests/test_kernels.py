@@ -31,6 +31,34 @@ def test_cpu_activation_kernel_matches_reference_functional_path():
     assert torch.allclose(actual, expected)
 
 
+def test_activation_quantization_is_per_token_scale_equivariant_and_batch_independent():
+    torch.manual_seed(11)
+    x = torch.randn(2, 4, 16).clamp_min(-2).clamp_max(2)
+    scales = torch.tensor(
+        [[[0.5], [1.0], [2.0], [4.0]], [[1.5], [3.0], [0.75], [2.5]]],
+        dtype=x.dtype,
+    )
+    rotation = RPBHRotation(dim=16, seed=3, block_size=8)
+    codebook = get_codebook(dim=16, bits=4)
+
+    baseline = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
+    scaled = quantize_activations(
+        x * scales, rotation=rotation, codebook=codebook, eps=1e-12
+    )
+
+    assert torch.allclose(scaled, baseline * scales, atol=1e-6, rtol=1e-6)
+
+    outlier = torch.full((1, 1, 16), 10_000.0)
+    with_outlier = quantize_activations(
+        torch.cat((x.reshape(-1, 16), outlier.reshape(-1, 16)), dim=0),
+        rotation=rotation,
+        codebook=codebook,
+        eps=1e-12,
+    )
+
+    assert torch.equal(with_outlier[:-1], baseline.reshape(-1, 16))
+
+
 def test_backend_selection_is_explicit_and_fails_loud_for_unavailable_backends():
     assert available_backends()["cpu"] is True
     assert select_backend(torch.device("cpu"), requested="auto") == "cpu"
