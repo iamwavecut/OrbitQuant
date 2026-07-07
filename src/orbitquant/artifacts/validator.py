@@ -181,6 +181,10 @@ def validate_artifact_policy_inventory(
 ) -> dict[str, Any]:
     artifact_path = Path(artifact_dir)
     inventory_file = Path(inventory_path)
+    model_index = json.loads((artifact_path / "model_index.json").read_text(encoding="utf-8"))
+    config = OrbitQuantConfig.from_dict(
+        json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
+    )
     manifest = OrbitQuantManifest.from_dict(
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
@@ -188,8 +192,10 @@ def validate_artifact_policy_inventory(
     scalar_mismatches = [
         mismatch
         for key, expected, actual in (
+            ("manifest_target_policy", config.target_policy, manifest.target_policy),
             ("source_model_id", manifest.source_model_id, inventory.get("source_model_id")),
-            ("target_policy", manifest.target_policy, inventory.get("target_policy")),
+            ("target_policy", config.target_policy, inventory.get("target_policy")),
+            ("component", model_index.get("component"), inventory.get("component")),
         )
         if (mismatch := _mismatch(key, expected, actual)) is not None
     ]

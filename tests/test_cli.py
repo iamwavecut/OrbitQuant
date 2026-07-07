@@ -9,6 +9,7 @@ from PIL import Image
 
 import orbitquant.cli.main as cli_main
 from orbitquant.artifacts import save_orbitquant_artifact, validate_orbitquant_artifact
+from orbitquant.artifacts.checksums import write_sha256sums_from_manifest
 from orbitquant.cli.main import main
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.modeling import quantize_linear_modules
@@ -2151,6 +2152,98 @@ def test_cli_validate_artifact_rejects_policy_inventory_mismatch(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="policy inventory mismatch"):
+        main(
+            [
+                "validate-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--policy-inventory",
+                str(inventory_path),
+            ]
+        )
+
+
+def test_cli_validate_artifact_rejects_policy_inventory_component_mismatch(tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+        component="transformer",
+    )
+    inventory_path = tmp_path / "policy-inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "source_model_id": "example/model",
+                "target_policy": "generic_dit",
+                "component": "denoiser",
+                "quantized_modules": summary.quantized_modules,
+                "adaln_modules": summary.adaln_modules,
+                "skipped_modules": summary.skipped_modules,
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(RuntimeError, match="component"):
+        main(
+            [
+                "validate-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--policy-inventory",
+                str(inventory_path),
+            ]
+        )
+
+
+def test_cli_validate_artifact_rejects_manifest_policy_config_mismatch(tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["target_policy"] = "flux"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest["checksums"])
+    inventory_path = tmp_path / "policy-inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "source_model_id": "example/model",
+                "target_policy": "flux",
+                "component": "transformer",
+                "quantized_modules": summary.quantized_modules,
+                "adaln_modules": summary.adaln_modules,
+                "skipped_modules": summary.skipped_modules,
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(RuntimeError, match="manifest_target_policy"):
         main(
             [
                 "validate-artifact",
