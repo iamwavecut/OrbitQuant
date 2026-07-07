@@ -50,6 +50,8 @@ from orbitquant.eval.prompts import (
 from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import (
     audit_hf_artifact_repos,
+    cleanup_hf_artifact_reports,
+    cleanup_hf_artifact_reports_matrix,
     inspect_model_metadata,
     render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
@@ -478,13 +480,16 @@ def main(argv: list[str] | None = None) -> int:
         choices=["full", "compact"],
         help=(
             "full uploads the artifact directory as-is; compact stages a validated "
-            "copy with metrics/proof assets and without raw GenEval/VBench image dumps"
+            "copy with final proof assets and without raw eval dumps or report logs"
         ),
     )
     upload_parser.add_argument(
         "--report-dir",
         action="append",
-        help="native report directory to include when --upload-profile compact is used",
+        help=(
+            "native report directory whose final comparison matrices are promoted "
+            "into assets/ when --upload-profile compact is used"
+        ),
     )
     upload_parser.add_argument(
         "--staging-dir",
@@ -517,6 +522,20 @@ def main(argv: list[str] | None = None) -> int:
         choices=["streaming", "component", "unknown"],
     )
     repair_hf_parser.add_argument("--dry-run", action="store_true")
+
+    cleanup_hf_parser = subparsers.add_parser(
+        "cleanup-hf-artifact-reports",
+        help=(
+            "promote final comparison matrices to assets/ and remove report logs "
+            "from remote HF OrbitQuant artifact repos"
+        ),
+    )
+    cleanup_hf_parser.add_argument("--repo-id")
+    cleanup_hf_parser.add_argument("--namespace", default="WaveCut")
+    cleanup_hf_parser.add_argument("--suite", action="append")
+    cleanup_hf_parser.add_argument("--revision")
+    cleanup_hf_parser.add_argument("--commit-message")
+    cleanup_hf_parser.add_argument("--dry-run", action="store_true")
 
     validate_generation_parser = subparsers.add_parser(
         "validate-generation", help="validate a native generation output and metadata pair"
@@ -956,6 +975,29 @@ def main(argv: list[str] | None = None) -> int:
                 quantization_device=args.quantization_device,
                 weight_quantization_backend=args.weight_quantization_backend,
                 quantization_staging_mode=args.quantization_staging_mode,
+                revision=args.revision,
+                commit_message=args.commit_message,
+                dry_run=args.dry_run,
+            )
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "cleanup-hf-artifact-reports":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        if args.repo_id is not None and suites is not None:
+            raise ValueError("--repo-id cannot be combined with --suite")
+        if args.repo_id is not None:
+            payload = cleanup_hf_artifact_reports(
+                repo_id=args.repo_id,
+                revision=args.revision,
+                commit_message=args.commit_message,
+                dry_run=args.dry_run,
+            )
+        else:
+            payload = cleanup_hf_artifact_reports_matrix(
+                namespace=args.namespace,
+                suites=suites,
                 revision=args.revision,
                 commit_message=args.commit_message,
                 dry_run=args.dry_run,

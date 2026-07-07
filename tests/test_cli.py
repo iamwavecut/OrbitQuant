@@ -2019,6 +2019,54 @@ def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monke
     }
 
 
+def test_cli_cleanup_hf_artifact_reports_wires_single_repo_options(
+    capsys, monkeypatch
+):
+    seen = {}
+
+    def fake_cleanup_hf_artifact_reports(**kwargs):
+        seen.update(kwargs)
+        return {
+            "repo_id": kwargs["repo_id"],
+            "revision": kwargs["revision"],
+            "dry_run": kwargs["dry_run"],
+            "report_file_count": 2,
+            "promoted_assets": ["assets/image_generation_comparison_matrix.webp"],
+            "delete_paths": ["reports"],
+        }
+
+    monkeypatch.setattr(
+        cli_main, "cleanup_hf_artifact_reports", fake_cleanup_hf_artifact_reports
+    )
+
+    assert (
+        main(
+            [
+                "cleanup-hf-artifact-reports",
+                "--repo-id",
+                "WaveCut/example-orbitquant",
+                "--revision",
+                "main",
+                "--commit-message",
+                "cleanup reports",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["repo_id"] == "WaveCut/example-orbitquant"
+    assert output["promoted_assets"] == ["assets/image_generation_comparison_matrix.webp"]
+    assert output["delete_paths"] == ["reports"]
+    assert seen == {
+        "repo_id": "WaveCut/example-orbitquant",
+        "revision": "main",
+        "commit_message": "cleanup reports",
+        "dry_run": True,
+    }
+
+
 def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch):
     seen = {}
 

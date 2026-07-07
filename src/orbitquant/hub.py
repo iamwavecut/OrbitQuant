@@ -4,14 +4,22 @@ import hashlib
 import json
 import shutil
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
+from huggingface_hub import (
+    CommitOperationAdd,
+    CommitOperationDelete,
+    HfApi,
+    hf_hub_download,
+)
 
 from orbitquant.artifacts import refresh_artifact_checksums, validate_orbitquant_artifact
-from orbitquant.artifacts.checksums import is_ignored_artifact_relative_path
+from orbitquant.artifacts.checksums import (
+    is_ignored_artifact_relative_path,
+    sha256_file,
+)
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.eval import list_native_suites
@@ -65,6 +73,7 @@ _REQUIRED_METRICS_BY_SUITE = {
     ),
 }
 _COMPACT_RAW_EVAL_ASSET_MARKERS = ("_geneval-", "_vbench-")
+_COMPACT_REPORT_ROOT = "reports/"
 
 
 def inspect_model_metadata(model_id: str, *, revision: str | None = None) -> dict[str, Any]:
@@ -236,23 +245,62 @@ def _is_raw_eval_asset(relative_path: str) -> bool:
     return any(marker in name for marker in _COMPACT_RAW_EVAL_ASSET_MARKERS)
 
 
-def _copy_report_dir(report_dir: Path, artifact_path: Path, output_path: Path) -> list[str]:
+def _is_report_file(relative_path: str) -> bool:
+    return relative_path.startswith(_COMPACT_REPORT_ROOT)
+
+
+def _is_comparison_matrix_asset(path: Path) -> bool:
+    return path.name.lower().endswith("_generation_comparison_matrix.webp")
+
+
+def _comparison_matrix_target_path(
+    source_path: Path, report_dir: Path, output_path: Path
+) -> Path:
+    target_path = output_path / "assets" / source_path.name
+    if not target_path.exists() or sha256_file(source_path) == sha256_file(target_path):
+        return target_path
+    return output_path / "assets" / f"{report_dir.name}_{source_path.name}"
+
+
+def _copy_report_comparison_assets(
+    report_dir: Path, output_path: Path
+) -> list[str]:
     copied = []
     report_dir = report_dir.resolve()
-    artifact_root = artifact_path.resolve()
-    if report_dir.is_relative_to(artifact_root):
-        target_root = output_path / report_dir.relative_to(artifact_root)
-    else:
-        target_root = output_path / "reports" / "native" / report_dir.name
     for source_path in sorted(report_dir.rglob("*")):
-        if not source_path.is_file():
+        if not source_path.is_file() or not _is_comparison_matrix_asset(source_path):
             continue
-        relative_path = source_path.relative_to(report_dir)
-        target_path = target_root / relative_path
+        target_path = _comparison_matrix_target_path(source_path, report_dir, output_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, target_path)
         copied.append(target_path.relative_to(output_path).as_posix())
     return copied
+
+
+def _report_matrix_name_prefix(relative_path: str) -> str:
+    parts = Path(relative_path).parts
+    if len(parts) >= 5 and parts[-2] == "assets":
+        return parts[-3]
+    return Path(relative_path).parent.name or "report"
+
+
+def _promoted_remote_matrix_path(relative_path: str, used_paths: set[str]) -> str:
+    name = Path(relative_path).name
+    candidate = f"assets/{name}"
+    if candidate not in used_paths:
+        used_paths.add(candidate)
+        return candidate
+
+    prefix = _report_matrix_name_prefix(relative_path)
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    candidate = f"assets/{prefix}_{name}"
+    index = 2
+    while candidate in used_paths:
+        candidate = f"assets/{prefix}_{stem}_{index}{suffix}"
+        index += 1
+    used_paths.add(candidate)
+    return candidate
 
 
 def stage_compact_upload_artifact(
@@ -262,7 +310,7 @@ def stage_compact_upload_artifact(
     report_dirs: list[str | Path] | None = None,
     validate_tensors: bool = True,
 ) -> dict[str, Any]:
-    """Create a compact upload copy with metrics and proof assets but without raw eval dumps."""
+    """Create a compact upload copy with final proof assets but without raw eval dumps."""
 
     artifact_path = Path(artifact_dir)
     output_path = Path(output_dir)
@@ -281,11 +329,15 @@ def stage_compact_upload_artifact(
     )
     copied_files = []
     omitted_raw_eval_assets = []
+    omitted_report_files = []
     for source_path in sorted(artifact_path.rglob("*")):
         if not source_path.is_file():
             continue
         relative_path = source_path.relative_to(artifact_path).as_posix()
         if is_ignored_artifact_relative_path(relative_path):
+            continue
+        if _is_report_file(relative_path):
+            omitted_report_files.append(relative_path)
             continue
         if _is_raw_eval_asset(relative_path):
             omitted_raw_eval_assets.append(relative_path)
@@ -293,12 +345,17 @@ def stage_compact_upload_artifact(
         _copy_artifact_file(source_path, artifact_path, output_path)
         copied_files.append(relative_path)
 
-    copied_reports = []
+    copied_report_assets = []
+    artifact_report_root = artifact_path / "reports"
+    if artifact_report_root.is_dir():
+        copied_report_assets.extend(
+            _copy_report_comparison_assets(artifact_report_root, output_path)
+        )
     for report_dir in report_dirs or []:
         path = Path(report_dir)
         if not path.is_dir():
             raise RuntimeError(f"report directory missing: {path}")
-        copied_reports.extend(_copy_report_dir(path, artifact_path, output_path))
+        copied_report_assets.extend(_copy_report_comparison_assets(path, output_path))
 
     checksum_refresh = refresh_artifact_checksums(output_path)
     staged_validation = validate_orbitquant_artifact(
@@ -312,8 +369,12 @@ def stage_compact_upload_artifact(
         "profile": "compact",
         "source_validation": source_validation,
         "validation": staged_validation,
-        "copied_file_count": len(set(copied_files) | set(copied_reports)),
-        "copied_report_file_count": len(copied_reports),
+        "copied_file_count": len(set(copied_files) | set(copied_report_assets)),
+        "copied_report_asset_count": len(set(copied_report_assets)),
+        "copied_report_assets": sorted(set(copied_report_assets)),
+        "omitted_report_file_count": len(omitted_report_files),
+        "omitted_report_files": omitted_report_files[:50],
+        "omitted_report_file_overflow": max(0, len(omitted_report_files) - 50),
         "omitted_raw_eval_asset_count": len(omitted_raw_eval_assets),
         "omitted_raw_eval_assets": omitted_raw_eval_assets[:50],
         "omitted_raw_eval_asset_overflow": max(0, len(omitted_raw_eval_assets) - 50),
@@ -660,6 +721,124 @@ def repair_hf_artifact_metadata(
     return result
 
 
+def cleanup_hf_artifact_reports(
+    *,
+    repo_id: str,
+    revision: str | None = None,
+    commit_message: str | None = None,
+    dry_run: bool = False,
+    api: HfApi | None = None,
+) -> dict[str, Any]:
+    """Promote final comparison matrices to assets/ and remove remote reports/ logs."""
+
+    api = HfApi() if api is None else api
+    info = api.model_info(repo_id, revision=revision, files_metadata=True)
+    file_names = {sibling.rfilename for sibling in info.siblings or []}
+    report_files = sorted(filename for filename in file_names if _is_report_file(filename))
+    report_matrix_files = [
+        filename for filename in report_files if _is_comparison_matrix_asset(Path(filename))
+    ]
+
+    manifest_bytes = _read_remote_bytes(repo_id, "orbitquant_manifest.json", revision=revision)
+    readme_bytes = _read_remote_bytes(repo_id, "README.md", revision=revision)
+    sha256sums_bytes = _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
+
+    manifest = OrbitQuantManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
+    used_paths = set(file_names) - set(report_files)
+    promoted_assets: dict[str, bytes] = {}
+    for report_matrix in report_matrix_files:
+        target_path = _promoted_remote_matrix_path(report_matrix, used_paths)
+        if target_path in file_names and target_path not in report_files:
+            continue
+        promoted_assets[target_path] = _read_remote_bytes(
+            repo_id, report_matrix, revision=revision
+        )
+
+    cleaned_checksums = {
+        relative_path: digest
+        for relative_path, digest in manifest.checksums.items()
+        if not is_ignored_artifact_relative_path(relative_path)
+        and not _is_report_file(relative_path)
+    }
+    cleaned_checksums.update(
+        {
+            relative_path: _sha256_bytes(payload)
+            for relative_path, payload in promoted_assets.items()
+        }
+    )
+    cleaned_manifest = replace(manifest, checksums=cleaned_checksums)
+    next_manifest_bytes = _json_bytes(cleaned_manifest.to_dict())
+    next_readme_bytes = render_model_card(cleaned_manifest).encode("utf-8")
+
+    sha_entries = {
+        relative_path: digest
+        for relative_path, digest in _parse_sha256sums_bytes(sha256sums_bytes).items()
+        if not is_ignored_artifact_relative_path(relative_path)
+        and not _is_report_file(relative_path)
+    }
+    sha_entries.update(
+        {
+            relative_path: _sha256_bytes(payload)
+            for relative_path, payload in promoted_assets.items()
+        }
+    )
+    sha_entries.update(
+        {
+            "orbitquant_manifest.json": _sha256_bytes(next_manifest_bytes),
+            "README.md": _sha256_bytes(next_readme_bytes),
+        }
+    )
+    sha_entries.pop("SHA256SUMS", None)
+    next_sha256sums_bytes = _sha256sums_bytes(sha_entries)
+
+    file_payloads: dict[str, bytes] = {
+        "orbitquant_manifest.json": next_manifest_bytes,
+        "README.md": next_readme_bytes,
+        "SHA256SUMS": next_sha256sums_bytes,
+        **promoted_assets,
+    }
+    original_payloads = {
+        "orbitquant_manifest.json": manifest_bytes,
+        "README.md": readme_bytes,
+        "SHA256SUMS": sha256sums_bytes,
+    }
+    changed_files = [
+        filename
+        for filename, payload in file_payloads.items()
+        if original_payloads.get(filename) != payload
+    ]
+    result: dict[str, Any] = {
+        "repo_id": repo_id,
+        "repo_type": "model",
+        "revision": revision,
+        "dry_run": dry_run,
+        "report_file_count": len(report_files),
+        "report_matrix_count": len(report_matrix_files),
+        "promoted_assets": sorted(promoted_assets),
+        "changed_files": changed_files,
+        "delete_paths": ["reports"] if report_files else [],
+        "commit": None,
+    }
+    if dry_run or (not changed_files and not report_files):
+        return result
+
+    operations: list[Any] = [
+        CommitOperationAdd(path_in_repo=filename, path_or_fileobj=file_payloads[filename])
+        for filename in changed_files
+    ]
+    if report_files:
+        operations.append(CommitOperationDelete(path_in_repo="reports", is_folder=True))
+    commit_info = api.create_commit(
+        repo_id=repo_id,
+        repo_type="model",
+        revision=revision,
+        operations=operations,
+        commit_message=commit_message or "Clean OrbitQuant artifact report logs",
+    )
+    result["commit"] = _commit_info_payload(commit_info)
+    return result
+
+
 def repair_hf_artifact_metadata_matrix(
     *,
     namespace: str = "WaveCut",
@@ -707,6 +886,55 @@ def repair_hf_artifact_metadata_matrix(
         "dry_run": dry_run,
         "changed_repo_count": sum(1 for row in rows if row.get("changed_files")),
         "error_count": sum(1 for row in rows if row.get("error")),
+        "rows": rows,
+    }
+
+
+def cleanup_hf_artifact_reports_matrix(
+    *,
+    namespace: str = "WaveCut",
+    suites: list[NativeSuite] | None = None,
+    revision: str | None = None,
+    commit_message: str | None = None,
+    dry_run: bool = False,
+    api: HfApi | None = None,
+) -> dict[str, Any]:
+    selected_suites = list_native_suites() if suites is None else suites
+    api = HfApi() if api is None else api
+    rows = []
+    for suite in selected_suites:
+        for bit_setting in suite.bit_settings:
+            repo_id = default_artifact_repo_id(namespace, suite, bit_setting)
+            try:
+                row = cleanup_hf_artifact_reports(
+                    repo_id=repo_id,
+                    revision=revision,
+                    commit_message=commit_message,
+                    dry_run=dry_run,
+                    api=api,
+                )
+            except Exception as exc:
+                row = {
+                    "repo_id": repo_id,
+                    "suite": suite.name,
+                    "bit_setting": bit_setting,
+                    "dry_run": dry_run,
+                    "error": f"{type(exc).__name__}: {str(exc)}",
+                }
+            else:
+                row["suite"] = suite.name
+                row["bit_setting"] = bit_setting
+            rows.append(row)
+    return {
+        "namespace": namespace,
+        "repo_count": len(rows),
+        "dry_run": dry_run,
+        "changed_repo_count": sum(
+            1 for row in rows if row.get("changed_files") or row.get("delete_paths")
+        ),
+        "error_count": sum(1 for row in rows if row.get("error")),
+        "report_file_count": sum(row.get("report_file_count", 0) for row in rows),
+        "promoted_asset_count": sum(len(row.get("promoted_assets", [])) for row in rows),
         "rows": rows,
     }
 

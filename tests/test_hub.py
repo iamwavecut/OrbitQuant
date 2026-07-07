@@ -1,7 +1,9 @@
+import json
 from types import SimpleNamespace
 
 import pytest
 import torch
+from huggingface_hub import CommitOperationAdd, CommitOperationDelete
 
 import orbitquant.hub as hub_module
 from orbitquant.artifacts import refresh_artifact_checksums, save_orbitquant_artifact
@@ -10,6 +12,8 @@ from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
 from orbitquant.hub import (
     audit_hf_artifact_repos,
+    cleanup_hf_artifact_reports,
+    cleanup_hf_artifact_reports_matrix,
     render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
@@ -86,6 +90,24 @@ class FakeCommitHfApi:
         )
 
 
+class FakeCleanupHfApi(FakeCommitHfApi):
+    def __init__(self, artifact_dir):
+        super().__init__()
+        self.artifact_dir = artifact_dir
+        self.model_info_calls = []
+
+    def model_info(self, repo_id, *, revision=None, files_metadata=False):
+        self.model_info_calls.append(
+            {"repo_id": repo_id, "revision": revision, "files_metadata": files_metadata}
+        )
+        siblings = [
+            SimpleNamespace(rfilename=path.relative_to(self.artifact_dir).as_posix(), size=1)
+            for path in sorted(self.artifact_dir.rglob("*"))
+            if path.is_file()
+        ]
+        return SimpleNamespace(sha="remote-sha", private=True, gated=False, siblings=siblings)
+
+
 def _write_artifact(tmp_path):
     model = TinyHubArtifactModel()
     config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
@@ -116,6 +138,10 @@ def _remote_file_map(repo_id, artifact_dir):
     }
 
 
+def _remote_path(artifact_dir, filename):
+    return artifact_dir / filename
+
+
 def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path):
     _write_artifact(tmp_path)
     fake_api = FakeHfApi()
@@ -137,7 +163,7 @@ def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path
     assert fake_api.model_info_calls == []
 
 
-def test_stage_compact_upload_artifact_omits_raw_eval_assets_and_copies_reports(
+def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matrices(
     tmp_path,
 ):
     _write_artifact(tmp_path)
@@ -157,6 +183,23 @@ def test_stage_compact_upload_artifact_omits_raw_eval_assets_and_copies_reports(
     report_matrix = report_dir / "assets" / "image_generation_comparison_matrix.webp"
     report_matrix.parent.mkdir(parents=True)
     report_matrix.write_bytes(b"report matrix")
+    report_markdown = report_dir / "orbitquant-native-eval.md"
+    report_markdown.write_text("# local report log\n", encoding="utf-8")
+    report_table = report_dir / "tables" / "perf.csv"
+    report_table.parent.mkdir(parents=True)
+    report_table.write_text("metric,value\n", encoding="utf-8")
+    in_artifact_report = (
+        tmp_path
+        / "reports"
+        / "native"
+        / "flux2-w4a4"
+        / "assets"
+        / "image_generation_comparison_matrix.webp"
+    )
+    in_artifact_report.parent.mkdir(parents=True)
+    in_artifact_report.write_bytes(b"in artifact report matrix")
+    in_artifact_markdown = in_artifact_report.parent.parent / "orbitquant-native-eval.md"
+    in_artifact_markdown.write_text("# local artifact report log\n", encoding="utf-8")
     refresh_artifact_checksums(tmp_path)
 
     stage_dir = tmp_path.parent / f"{tmp_path.name}-stage"
@@ -170,21 +213,24 @@ def test_stage_compact_upload_artifact_omits_raw_eval_assets_and_copies_reports(
     staged_checksums = read_sha256sums(stage_dir / "SHA256SUMS")
     assert result["validation"]["valid"] is True
     assert result["omitted_raw_eval_asset_count"] == 2
+    assert result["omitted_report_file_count"] == 2
+    assert result["copied_report_asset_count"] == 2
     assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
     assert not (stage_dir / raw_eval_metadata.relative_to(tmp_path)).exists()
+    assert not (stage_dir / in_artifact_report.relative_to(tmp_path)).exists()
+    assert not (stage_dir / in_artifact_markdown.relative_to(tmp_path)).exists()
     assert (stage_dir / visual_asset.relative_to(tmp_path)).is_file()
     assert (stage_dir / comparison_asset.relative_to(tmp_path)).is_file()
-    staged_report = (
-        stage_dir
-        / "reports"
-        / "native"
-        / report_dir.name
-        / "assets"
-        / "image_generation_comparison_matrix.webp"
+    staged_report = stage_dir / "assets" / "image_generation_comparison_matrix.webp"
+    staged_collision_report = (
+        stage_dir / "assets" / f"{report_dir.name}_image_generation_comparison_matrix.webp"
     )
     assert staged_report.is_file()
+    assert staged_collision_report.is_file()
     assert raw_eval_asset.relative_to(tmp_path).as_posix() not in staged_checksums
+    assert not any(path.startswith("reports/") for path in staged_checksums)
     assert staged_report.relative_to(stage_dir).as_posix() in staged_checksums
+    assert staged_collision_report.relative_to(stage_dir).as_posix() in staged_checksums
 
 
 def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
@@ -283,6 +329,125 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
         b'"quantization_staging_mode": "component"'
         in manifest_operation.path_or_fileobj
     )
+
+
+def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder(
+    tmp_path,
+    monkeypatch,
+):
+    repo_id = "WaveCut/example-orbitquant"
+    _write_artifact(tmp_path)
+    report_matrix = (
+        tmp_path
+        / "reports"
+        / "native"
+        / "flux2-w4a4"
+        / "assets"
+        / "image_generation_comparison_matrix.webp"
+    )
+    report_matrix.parent.mkdir(parents=True)
+    report_matrix.write_bytes(b"report matrix")
+    report_markdown = report_matrix.parent.parent / "orbitquant-native-eval.md"
+    report_markdown.write_text("# local report log\n", encoding="utf-8")
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_path(tmp_path, filename))
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = cleanup_hf_artifact_reports(
+        repo_id=repo_id,
+        commit_message="cleanup reports",
+        api=fake_api,
+    )
+
+    assert result["report_file_count"] == 2
+    assert result["report_matrix_count"] == 1
+    assert result["promoted_assets"] == ["assets/image_generation_comparison_matrix.webp"]
+    assert result["delete_paths"] == ["reports"]
+    assert result["commit"]["commit_oid"] == "repair-sha"
+    assert len(fake_api.create_commit_calls) == 1
+
+    commit_call = fake_api.create_commit_calls[0]
+    assert commit_call["commit_message"] == "cleanup reports"
+    operations = commit_call["operations"]
+    added = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in operations
+        if isinstance(operation, CommitOperationAdd)
+    }
+    deleted = [
+        operation
+        for operation in operations
+        if isinstance(operation, CommitOperationDelete)
+    ]
+    assert "model.safetensors" not in added
+    assert added["assets/image_generation_comparison_matrix.webp"] == b"report matrix"
+    assert len(deleted) == 1
+    assert deleted[0].path_in_repo == "reports"
+    assert deleted[0].is_folder is True
+
+    next_manifest = json.loads(added["orbitquant_manifest.json"].decode("utf-8"))
+    next_readme = added["README.md"].decode("utf-8")
+    next_sha = added["SHA256SUMS"].decode("utf-8")
+    assert "assets/image_generation_comparison_matrix.webp" in next_manifest["checksums"]
+    assert not any(path.startswith("reports/") for path in next_manifest["checksums"])
+    assert "assets/image_generation_comparison_matrix.webp" in next_readme
+    assert "reports/native" not in next_readme
+    assert "assets/image_generation_comparison_matrix.webp" in next_sha
+    assert "reports/native" not in next_sha
+
+
+def test_cleanup_hf_artifact_reports_matrix_cleans_expected_suite_repo(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    report_matrix = (
+        tmp_path
+        / "reports"
+        / "native"
+        / "flux2-w4a4"
+        / "assets"
+        / "image_generation_comparison_matrix.webp"
+    )
+    report_matrix.parent.mkdir(parents=True)
+    report_matrix.write_bytes(b"report matrix")
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_path(tmp_path, filename))
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = cleanup_hf_artifact_reports_matrix(
+        suites=[suite],
+        dry_run=True,
+        api=fake_api,
+    )
+
+    assert result["repo_count"] == 1
+    assert result["changed_repo_count"] == 1
+    assert result["error_count"] == 0
+    assert result["report_file_count"] == 1
+    assert result["promoted_asset_count"] == 1
+    assert result["rows"][0]["repo_id"] == repo_id
+    assert result["rows"][0]["suite"] == "flux2-native"
+    assert result["rows"][0]["bit_setting"] == "W4A4"
 
 
 def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(

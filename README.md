@@ -161,8 +161,11 @@ Hugging Face model card embeds them directly:
 - `assets/*generation_comparison_matrix.webp`
 - Wan contact-sheet comparisons for video artifacts
 
-Local raw logs and intermediate eval outputs should stay outside the model repo.
-Model cards should describe the artifact, show how to use it, state the source
+Use `orbitquant upload-artifact --upload-profile compact` for model repos. The
+compact profile promotes final report comparison matrices into `assets/` and
+omits `reports/` logs and raw eval dumps from the uploaded repository. Local raw
+logs and intermediate eval outputs should stay outside the model repo. Model
+cards should describe the artifact, show how to use it, state the source
 model/provenance, and display final comparison assets.
 
 ## Artifact Layout
