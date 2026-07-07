@@ -19,6 +19,7 @@ from orbitquant.eval.native_runner import (
     output_path_for_suite,
     parse_bit_setting,
     run_native_generation,
+    target_policy_for_suite,
     validate_native_generation_output,
 )
 from orbitquant.layers import OrbitQuantLinear
@@ -109,6 +110,13 @@ def test_build_quantization_config_for_suite_rejects_unsupported_native_bit_sett
 
     with pytest.raises(ValueError, match="not listed"):
         build_quantization_config_for_suite(suite, "W8A8")
+
+
+def test_target_policy_for_suite_covers_all_native_targets():
+    assert target_policy_for_suite(get_native_suite("flux2-native")) == "flux2"
+    assert target_policy_for_suite(get_native_suite("flux1-schnell-native")) == "flux"
+    assert target_policy_for_suite(get_native_suite("z-image-native")) == "z_image"
+    assert target_policy_for_suite(get_native_suite("wan-native")) == "wan"
 
 
 def test_load_pipeline_for_suite_uses_named_diffusers_pipeline_class(monkeypatch):

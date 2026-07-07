@@ -2037,6 +2037,140 @@ def test_cli_inspect_policy_with_suite_writes_module_inventory(monkeypatch, caps
     ]
 
 
+@pytest.mark.parametrize(
+    ("suite", "transformer_class", "model_id", "target_policy", "module_family"),
+    [
+        (
+            "flux2-native",
+            "Flux2Transformer2DModel",
+            "black-forest-labs/FLUX.2-klein-4B",
+            "flux2",
+            "flux",
+        ),
+        (
+            "flux1-schnell-native",
+            "FluxTransformer2DModel",
+            "black-forest-labs/FLUX.1-schnell",
+            "flux",
+            "flux",
+        ),
+        (
+            "z-image-native",
+            "ZImageTransformer2DModel",
+            "Tongyi-MAI/Z-Image-Turbo",
+            "z_image",
+            "z_image",
+        ),
+        (
+            "wan-native",
+            "WanTransformer3DModel",
+            "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+            "wan",
+            "wan",
+        ),
+    ],
+)
+def test_cli_inspect_policy_config_mode_covers_all_native_target_suites(
+    monkeypatch,
+    capsys,
+    tmp_path,
+    suite,
+    transformer_class,
+    model_id,
+    target_policy,
+    module_family,
+):
+    calls = []
+
+    def build_module(self):
+        if module_family == "wan":
+            self.blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn1": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+        elif module_family == "z_image":
+            self.layers = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attention": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+        else:
+            self.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+    def load_config(cls, requested_model_id, **kwargs):
+        assert requested_model_id == model_id
+        assert kwargs["subfolder"] == "transformer"
+        calls.append(("load_config", transformer_class))
+        return {"hidden_size": 8}
+
+    def from_config(cls, config):
+        assert config == {"hidden_size": 8}
+        calls.append(("from_config", transformer_class))
+        return cls()
+
+    def init(self):
+        torch.nn.Module.__init__(self)
+        build_module(self)
+
+    fake_transformer_cls = type(
+        transformer_class,
+        (torch.nn.Module,),
+        {
+            "__init__": init,
+            "load_config": classmethod(load_config),
+            "from_config": classmethod(from_config),
+        },
+    )
+
+    class WrongDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, requested_model_id, **kwargs):
+            raise AssertionError("config inspect-policy must not load full pipeline weights")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(
+            **{
+                transformer_class: fake_transformer_cls,
+                "DiffusionPipeline": WrongDiffusionPipeline,
+            }
+        ),
+    )
+    output_path = tmp_path / f"{suite}-policy-inventory.json"
+
+    assert main(["inspect-policy", "--suite", suite, "--output", str(output_path)]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(output_path.read_text())
+
+    assert output["output"] == str(output_path)
+    assert saved["suite"] == suite
+    assert saved["source_model_id"] == model_id
+    assert saved["component"] == "transformer"
+    assert saved["load_mode"] == "config"
+    assert saved["pipeline_class"] is None
+    assert saved["component_class"] == transformer_class
+    assert saved["target_policy"] == target_policy
+    assert saved["action_counts"]["orbitquant"] == 1
+    assert saved["quantized_modules"]
+    assert calls == [
+        ("load_config", transformer_class),
+        ("from_config", transformer_class),
+    ]
+
+
 def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(
