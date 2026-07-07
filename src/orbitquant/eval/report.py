@@ -239,8 +239,9 @@ def _visual_source_path(row: dict[str, Any]) -> tuple[Path, str] | None:
 
 def _comparison_column_label(row: dict[str, Any]) -> str:
     model_name = row["source_model_id"].rsplit("/", maxsplit=1)[-1]
-    split = "BF16" if row["split"] == "original" else "OrbitQuant"
-    return f"{model_name}\n{row['bits']} {split}"
+    if row["split"] == "original":
+        return f"{model_name}\nBF16 baseline"
+    return f"{model_name}\n{row['bits']} OrbitQuant"
 
 
 def _comparison_row_label(row_key: tuple[str, str, str]) -> str:

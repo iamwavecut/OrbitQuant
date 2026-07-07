@@ -5,7 +5,7 @@ from PIL import Image
 
 from orbitquant.artifacts import record_artifact_metrics, save_orbitquant_artifact
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.eval.report import generate_native_eval_report
+from orbitquant.eval.report import _comparison_column_label, generate_native_eval_report
 from orbitquant.modeling import quantize_linear_modules
 
 
@@ -117,6 +117,20 @@ def test_generate_native_eval_report_writes_markdown_and_tables(tmp_path):
         == report_dir / "tables" / "missing_required_metrics.csv"
     )
     assert result.rows[0]["target_group"] == "extra"
+
+
+def test_comparison_column_label_keeps_baseline_independent_from_bits():
+    row = {
+        "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+        "bits": "W2A3",
+        "split": "original",
+    }
+
+    assert _comparison_column_label(row) == "FLUX.2-klein-4B\nBF16 baseline"
+
+    row["split"] = "orbitquant"
+
+    assert _comparison_column_label(row) == "FLUX.2-klein-4B\nW2A3 OrbitQuant"
 
 
 def test_generate_native_eval_report_validates_artifacts_before_reading_metrics(tmp_path):
