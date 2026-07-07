@@ -196,7 +196,9 @@ norm calculation, RPBH/FWHT rotation, codebook lookup, norm rescale, packed
 weight dequantization, offline low-bit weight packing, and offline weight
 RPBH/FWHT-to-codebook indexing during artifact creation. It also uses Triton for
 AdaLN INT4 RTN group scale calculation, quantize+pack, and runtime dequantization
-instead of round-tripping through CPU unpack/pack. On Apple Silicon, `mps`
+instead of round-tripping through CPU unpack/pack. CUDA low-bit unpack also stays
+on CUDA and the CUDA pack path fails loudly if Triton is unavailable, instead of
+silently falling back to the CPU packer. On Apple Silicon, `mps`
 uses Metal shaders for runtime lookup/rescale and packed weight dequant stages
 when `torch.mps.compile_shader` is available. Otherwise it falls back to the
 reference PyTorch path on MPS tensors. Full fused activation+packed-weight matmul
@@ -209,17 +211,33 @@ Inspect backend availability and optimization status on the current machine:
 orbitquant kernel-info
 ```
 
+Benchmark the current `OrbitQuantLinear` kernel stages on the active machine:
+
+```bash
+orbitquant kernel-bench \
+  --tokens 256 \
+  --in-features 3072 \
+  --out-features 3072 \
+  --weight-bits 4 \
+  --activation-bits 4 \
+  --activation-kernel-backend triton_cuda \
+  --device cuda \
+  --dtype bfloat16
+```
+
 `kernel-info` reports whether `mps` is using `metal_codebook_rescale` or the
 `torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
 as partial optimization because matmul is still the BF16 PyTorch linear path.
 The `weight_dequant_optimized` field records whether packed weight
 dequantization avoids the CPU unpack path for that backend. The
 `weight_pack_optimized` field records whether artifact creation can pack low-bit
-weight indices without a CPU round-trip. The `weight_quant_optimized` field
-records whether artifact creation can rotate/FWHT weights and map them to
-Lloyd-Max codebook indices on the accelerator. The `adaln_quant_optimized` and
-`adaln_dequant_optimized` fields report whether the AdaLN INT4 RTN path avoids
-CPU quantize/pack and runtime unpack/dequant for that backend.
+weight indices without a CPU round-trip. The `lowbit_unpack_optimized` field
+records whether direct low-bit unpack stays on the accelerator. The
+`weight_quant_optimized` field records whether artifact creation can rotate/FWHT
+weights and map them to Lloyd-Max codebook indices on the accelerator. The
+`adaln_quant_optimized` and `adaln_dequant_optimized` fields report whether the
+AdaLN INT4 RTN path avoids CPU quantize/pack and runtime unpack/dequant for that
+backend.
 
 ## License
 

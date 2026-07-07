@@ -8,6 +8,8 @@ def test_readme_documents_native_gpu_pod_workflow():
     assert "orbitquant native-plan" in readme
     assert "orbitquant native-script" in readme
     assert "orbitquant kernel-info" in readme
+    assert "orbitquant kernel-bench" in readme
+    assert "lowbit_unpack_optimized" in readme
     assert "--resume" in readme
     assert "--resume-existing" in readme
     assert "hf auth whoami" in readme
