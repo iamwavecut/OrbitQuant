@@ -208,6 +208,16 @@ artifact it quantizes: it writes suite inventories under
 `reports/native/module-inventories/` and passes the matching inventory to each
 `validate-artifact` command.
 
+Published Hub repositories can be checked without downloading tensor weights:
+
+```bash
+orbitquant audit-hf-artifacts \
+  --namespace WaveCut \
+  --policy-inventory-root ./reports/native/module-inventories \
+  --output ./reports/native/hf-artifact-audit.json \
+  --markdown-output ./reports/native/hf-artifact-audit.md
+```
+
 ## Release Target Settings
 
 Paper-aligned artifacts use these native target settings:

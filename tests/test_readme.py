@@ -14,6 +14,8 @@ def test_readme_documents_component_artifact_usage():
     assert "orbitquant inspect-policy" in readme
     assert "empty-weight skeleton" in readme
     assert "orbitquant validate-artifact" in readme
+    assert "orbitquant audit-hf-artifacts" in readme
+    assert "--policy-inventory-root ./reports/native/module-inventories" in readme
     assert "Comparison Assets" in readme
     assert "assets/*_generation_comparison_matrix.webp" in readme
     assert "original_vs_orbitquant" not in readme

@@ -602,6 +602,14 @@ def main(argv: list[str] | None = None) -> int:
     audit_hf_parser.add_argument("--namespace", default="WaveCut")
     audit_hf_parser.add_argument("--suite", action="append")
     audit_hf_parser.add_argument("--revision")
+    audit_hf_parser.add_argument(
+        "--policy-inventory-root",
+        help=(
+            "optional directory containing <suite>-policy.json files; when set, "
+            "remote manifests are checked against those inventories without "
+            "downloading model.safetensors"
+        ),
+    )
     audit_hf_parser.add_argument("--output")
     audit_hf_parser.add_argument("--markdown-output")
 
@@ -1132,6 +1140,7 @@ def main(argv: list[str] | None = None) -> int:
             namespace=args.namespace,
             suites=suites,
             revision=args.revision,
+            policy_inventory_root=args.policy_inventory_root,
         )
         rendered = json.dumps(payload, indent=2)
         if args.output is not None:

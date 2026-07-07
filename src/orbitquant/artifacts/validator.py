@@ -183,7 +183,6 @@ def validate_artifact_policy_inventory(
     inventory_path: str | Path,
 ) -> dict[str, Any]:
     artifact_path = Path(artifact_dir)
-    inventory_file = Path(inventory_path)
     model_index = json.loads((artifact_path / "model_index.json").read_text(encoding="utf-8"))
     config = OrbitQuantConfig.from_dict(
         json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
@@ -191,6 +190,24 @@ def validate_artifact_policy_inventory(
     manifest = OrbitQuantManifest.from_dict(
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
+    return validate_policy_inventory_payloads(
+        artifact_label=str(artifact_path),
+        inventory_path=inventory_path,
+        model_index=model_index,
+        config=config,
+        manifest=manifest,
+    )
+
+
+def validate_policy_inventory_payloads(
+    *,
+    artifact_label: str,
+    inventory_path: str | Path,
+    model_index: dict[str, Any],
+    config: OrbitQuantConfig,
+    manifest: OrbitQuantManifest,
+) -> dict[str, Any]:
+    inventory_file = Path(inventory_path)
     inventory = json.loads(inventory_file.read_text(encoding="utf-8"))
     scalar_mismatches = [
         mismatch
@@ -231,7 +248,7 @@ def validate_artifact_policy_inventory(
     action_counts = inventory.get("action_counts") or {}
     return {
         "valid": True,
-        "artifact_dir": str(artifact_path),
+        "artifact_dir": artifact_label,
         "inventory_path": str(inventory_file),
         "source_model_id": manifest.source_model_id,
         "target_policy": manifest.target_policy,

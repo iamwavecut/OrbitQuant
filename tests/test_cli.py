@@ -2769,12 +2769,14 @@ def test_cli_cleanup_hf_artifact_reports_wires_single_repo_options(
 def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch):
     seen = {}
 
-    def fake_audit_hf_artifacts(*, namespace, suites, revision):
+    def fake_audit_hf_artifacts(*, namespace, suites, revision, policy_inventory_root):
         seen["namespace"] = namespace
         seen["suites"] = [suite.name for suite in suites]
         seen["revision"] = revision
+        seen["policy_inventory_root"] = policy_inventory_root
         return {
             "namespace": namespace,
+            "policy_inventory_root": policy_inventory_root,
             "repo_count": 1,
             "existing_count": 1,
             "artifact_ready_count": 1,
@@ -2797,6 +2799,8 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
                 "flux2-native",
                 "--revision",
                 "main",
+                "--policy-inventory-root",
+                str(tmp_path / "inventories"),
                 "--output",
                 str(output_path),
                 "--markdown-output",
@@ -2818,6 +2822,7 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
         "namespace": "WaveCut",
         "suites": ["flux2-native"],
         "revision": "main",
+        "policy_inventory_root": str(tmp_path / "inventories"),
     }
 
 

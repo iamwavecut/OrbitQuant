@@ -17,7 +17,11 @@ from huggingface_hub import (
     snapshot_download,
 )
 
-from orbitquant.artifacts import refresh_artifact_checksums, validate_orbitquant_artifact
+from orbitquant.artifacts import (
+    refresh_artifact_checksums,
+    validate_orbitquant_artifact,
+    validate_policy_inventory_payloads,
+)
 from orbitquant.artifacts.checksums import (
     is_ignored_artifact_relative_path,
     sha256_file,
@@ -1016,9 +1020,11 @@ def audit_hf_artifact_repos(
     namespace: str = "WaveCut",
     suites: list[NativeSuite] | None = None,
     revision: str | None = None,
+    policy_inventory_root: str | Path | None = None,
     api: HfApi | None = None,
 ) -> dict[str, Any]:
     selected_suites = list_native_suites() if suites is None else suites
+    policy_inventory_path = None if policy_inventory_root is None else Path(policy_inventory_root)
     api = HfApi() if api is None else api
     rows = []
     for suite in selected_suites:
@@ -1033,6 +1039,7 @@ def audit_hf_artifact_repos(
                 "native_smoke_ready": False,
                 "release_eval_applicable": _release_eval_applicable(suite.name),
                 "release_eval_ready": False,
+                "policy_inventory_ready": False if policy_inventory_path is not None else None,
             }
             try:
                 info = api.model_info(repo_id, revision=revision, files_metadata=True)
@@ -1078,6 +1085,39 @@ def audit_hf_artifact_repos(
                     )
                 except Exception as exc:
                     model_index_error = f"{type(exc).__name__}: {str(exc)}"
+            policy_inventory_validation = None
+            policy_inventory_error = None
+            policy_inventory_file = None
+            if policy_inventory_path is not None:
+                policy_inventory_file = policy_inventory_path / f"{suite.name}-policy.json"
+                if not policy_inventory_file.is_file():
+                    policy_inventory_error = f"missing policy inventory: {policy_inventory_file}"
+                elif "quantization_config.json" not in file_names:
+                    policy_inventory_error = "remote quantization_config.json missing"
+                elif not manifest:
+                    policy_inventory_error = (
+                        manifest_error or "remote orbitquant_manifest.json missing"
+                    )
+                elif not model_index:
+                    policy_inventory_error = model_index_error or "remote model_index.json missing"
+                else:
+                    try:
+                        config = OrbitQuantConfig.from_dict(
+                            _read_remote_json(
+                                repo_id,
+                                "quantization_config.json",
+                                revision=revision,
+                            )
+                        )
+                        policy_inventory_validation = validate_policy_inventory_payloads(
+                            artifact_label=repo_id,
+                            inventory_path=policy_inventory_file,
+                            model_index=model_index,
+                            config=config,
+                            manifest=OrbitQuantManifest.from_dict(manifest),
+                        )
+                    except Exception as exc:
+                        policy_inventory_error = f"{type(exc).__name__}: {str(exc)}"
             sha256sums_entries: dict[str, str] = {}
             sha256sums_error = None
             if "SHA256SUMS" in file_names:
@@ -1148,6 +1188,15 @@ def audit_hf_artifact_repos(
                     "manifest_warnings": _manifest_warnings(manifest),
                     "model_index_error": model_index_error,
                     "benchmark_summary_error": benchmark_summary_error,
+                    "policy_inventory_path": (
+                        None if policy_inventory_file is None else str(policy_inventory_file)
+                    ),
+                    "policy_inventory_ready": (
+                        policy_inventory_validation is not None
+                        and policy_inventory_error is None
+                    ),
+                    "policy_inventory_error": policy_inventory_error,
+                    "policy_inventory_validation": policy_inventory_validation,
                     "metadata_complete_ready": not metadata_missing,
                     "metadata_missing": metadata_missing,
                     "sha256sums_error": sha256sums_error,
@@ -1169,6 +1218,13 @@ def audit_hf_artifact_repos(
                 and not manifest_error
                 and not model_index_error
                 and not benchmark_summary_error
+                and (
+                    policy_inventory_path is None
+                    or (
+                        row["policy_inventory_ready"]
+                        and row["policy_inventory_error"] is None
+                    )
+                )
                 and not manifest_mismatches
                 and not forbidden_files
                 and not sha256sums_error
@@ -1190,12 +1246,21 @@ def audit_hf_artifact_repos(
     )
     return {
         "namespace": namespace,
+        "policy_inventory_root": None
+        if policy_inventory_path is None
+        else str(policy_inventory_path),
         "repo_count": len(rows),
         "existing_count": sum(1 for row in rows if row["exists"]),
         "artifact_ready_count": sum(1 for row in rows if row["artifact_ready"]),
         "native_smoke_ready_count": sum(1 for row in rows if row["native_smoke_ready"]),
         "metadata_complete_ready_count": sum(
             1 for row in rows if row.get("metadata_complete_ready")
+        ),
+        "policy_inventory_ready_count": sum(
+            1 for row in rows if row.get("policy_inventory_ready")
+        ),
+        "policy_inventory_error_count": sum(
+            1 for row in rows if row.get("policy_inventory_error")
         ),
         "release_eval_applicable_count": release_eval_applicable_count,
         "release_eval_not_applicable_count": len(rows) - release_eval_applicable_count,
@@ -1260,6 +1325,12 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
             f"- Metadata complete: {payload.get('metadata_complete_ready_count', 0)} / "
             f"{repo_count}"
         ),
+        (
+            f"- Policy inventory ready: {payload.get('policy_inventory_ready_count', 0)} / "
+            f"{repo_count}"
+        )
+        if payload.get("policy_inventory_root") is not None
+        else "- Policy inventory ready: not checked",
         f"- Native smoke ready: {payload.get('native_smoke_ready_count', 0)} / {repo_count}",
         f"- Release eval applicable: {release_eval_applicable_count} / {repo_count}",
         (
@@ -1296,9 +1367,9 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         "",
         (
             "| Suite | Bits | Repo | Private | Artifact | Metadata | Native Smoke | "
-            "Release Eval | SHA | Missing Release Metrics | Forbidden Files |"
+            "Policy | Release Eval | SHA | Missing Release Metrics | Forbidden Files |"
         ),
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in payload.get("rows", []):
         repo_id = row.get("repo_id", "")
@@ -1318,6 +1389,11 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
                     _markdown_status(bool(row.get("artifact_ready"))),
                     _markdown_status(bool(row.get("metadata_complete_ready"))),
                     _markdown_status(bool(row.get("native_smoke_ready"))),
+                    (
+                        _markdown_status(bool(row.get("policy_inventory_ready")))
+                        if payload.get("policy_inventory_root") is not None
+                        else "n/a"
+                    ),
                     _markdown_release_eval_status(row),
                     _short_sha(row.get("sha")),
                     missing_metrics,

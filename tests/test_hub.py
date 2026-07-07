@@ -180,13 +180,24 @@ def _write_remote_model_index(
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _audit_file_map(repo_id, *, manifest_path, sha256sums_path, summary_path, model_index_path):
-    return {
+def _audit_file_map(
+    repo_id,
+    *,
+    manifest_path,
+    sha256sums_path,
+    summary_path,
+    model_index_path,
+    quantization_config_path=None,
+):
+    file_map = {
         (repo_id, "orbitquant_manifest.json"): manifest_path,
         (repo_id, "model_index.json"): model_index_path,
         (repo_id, "SHA256SUMS"): sha256sums_path,
         (repo_id, "benchmark/summary.json"): summary_path,
     }
+    if quantization_config_path is not None:
+        file_map[(repo_id, "quantization_config.json")] = quantization_config_path
+    return file_map
 
 
 def _native_smoke_summary(
@@ -1669,6 +1680,130 @@ def test_audit_hf_artifact_repos_marks_complete_metadata_when_provenance_matches
     assert row["metadata_missing"] == []
 
 
+def test_audit_hf_artifact_repos_validates_policy_inventory_without_tensor_download(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    config = OrbitQuantConfig(target_policy="flux2")
+    quantized_modules = ["block.attn.to_q"]
+    adaln_modules = ["block.modulation"]
+    skipped_modules = ["proj_out"]
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "source_model_id": suite.model_id,
+                "source_revision": "remote-sha",
+                "source_license": "apache-2.0",
+                "weight_bits": 4,
+                "activation_bits": 4,
+                "target_policy": "flux2",
+                "quantized_modules": quantized_modules,
+                "adaln_modules": adaln_modules,
+                "skipped_modules": skipped_modules,
+                "checksums": {
+                    "model.safetensors": "a" * 64,
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    quantization_config_path = tmp_path / "quantization_config.json"
+    quantization_config_path.write_text(
+        json.dumps(config.to_dict(), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    model_index_path = tmp_path / "model_index.json"
+    model_index_path.write_text(
+        json.dumps({"component": "transformer"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(f"{'a' * 64}  model.safetensors\n", encoding="utf-8")
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
+    inventory_root = tmp_path / "inventories"
+    inventory_root.mkdir()
+    (inventory_root / "flux2-native-policy.json").write_text(
+        json.dumps(
+            {
+                "source_model_id": suite.model_id,
+                "target_policy": "flux2",
+                "component": "transformer",
+                "load_mode": "config",
+                "linear_module_count": 3,
+                "action_counts": {
+                    "orbitquant": 1,
+                    "adaln_int4_rtn": 1,
+                    "bf16_skip": 1,
+                },
+                "quantized_modules": quantized_modules,
+                "adaln_modules": adaln_modules,
+                "skipped_modules": skipped_modules,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+        quantization_config_path=quantization_config_path,
+    )
+    downloaded_files = []
+
+    def fake_download(repo, filename, **kwargs):
+        downloaded_files.append(filename)
+        if filename == "model.safetensors":
+            raise AssertionError("metadata-only audit must not download tensors")
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(
+        suites=[suite],
+        api=api,
+        policy_inventory_root=inventory_root,
+    )
+
+    row = result["rows"][0]
+    assert result["policy_inventory_ready_count"] == 1
+    assert result["policy_inventory_error_count"] == 0
+    assert result["artifact_ready_count"] == 1
+    assert row["policy_inventory_ready"] is True
+    assert row["policy_inventory_error"] is None
+    assert row["policy_inventory_validation"]["inventory_path"] == str(
+        inventory_root / "flux2-native-policy.json"
+    )
+    assert "quantization_config.json" in downloaded_files
+    assert "model.safetensors" not in downloaded_files
+
+
 def test_audit_hf_artifact_repos_requires_native_smoke_proof_block(
     tmp_path,
     monkeypatch,
@@ -2203,6 +2338,7 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
 
     assert "# OrbitQuant HF Artifact Audit" in markdown
     assert "- Metadata complete: 1 / 2" in markdown
+    assert "- Policy inventory ready: not checked" in markdown
     assert "- Release eval applicable: 1 / 2" in markdown
     assert "- Release eval ready: 0 / 1" in markdown
     assert "- Missing release metrics: 2" in markdown
@@ -2215,11 +2351,11 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     assert "Missing required metrics" not in markdown
     assert (
         "| flux2-native | W4A4 | `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` | "
-        "yes | yes | yes | yes | n/a | abcdef123456 |  |"
+        "yes | yes | yes | yes | n/a | n/a | abcdef123456 |  |  |"
     ) in markdown
     assert (
         "| flux1-schnell-native | W4A4 | `WaveCut/FLUX.1-schnell-OrbitQuant-W4A4` | "
-        "yes | yes | no | yes | no | 123456abcdef | 2 release metrics missing |"
+        "yes | yes | no | yes | n/a | no | 123456abcdef | 2 release metrics missing |  |"
     ) in markdown
     assert (
         "`WaveCut/FLUX.1-schnell-OrbitQuant-W4A4`: "

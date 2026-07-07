@@ -10,6 +10,7 @@ from orbitquant.artifacts.repair import repair_artifact_metadata
 from orbitquant.artifacts.validator import (
     validate_artifact_policy_inventory,
     validate_orbitquant_artifact,
+    validate_policy_inventory_payloads,
 )
 from orbitquant.artifacts.writer import save_orbitquant_artifact
 
@@ -25,6 +26,7 @@ __all__ = [
     "save_orbitquant_artifact",
     "validate_artifact_policy_inventory",
     "validate_orbitquant_artifact",
+    "validate_policy_inventory_payloads",
     "sha256_file",
     "write_sha256sums",
 ]
