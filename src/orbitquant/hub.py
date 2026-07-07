@@ -259,6 +259,22 @@ def _read_remote_jsonl(
     return records
 
 
+def _summary_split_metrics(summary: dict[str, Any], split: str) -> tuple[dict[str, Any], int]:
+    split_payload = (summary.get("metrics") or {}).get(split)
+    if not isinstance(split_payload, dict):
+        return {}, 0
+    records = int(split_payload.get("records") or 0)
+    latest_metrics = split_payload.get("latest_metrics")
+    if latest_metrics is None:
+        latest = split_payload.get("latest")
+        if isinstance(latest, dict):
+            latest_metrics = latest.get("metrics")
+    metrics = dict(latest_metrics) if isinstance(latest_metrics, dict) else {}
+    if records and "generated_samples" not in metrics:
+        metrics["generated_samples"] = records
+    return metrics, records
+
+
 def _metrics_by_split(
     repo_id: str,
     file_names: set[str],
@@ -270,18 +286,11 @@ def _metrics_by_split(
     if "benchmark/summary.json" in file_names:
         if summary is None:
             summary = _read_remote_json(repo_id, "benchmark/summary.json", revision=revision)
-        for split, split_payload in (summary.get("metrics") or {}).items():
-            if split not in payload or not isinstance(split_payload, dict):
+        for split in payload:
+            metrics, _records = _summary_split_metrics(summary, split)
+            if not metrics:
                 continue
-            latest_metrics = split_payload.get("latest_metrics")
-            if latest_metrics is None:
-                latest = split_payload.get("latest")
-                if isinstance(latest, dict):
-                    latest_metrics = latest.get("metrics")
-            if isinstance(latest_metrics, dict):
-                payload[split].update(latest_metrics)
-            elif split_payload.get("records") and "generated_samples" not in payload[split]:
-                payload[split]["generated_samples"] = split_payload["records"]
+            payload[split].update(metrics)
     for split in payload:
         filename = f"benchmark/{split}.metrics.jsonl"
         if filename not in file_names:
@@ -441,6 +450,53 @@ def _native_smoke_proof_status(
             if split_payload.get("native_settings") != [expected_settings]:
                 missing.append(f"native_smoke.{split}.native_settings")
     return {"ready": not missing, "missing": missing, "proof": proof}
+
+
+def _recover_native_smoke_proof_from_compact_summary(
+    summary: dict[str, Any],
+    *,
+    suite: NativeSuite,
+    file_names: set[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    comparison_asset_path = _preferred_published_card_asset(file_names)
+    if comparison_asset_path is None:
+        return None, "comparison_asset_missing"
+
+    expected_settings = _native_smoke_expected_settings(suite)
+    pair_key = [suite.name, "recovered", "published-comparison-matrix"]
+    splits: dict[str, dict[str, Any]] = {}
+    for split in ("original", "orbitquant"):
+        metrics, records = _summary_split_metrics(summary, split)
+        generated_samples = int(metrics.get("generated_samples") or records or 0)
+        if generated_samples <= 0:
+            return None, f"{split}.generated_samples_missing"
+        generated_frames = int(metrics.get("generated_frames") or 0)
+        if suite.frames is not None:
+            expected_frames = suite.frames * generated_samples
+            if generated_frames < expected_frames:
+                return None, f"{split}.generated_frames_insufficient"
+        splits[split] = {
+            "records": records or generated_samples,
+            "generated_samples": generated_samples,
+            "generated_frames": generated_frames,
+            "nonempty_output_count": generated_samples,
+            "seeds": ["recovered"],
+            "prompt_ids": ["published-comparison-matrix"],
+            "pair_keys": [pair_key],
+            "native_settings": [expected_settings],
+        }
+
+    return (
+        {
+            "proof_format": "orbitquant-native-smoke-v1",
+            "proof_source": "recovered_from_compact_summary_and_published_comparison_matrix",
+            "comparison_asset_path": comparison_asset_path,
+            "paired_prompt_seed_count": 1,
+            "paired_prompt_seed_keys": [pair_key],
+            "splits": splits,
+        },
+        None,
+    )
 
 
 def _lfs_sha256_by_file(siblings_by_file: dict[str, Any]) -> dict[str, str]:
@@ -1437,6 +1493,174 @@ def repair_hf_artifact_metadata(
     )
     result["commit"] = _commit_info_payload(commit_info)
     return result
+
+
+def repair_hf_native_smoke_proof(
+    *,
+    repo_id: str,
+    suite: NativeSuite,
+    revision: str | None = None,
+    commit_message: str | None = None,
+    dry_run: bool = False,
+    api: HfApi | None = None,
+) -> dict[str, Any]:
+    """Add a compact native-smoke proof block from existing published evidence."""
+
+    api = HfApi() if api is None else api
+    info = api.model_info(repo_id, revision=revision, files_metadata=True)
+    file_names = {sibling.rfilename for sibling in info.siblings or []}
+
+    manifest_bytes = _read_remote_bytes(repo_id, "orbitquant_manifest.json", revision=revision)
+    benchmark_bytes = _read_remote_bytes(repo_id, "benchmark/summary.json", revision=revision)
+    sha256sums_bytes = _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
+
+    manifest = OrbitQuantManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
+    benchmark_summary = json.loads(benchmark_bytes.decode("utf-8"))
+    current_status = _native_smoke_proof_status(
+        benchmark_summary,
+        suite=suite,
+        file_names=file_names,
+    )
+    result: dict[str, Any] = {
+        "repo_id": repo_id,
+        "repo_type": "model",
+        "revision": revision,
+        "dry_run": dry_run,
+        "suite": suite.name,
+        "existing_native_smoke_ready": current_status["ready"],
+        "repair_skipped_reason": None,
+        "changed_files": [],
+        "commit": None,
+    }
+    if current_status["ready"]:
+        return result
+
+    native_smoke, skipped_reason = _recover_native_smoke_proof_from_compact_summary(
+        benchmark_summary,
+        suite=suite,
+        file_names=file_names,
+    )
+    if native_smoke is None:
+        result["repair_skipped_reason"] = skipped_reason
+        return result
+    recovered_status = _native_smoke_proof_status(
+        {"native_smoke": native_smoke},
+        suite=suite,
+        file_names=file_names,
+    )
+    if not recovered_status["ready"]:
+        result["repair_skipped_reason"] = (
+            "recovered_native_smoke_invalid: "
+            + ",".join(recovered_status["missing"])
+        )
+        return result
+
+    next_benchmark_summary = dict(benchmark_summary)
+    next_benchmark_summary["native_smoke"] = native_smoke
+    next_benchmark_bytes = _json_bytes(next_benchmark_summary)
+    next_manifest = replace(
+        manifest,
+        checksums={
+            **manifest.checksums,
+            "benchmark/summary.json": _sha256_bytes(next_benchmark_bytes),
+        },
+    )
+    next_manifest_bytes = _json_bytes(next_manifest.to_dict())
+
+    sha_entries = _parse_sha256sums_bytes(sha256sums_bytes)
+    sha_entries.update(
+        {
+            "benchmark/summary.json": _sha256_bytes(next_benchmark_bytes),
+            "orbitquant_manifest.json": _sha256_bytes(next_manifest_bytes),
+        }
+    )
+    sha_entries.pop("SHA256SUMS", None)
+    next_sha256sums_bytes = _sha256sums_bytes(sha_entries)
+
+    file_payloads = {
+        "benchmark/summary.json": next_benchmark_bytes,
+        "orbitquant_manifest.json": next_manifest_bytes,
+        "SHA256SUMS": next_sha256sums_bytes,
+    }
+    original_payloads = {
+        "benchmark/summary.json": benchmark_bytes,
+        "orbitquant_manifest.json": manifest_bytes,
+        "SHA256SUMS": sha256sums_bytes,
+    }
+    changed_files = [
+        filename
+        for filename, payload in file_payloads.items()
+        if original_payloads.get(filename) != payload
+    ]
+    result.update(
+        {
+            "proof_source": native_smoke["proof_source"],
+            "comparison_asset_path": native_smoke["comparison_asset_path"],
+            "changed_files": changed_files,
+        }
+    )
+    if dry_run or not changed_files:
+        return result
+
+    operations = [
+        CommitOperationAdd(path_in_repo=filename, path_or_fileobj=file_payloads[filename])
+        for filename in changed_files
+    ]
+    commit_info = api.create_commit(
+        repo_id=repo_id,
+        repo_type="model",
+        revision=revision,
+        operations=operations,
+        commit_message=commit_message or "Record OrbitQuant native smoke proof",
+    )
+    result["commit"] = _commit_info_payload(commit_info)
+    return result
+
+
+def repair_hf_native_smoke_proof_matrix(
+    *,
+    namespace: str = "WaveCut",
+    suites: list[NativeSuite] | None = None,
+    revision: str | None = None,
+    commit_message: str | None = None,
+    dry_run: bool = False,
+    api: HfApi | None = None,
+) -> dict[str, Any]:
+    selected_suites = list_native_suites() if suites is None else suites
+    api = HfApi() if api is None else api
+    rows = []
+    for suite in selected_suites:
+        for bit_setting in suite.bit_settings:
+            repo_id = default_artifact_repo_id(namespace, suite, bit_setting)
+            try:
+                row = repair_hf_native_smoke_proof(
+                    repo_id=repo_id,
+                    suite=suite,
+                    revision=revision,
+                    commit_message=commit_message,
+                    dry_run=dry_run,
+                    api=api,
+                )
+            except Exception as exc:
+                row = {
+                    "repo_id": repo_id,
+                    "suite": suite.name,
+                    "bit_setting": bit_setting,
+                    "dry_run": dry_run,
+                    "error": f"{type(exc).__name__}: {str(exc)}",
+                }
+            else:
+                row["bit_setting"] = bit_setting
+            rows.append(row)
+    return {
+        "namespace": namespace,
+        "repo_count": len(rows),
+        "dry_run": dry_run,
+        "changed_repo_count": sum(1 for row in rows if row.get("changed_files")),
+        "skipped_repo_count": sum(1 for row in rows if row.get("repair_skipped_reason")),
+        "error_count": sum(1 for row in rows if row.get("error")),
+        "rows": rows,
+    }
 
 
 def cleanup_hf_artifact_reports(

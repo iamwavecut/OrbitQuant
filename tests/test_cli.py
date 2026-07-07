@@ -2635,6 +2635,53 @@ def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monke
     }
 
 
+def test_cli_repair_hf_native_smoke_proof_wires_single_repo_options(
+    capsys, monkeypatch
+):
+    seen = {}
+
+    def fake_repair_hf_native_smoke_proof(**kwargs):
+        seen.update(kwargs)
+        return {
+            "repo_id": kwargs["repo_id"],
+            "suite": kwargs["suite"].name,
+            "dry_run": kwargs["dry_run"],
+            "changed_files": ["benchmark/summary.json"],
+        }
+
+    monkeypatch.setattr(
+        cli_main, "repair_hf_native_smoke_proof", fake_repair_hf_native_smoke_proof
+    )
+
+    assert (
+        main(
+            [
+                "repair-hf-native-smoke-proof",
+                "--repo-id",
+                "WaveCut/example-orbitquant",
+                "--suite",
+                "flux2-native",
+                "--revision",
+                "main",
+                "--commit-message",
+                "repair native smoke proof",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["repo_id"] == "WaveCut/example-orbitquant"
+    assert output["suite"] == "flux2-native"
+    assert output["dry_run"] is True
+    assert seen["repo_id"] == "WaveCut/example-orbitquant"
+    assert seen["suite"].name == "flux2-native"
+    assert seen["revision"] == "main"
+    assert seen["commit_message"] == "repair native smoke proof"
+    assert seen["dry_run"] is True
+
+
 def test_cli_cleanup_hf_artifact_reports_wires_single_repo_options(
     capsys, monkeypatch
 ):

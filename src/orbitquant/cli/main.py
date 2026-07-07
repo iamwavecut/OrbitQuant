@@ -61,6 +61,8 @@ from orbitquant.hub import (
     render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
+    repair_hf_native_smoke_proof,
+    repair_hf_native_smoke_proof_matrix,
     upload_orbitquant_artifact,
 )
 from orbitquant.kernels import backend_capabilities
@@ -636,6 +638,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     repair_hf_parser.add_argument("--dry-run", action="store_true")
 
+    repair_native_smoke_parser = subparsers.add_parser(
+        "repair-hf-native-smoke-proof",
+        help="repair remote HF native smoke proof blocks without re-running generation",
+    )
+    repair_native_smoke_parser.add_argument("--repo-id")
+    repair_native_smoke_parser.add_argument("--namespace", default="WaveCut")
+    repair_native_smoke_parser.add_argument("--suite", action="append")
+    repair_native_smoke_parser.add_argument("--revision")
+    repair_native_smoke_parser.add_argument("--commit-message")
+    repair_native_smoke_parser.add_argument("--dry-run", action="store_true")
+
     cleanup_hf_parser = subparsers.add_parser(
         "cleanup-hf-artifact-reports",
         help=(
@@ -1184,6 +1197,30 @@ def main(argv: list[str] | None = None) -> int:
                 quantization_device=args.quantization_device,
                 weight_quantization_backend=args.weight_quantization_backend,
                 quantization_staging_mode=args.quantization_staging_mode,
+                revision=args.revision,
+                commit_message=args.commit_message,
+                dry_run=args.dry_run,
+            )
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "repair-hf-native-smoke-proof":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        if args.repo_id is not None:
+            if suites is None or len(suites) != 1:
+                raise ValueError("--repo-id requires exactly one --suite")
+            payload = repair_hf_native_smoke_proof(
+                repo_id=args.repo_id,
+                suite=suites[0],
+                revision=args.revision,
+                commit_message=args.commit_message,
+                dry_run=args.dry_run,
+            )
+        else:
+            payload = repair_hf_native_smoke_proof_matrix(
+                namespace=args.namespace,
+                suites=suites,
                 revision=args.revision,
                 commit_message=args.commit_message,
                 dry_run=args.dry_run,

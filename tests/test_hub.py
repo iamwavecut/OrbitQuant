@@ -24,6 +24,8 @@ from orbitquant.hub import (
     render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
+    repair_hf_native_smoke_proof,
+    repair_hf_native_smoke_proof_matrix,
     stage_compact_upload_artifact,
     upload_orbitquant_artifact,
 )
@@ -246,12 +248,141 @@ def _native_smoke_summary(
     return json.dumps(payload, indent=2)
 
 
+def _legacy_compact_summary_without_native_smoke(
+    suite,
+    *,
+    generated_samples=1,
+    generated_frames=0,
+):
+    metrics = {"generated_samples": generated_samples}
+    if generated_frames:
+        metrics["generated_frames"] = generated_frames
+    return json.dumps(
+        {
+            "published_summary": "compact",
+            "raw_generation_records": "local-only",
+            "activation_eps": 1e-10,
+            "quantization_device": "cuda",
+            "weight_quantization_backend": "triton_cuda",
+            "quantization_staging_mode": "component",
+            "metrics": {
+                "original": {"records": generated_samples, "latest_metrics": metrics},
+                "orbitquant": {"records": generated_samples, "latest_metrics": metrics},
+            },
+        },
+        indent=2,
+    )
+
+
 def _expected_missing_geneval_metrics():
     return [
         {"split": split, "metric": metric}
         for metric in hub_module._GENEVAL_REQUIRED_METRICS
         for split in ("original", "orbitquant")
     ]
+
+
+def test_recover_native_smoke_proof_from_compact_summary_matches_audit_gate():
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    summary = json.loads(_legacy_compact_summary_without_native_smoke(suite))
+    file_names = {"assets/image_generation_comparison_matrix.webp"}
+
+    proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
+        summary,
+        suite=suite,
+        file_names=file_names,
+    )
+
+    assert reason is None
+    assert proof is not None
+    status = hub_module._native_smoke_proof_status(
+        {"native_smoke": proof},
+        suite=suite,
+        file_names=file_names,
+    )
+    assert status["ready"] is True
+    assert status["missing"] == []
+
+
+def test_recover_native_smoke_proof_requires_uploaded_comparison_asset():
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    summary = json.loads(_legacy_compact_summary_without_native_smoke(suite))
+
+    proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
+        summary,
+        suite=suite,
+        file_names=set(),
+    )
+
+    assert proof is None
+    assert reason == "comparison_asset_missing"
+
+
+def test_recover_native_smoke_proof_rejects_missing_generated_samples():
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    summary = json.loads(
+        _legacy_compact_summary_without_native_smoke(suite, generated_samples=0)
+    )
+
+    proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
+        summary,
+        suite=suite,
+        file_names={"assets/image_generation_comparison_matrix.webp"},
+    )
+
+    assert proof is None
+    assert reason == "original.generated_samples_missing"
+
+
+def test_recover_native_smoke_proof_rejects_video_without_generated_frames():
+    suite = NativeSuite(
+        name="wan-native",
+        model_id="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        pipeline="WanPipeline",
+        width=832,
+        height=480,
+        frames=81,
+        steps=50,
+        guidance=5.0,
+        bit_settings=["W4A4"],
+    )
+    summary = json.loads(_legacy_compact_summary_without_native_smoke(suite))
+
+    proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
+        summary,
+        suite=suite,
+        file_names={"assets/video_generation_comparison_matrix.webp"},
+    )
+
+    assert proof is None
+    assert reason == "original.generated_frames_insufficient"
 
 
 def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path):
@@ -894,6 +1025,186 @@ def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
     )
 
     assert result["repo_count"] == 1
+    assert result["error_count"] == 0
+    assert result["rows"][0]["repo_id"] == repo_id
+    assert result["rows"][0]["suite"] == "flux2-native"
+    assert result["rows"][0]["bit_setting"] == "W4A4"
+
+
+def test_repair_hf_native_smoke_proof_recovers_from_compact_summary(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    summary_path = tmp_path / "benchmark" / "summary.json"
+    summary_path.write_text(
+        _legacy_compact_summary_without_native_smoke(suite),
+        encoding="utf-8",
+    )
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof(
+        repo_id=repo_id,
+        suite=suite,
+        revision="main",
+        commit_message="repair native smoke proof",
+        api=fake_api,
+    )
+
+    assert result["commit"]["commit_oid"] == "repair-sha"
+    assert result["repair_skipped_reason"] is None
+    assert result["changed_files"] == [
+        "benchmark/summary.json",
+        "orbitquant_manifest.json",
+        "SHA256SUMS",
+    ]
+    commit_call = fake_api.create_commit_calls[0]
+    assert commit_call["repo_id"] == repo_id
+    assert commit_call["revision"] == "main"
+    operation_by_path = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in commit_call["operations"]
+    }
+    repaired_summary = json.loads(operation_by_path["benchmark/summary.json"])
+    assert repaired_summary["native_smoke"]["proof_format"] == "orbitquant-native-smoke-v1"
+    assert (
+        repaired_summary["native_smoke"]["proof_source"]
+        == "recovered_from_compact_summary_and_published_comparison_matrix"
+    )
+    assert repaired_summary["native_smoke"]["comparison_asset_path"] == (
+        "assets/image_generation_comparison_matrix.webp"
+    )
+    assert repaired_summary["native_smoke"]["paired_prompt_seed_count"] == 1
+    assert repaired_summary["native_smoke"]["splits"]["original"]["native_settings"] == [
+        {
+            "suite": "flux2-native",
+            "height": 1024,
+            "width": 1024,
+            "frames": None,
+            "steps": 4,
+            "guidance": 1.0,
+        }
+    ]
+    assert (
+        repaired_summary["native_smoke"]["splits"]["orbitquant"]["nonempty_output_count"]
+        == 1
+    )
+    repaired_manifest = json.loads(operation_by_path["orbitquant_manifest.json"])
+    sha_entries = hub_module._parse_sha256sums_bytes(operation_by_path["SHA256SUMS"])
+    assert repaired_manifest["checksums"]["benchmark/summary.json"] == sha_entries[
+        "benchmark/summary.json"
+    ]
+
+
+def test_repair_hf_native_smoke_proof_skips_when_video_frames_are_insufficient(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="wan-native",
+        model_id="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        pipeline="WanPipeline",
+        width=832,
+        height=480,
+        frames=81,
+        steps=50,
+        guidance=5.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/Wan2.1-T2V-1.3B-Diffusers-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "video_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    (tmp_path / "benchmark" / "summary.json").write_text(
+        _legacy_compact_summary_without_native_smoke(
+            suite,
+            generated_samples=1,
+            generated_frames=1,
+        ),
+        encoding="utf-8",
+    )
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof(
+        repo_id=repo_id,
+        suite=suite,
+        dry_run=True,
+        api=fake_api,
+    )
+
+    assert result["commit"] is None
+    assert result["changed_files"] == []
+    assert result["repair_skipped_reason"] == "original.generated_frames_insufficient"
+    assert fake_api.create_commit_calls == []
+
+
+def test_repair_hf_native_smoke_proof_matrix_repairs_expected_suite_repo(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    (tmp_path / "benchmark" / "summary.json").write_text(
+        _legacy_compact_summary_without_native_smoke(suite),
+        encoding="utf-8",
+    )
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof_matrix(
+        suites=[suite],
+        dry_run=True,
+        api=fake_api,
+    )
+
+    assert result["repo_count"] == 1
+    assert result["changed_repo_count"] == 1
+    assert result["skipped_repo_count"] == 0
     assert result["error_count"] == 0
     assert result["rows"][0]["repo_id"] == repo_id
     assert result["rows"][0]["suite"] == "flux2-native"
