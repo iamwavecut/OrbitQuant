@@ -282,6 +282,128 @@ This explains why short single-layer quantization may not light up a web UI GPU
 badge: a single hot kernel sequence is sub-millisecond and easy for coarse UI
 sampling to miss. Sustained hot quantization is visible as 95-96% SM utilization.
 
+## Full-Model Quantization Staging Follow-Up
+
+Commit `a9ef83d` addresses the remaining CPU-heavy full-model quantization
+symptom. The previous full replacement loop synchronized CUDA after each module
+replacement. That made CUDA quantization correct, but it also forced Python/CPU
+to wait between many short kernel sequences and could make provider-side 1s GPU
+sampling look idle.
+
+The production path now:
+
+- avoids per-module CUDA synchronization by default;
+- synchronizes once at the end of `quantize_linear_modules`;
+- records `synchronize_per_module=false` in CLI output and artifact
+  `benchmark/summary.json`;
+- keeps `--synchronize-per-module` as an explicit debug timing mode;
+- adds `--staging-mode component` for large-GPU native quantization scripts;
+- adds `orbitquant quantize-bench` to measure source-device staging separately
+  from OrbitQuant/AdaLN compute.
+
+Local verification before the pod run:
+
+```bash
+uv run pytest -q
+uv run ruff check .
+git diff --check
+```
+
+Remote RTX PRO 6000 targeted verification:
+
+```bash
+PYTHONPATH=/workspace/OrbitQuant-git/src \
+  /workspace/OrbitQuant/.venv/bin/python -m pytest \
+  tests/test_model_quantization.py \
+  tests/test_cli.py::test_cli_quantize_bench_prints_full_model_staging_timings \
+  -q
+```
+
+Result: `12 passed`.
+
+Synthetic DiT-like full replacement loop, source on CPU and quantization on
+CUDA, `layers=2`, `in_features=3072`, `hidden_features=9216`, W4A4:
+
+```text
+streaming {
+  wall_seconds: 0.4387,
+  synchronize_per_module: false,
+  transfer_seconds: 0.0576,
+  transfer_count: 12,
+  orbitquant_seconds: 0.3706,
+  adaln_seconds: 0.0094,
+  source_devices: {'cpu': 13},
+  buffer_devices: {'cuda:0': 36},
+  quantized_modules: 10,
+  adaln_modules: 2,
+  peak_memory_gb: 0.265
+}
+component {
+  wall_seconds: 0.4584,
+  synchronize_per_module: false,
+  transfer_seconds: 0.0709,
+  transfer_count: 1,
+  orbitquant_seconds: 0.3759,
+  adaln_seconds: 0.0095,
+  source_devices: {'cpu': 13},
+  buffer_devices: {'cuda:0': 36},
+  quantized_modules: 10,
+  adaln_modules: 2,
+  peak_memory_gb: 0.519
+}
+```
+
+For comparison, the same small synthetic case before removing per-module sync
+was `2.1643s` in streaming mode with 12 transfer operations. The new default
+cuts that CPU-wait-heavy path to `0.4387s`.
+
+A heavier CUDA-resident synthetic case, `layers=8`, `in_features=4096`,
+`hidden_features=12288`, W4A4, shows why a single full quantize may still be too
+short for coarse UI sampling:
+
+```text
+{
+  wall_seconds: 0.426,
+  device: 'NVIDIA RTX PRO 6000 Blackwell Server Edition',
+  sync_per_module: false,
+  transfer_seconds: 0.001,
+  transfer_count: 1,
+  orbitquant_seconds: 0.380,
+  adaln_seconds: 0.011,
+  source_devices: {'cuda:0': 49},
+  buffer_devices: {'cuda:0': 144},
+  quantized_modules: 40,
+  adaln_modules: 8,
+  peak_memory_gb: 3.138
+}
+```
+
+The same heavy case repeated for 15 seconds is visible to `nvidia-smi dmon` as
+real GPU work:
+
+```text
+loop_count=262 elapsed=15.030 last_wall_seconds=0.0513
+# gpu    pwr  gtemp  mtemp     sm    mem    enc    dec    jpg    ofa   mclk   pclk     fb   bar1   ccpm
+# Idx      W      C      C      %      %      %      %      %      %    MHz    MHz     MB     MB     MB
+    0    158     40      -     97     87      0      0      0      0  12481   2310   3783   3783      0
+    0    406     42      -     97     87      0      0      0      0  12481   2310   3783   3783      0
+    0    408     44      -     97     87      0      0      0      0  12481   2310   3783   3783      0
+    0    389     44      -     97     87      0      0      0      0  12481   2407   3783   3783      0
+    0    382     45      -     95     86      0      0      0      0  12481   2422   3783   3783      0
+    0    338     45      -     97     87      0      0      0      0  12481   2370   3783   3783      0
+    0    376     46      -     95     87      0      0      0      0  12481   2422   3783   3783      0
+    0    373     47      -     95     87      0      0      0      0  12481   2422   3783   3783      0
+    0    374     49      -     95     87      0      0      0      0  12481   2422   3783   3783      0
+    0    376     50      -     95     86      0      0      0      0  12481   2422   3783   3783      0
+```
+
+Conclusion for the GPU-badge concern: a single optimized quantization pass can
+now complete too quickly for provider UI sampling, but sustained quantization
+lights the RTX PRO 6000 at 95-97% SM and 86-88% memory utilization. The
+remaining full-model CPU work is mostly orchestration, model loading, artifact
+serialization, checksums, and future fused-kernel packaging work, not a silent
+CPU fallback for the implemented OrbitQuant CUDA stages.
+
 ## Remaining Kernel Work
 
 The current CUDA path is no longer a CPU fallback path for the quantization
