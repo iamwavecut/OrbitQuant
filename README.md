@@ -41,9 +41,8 @@ For runtime-only use from a checked-out package:
 pip install -e ".[hf]"
 ```
 
-On managed CUDA images that already ship a vendor-matched PyTorch/Triton stack,
-keep the image-provided `torch` instead of resolving a replacement wheel. For
-kernel validation on those hosts, use:
+For CUDA validation on hosts that already ship a vendor-matched PyTorch/Triton
+stack, keep the image-provided `torch` instead of resolving a replacement wheel:
 
 ```bash
 scripts/run_cuda_kernel_checks.sh
@@ -216,19 +215,18 @@ The current target matrix follows the agreed native settings:
 | `wan-native` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `WanPipeline` | 832x480, 81 frames, 50 steps, guidance 5.0 | W4A6, W4A4 |
 
 User-facing comparison assets are generated at the native settings above. Small
-low-resolution range checks are useful only for local debugging and are not used
-as quality evidence.
+low-resolution checks are not accepted as published quality evidence.
 
 ## Release Metrics
 
-Full GenEval and VBench runs are not required for ordinary development,
-artifact cleanup, kernel work, or model-card refreshes. They are expensive
-release evidence and should be run only before publishing paper reproduction,
-metric-table, or leaderboard-style claims.
+Full GenEval and VBench runs are release evidence for paper reproduction,
+metric-table, or leaderboard-style claims. Compact artifact readiness is tracked
+separately through native comparison assets, the `native_smoke` proof block,
+manifests, and checksums.
 
-When preparing those claims, release-grade metrics are imported from the
-upstream metric runners. For image paper targets, first fetch the published
-artifacts into the native local layout:
+For release-grade metric claims, import metrics from the upstream metric
+runners. For image paper targets, first fetch the published artifacts into the
+native local layout:
 
 ```bash
 orbitquant fetch-hf-artifacts \

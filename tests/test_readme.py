@@ -29,10 +29,11 @@ def test_readme_documents_component_artifact_usage():
     assert "Existing remote files are replaced by default" in readme
     assert "These diffusion artifacts are not standalone `transformers.AutoModel` repos" in readme
     assert 'quantization_device="cuda"' in readme
-    assert "not used\nas quality evidence" in readme
+    assert "not accepted as published quality evidence" in readme
     assert "## Release Metrics" in readme
-    assert "Full GenEval and VBench runs are not required for ordinary development" in readme
-    assert "only before publishing paper reproduction,\nmetric-table" in readme
+    assert "Full GenEval and VBench runs are release evidence" in readme
+    assert "Compact artifact readiness is tracked\nseparately" in readme
+    assert "`native_smoke` proof block" in readme
     assert "orbitquant fetch-hf-artifacts" in readme
     assert "orbitquant native-script" in readme
     assert "--prompt-metadata-jsonl /path/to/GenEval/evaluation_metadata.jsonl" in readme
