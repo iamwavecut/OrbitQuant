@@ -75,6 +75,22 @@ orbitquant kernel-bench \
   --iterations "$ITERATIONS"
 stage kernel-bench-done
 
+stage packed-matmul-bench-start
+orbitquant kernel-bench \
+  --tokens "$TOKENS" \
+  --in-features "$IN_FEATURES" \
+  --out-features "$OUT_FEATURES" \
+  --weight-bits 4 \
+  --activation-bits 4 \
+  --block-size "$BLOCK_SIZE" \
+  --activation-kernel-backend triton_cuda \
+  --runtime-mode triton_packed_matmul \
+  --device cuda \
+  --dtype bfloat16 \
+  --warmup "$WARMUP" \
+  --iterations "$ITERATIONS"
+stage packed-matmul-bench-done
+
 stage quantize-bench-start
 orbitquant quantize-bench \
   --layers 2 \

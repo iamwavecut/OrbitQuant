@@ -40,3 +40,20 @@ def test_benchmark_orbit_linear_reports_stage_timings_on_cpu():
     assert result["quantization_buffers"]["row_norms_device"] == "cpu"
     assert result["quantization_buffers"]["packed_weight_indices_is_cuda"] is False
     assert result["quantization_buffers"]["row_norms_is_cuda"] is False
+
+
+def test_benchmark_orbit_linear_accepts_runtime_mode_override_on_cpu():
+    result = benchmark_orbit_linear(
+        tokens=4,
+        in_features=16,
+        out_features=8,
+        block_size=8,
+        activation_kernel_backend="cpu",
+        runtime_mode="debug_no_activation_quant",
+        device="cpu",
+        dtype=torch.float32,
+        warmup=0,
+        iterations=1,
+    )
+
+    assert result["runtime_mode"] == "debug_no_activation_quant"

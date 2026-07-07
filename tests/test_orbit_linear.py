@@ -191,3 +191,64 @@ def test_orbit_linear_cuda_weight_dequant_dispatches_to_triton_without_cpu_unpac
             "device": torch.device("cuda"),
         }
     ]
+
+
+def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(monkeypatch):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="triton_packed_matmul",
+        activation_kernel_backend="triton_cuda",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    x = torch.randn(2, 5, 16)
+    calls = []
+
+    def fake_activation_kernel(input_tensor, **kwargs):
+        return input_tensor
+
+    def fake_matmul(input_tensor, packed_weight_indices, row_norms, codebook, **kwargs):
+        calls.append(
+            {
+                "shape": tuple(input_tensor.shape),
+                "bits": kwargs["bits"],
+                "out_features": kwargs["out_features"],
+                "in_features": kwargs["in_features"],
+                "bias_is_none": kwargs["bias"] is None,
+            }
+        )
+        return torch.zeros(
+            *input_tensor.shape[:-1],
+            kwargs["out_features"],
+            dtype=input_tensor.dtype,
+        )
+
+    def fail_dequant(*args, **kwargs):
+        raise AssertionError(
+            "triton_packed_matmul runtime should not materialize dequantized weight"
+        )
+
+    monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_activation_kernel)
+    monkeypatch.setitem(
+        sys.modules,
+        "orbitquant.kernels.triton_cuda",
+        SimpleNamespace(matmul_packed_weight_with_triton=fake_matmul),
+    )
+    monkeypatch.setattr(quantized, "_dequantize_weight", fail_dequant)
+
+    actual = quantized(x)
+
+    assert actual.shape == (2, 5, 7)
+    assert calls == [
+        {
+            "shape": (2, 5, 16),
+            "bits": 4,
+            "out_features": 7,
+            "in_features": 16,
+            "bias_is_none": False,
+        }
+    ]

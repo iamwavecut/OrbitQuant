@@ -9,7 +9,11 @@ import torch
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import backend_capabilities, quantize_activations_kernel, select_backend
 from orbitquant.layers import OrbitQuantLinear
-from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
+from orbitquant.modeling import (
+    QuantizationPrewarmSummary,
+    prewarm_quantized_linear_modules,
+    quantize_linear_modules,
+)
 
 
 def _resolve_device(device: str | torch.device) -> torch.device:
@@ -103,6 +107,7 @@ def benchmark_orbit_linear(
     activation_bits: int = 4,
     block_size: int | str = "paper",
     activation_kernel_backend: str = "auto",
+    runtime_mode: str = "dequant_bf16",
     device: str | torch.device = "auto",
     dtype: torch.dtype = torch.bfloat16,
     warmup: int = 5,
@@ -130,7 +135,7 @@ def benchmark_orbit_linear(
         activation_bits=activation_bits,
         block_size=block_size,
         activation_kernel_backend=activation_kernel_backend,
-        runtime_mode="dequant_bf16",
+        runtime_mode=runtime_mode,
     )
     source = torch.nn.Linear(
         in_features,
@@ -153,11 +158,21 @@ def benchmark_orbit_linear(
     quantized.to(target_device)
     x = torch.randn(tokens, in_features, device=target_device, dtype=dtype)
 
-    prewarm = prewarm_quantized_linear_modules(
-        quantized,
-        device=target_device,
-        dtype=dtype,
-    )
+    if runtime_mode == "triton_packed_matmul":
+        prewarm = QuantizationPrewarmSummary(
+            orbitquant_modules=0,
+            adaln_modules=0,
+            total_modules=0,
+            elapsed_seconds=0.0,
+            device=str(target_device),
+            dtype=str(dtype).removeprefix("torch."),
+        )
+    else:
+        prewarm = prewarm_quantized_linear_modules(
+            quantized,
+            device=target_device,
+            dtype=dtype,
+        )
 
     def source_forward() -> torch.Tensor:
         return source(x)
@@ -214,27 +229,32 @@ def benchmark_orbit_linear(
             warmup=warmup,
             iterations=iterations,
         ),
-        "weight_dequant_cold_ms": _mean_time_ms(
+    }
+    if runtime_mode == "triton_packed_matmul":
+        timings["weight_dequant_cold_ms"] = None
+        timings["weight_dequant_cached_ms"] = None
+    else:
+        timings["weight_dequant_cold_ms"] = _mean_time_ms(
             cold_weight_dequant,
             device=target_device,
             warmup=max(1, min(warmup, 3)),
             iterations=max(1, min(iterations, 5)),
-        ),
-    }
-    prewarm_quantized_linear_modules(quantized, device=target_device, dtype=dtype)
-    timings["weight_dequant_cached_ms"] = _mean_time_ms(
-        cached_weight_dequant,
-        device=target_device,
-        warmup=warmup,
-        iterations=iterations,
-    )
+        )
+        prewarm_quantized_linear_modules(quantized, device=target_device, dtype=dtype)
+        timings["weight_dequant_cached_ms"] = _mean_time_ms(
+            cached_weight_dequant,
+            device=target_device,
+            warmup=warmup,
+            iterations=iterations,
+        )
     timings["forward_cold_ms"] = _mean_time_ms(
         forward_cold,
         device=target_device,
         warmup=max(1, min(warmup, 3)),
         iterations=max(1, min(iterations, 5)),
     )
-    prewarm_quantized_linear_modules(quantized, device=target_device, dtype=dtype)
+    if runtime_mode != "triton_packed_matmul":
+        prewarm_quantized_linear_modules(quantized, device=target_device, dtype=dtype)
     timings["forward_prewarmed_ms"] = _mean_time_ms(
         forward_prewarmed,
         device=target_device,
@@ -294,9 +314,11 @@ def benchmark_orbit_linear(
             "weight_quantize_pack_cold_ms includes first-use backend compilation "
             "where applicable. On Triton/CUDA this can be CPU-heavy and show low "
             "GPU utilization; weight_quantize_pack_hot_ms measures the already "
-            "compiled CUDA path. forward_prewarmed_ms still uses OrbitQuant "
-            "activation kernels plus cached dequantized weights and PyTorch "
-            "linear; fused low-bit matmul is not enabled in this runtime mode."
+            "compiled CUDA path. In dequant_bf16 mode, forward_prewarmed_ms uses "
+            "OrbitQuant activation kernels plus cached dequantized weights and "
+            "PyTorch linear. In triton_packed_matmul mode, forward_prewarmed_ms "
+            "uses the opt-in packed-weight matmul path instead of the cached "
+            "dequantized-weight path."
         ),
     }
 

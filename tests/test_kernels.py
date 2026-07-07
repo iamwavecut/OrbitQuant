@@ -80,7 +80,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["triton_cuda"]["optimized"] is True
     assert capabilities["triton_cuda"]["optimized_stage"] == (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
-        "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
+        "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is True
@@ -281,6 +281,47 @@ def test_triton_weight_dequant_kernel_matches_reference_for_supported_bits(bits)
     )
 
     assert torch.allclose(actual.cpu(), expected)
+
+
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+def test_triton_packed_weight_matmul_matches_dequantized_linear(bits):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import matmul_packed_weight_with_triton
+
+    torch.manual_seed(11 + bits)
+    tokens = 9
+    in_features = 16
+    out_features = 7
+    codebook = get_codebook(dim=in_features, bits=bits)
+    indices = (torch.arange(out_features * in_features, dtype=torch.uint8) % (2**bits)).reshape(
+        out_features, in_features
+    )
+    packed = pack_lowbit(indices, bits=bits).to("cuda")
+    row_norms = torch.linspace(0.5, 1.5, out_features, dtype=torch.bfloat16, device="cuda")
+    x = torch.randn(tokens, in_features, device="cuda", dtype=torch.bfloat16)
+    bias = torch.randn(out_features, device="cuda", dtype=torch.bfloat16)
+
+    unpacked = unpack_lowbit(packed.cpu(), bits=bits, length=indices.numel()).reshape_as(indices)
+    weight = row_norms.float().cpu()[:, None] * codebook.centroids[unpacked.to(torch.long)]
+    expected = torch.nn.functional.linear(x.float().cpu(), weight, bias.float().cpu())
+
+    actual = matmul_packed_weight_with_triton(
+        x,
+        packed,
+        row_norms,
+        codebook,
+        bits=bits,
+        out_features=out_features,
+        in_features=in_features,
+        bias=bias,
+    )
+
+    assert actual.is_cuda
+    assert actual.dtype == x.dtype
+    assert actual.shape == (tokens, out_features)
+    assert torch.allclose(actual.float().cpu(), expected, atol=1e-2, rtol=1e-2)
 
 
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])

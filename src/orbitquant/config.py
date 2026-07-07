@@ -15,7 +15,12 @@ except Exception:
 
 
 _SUPPORTED_BITS = {2, 3, 4, 6, 8}
-_SUPPORTED_RUNTIME_MODES = {"dequant_bf16", "debug_no_quant", "debug_no_activation_quant"}
+_SUPPORTED_RUNTIME_MODES = {
+    "dequant_bf16",
+    "debug_no_quant",
+    "debug_no_activation_quant",
+    "triton_packed_matmul",
+}
 _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
 _SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}
 _SUPPORTED_MODULE_DTYPES = {"bfloat16", "bf16", "float16", "fp16", "float32", "fp32"}

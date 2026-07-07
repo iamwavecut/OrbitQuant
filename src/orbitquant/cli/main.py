@@ -293,6 +293,16 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
+    kernel_bench_parser.add_argument(
+        "--runtime-mode",
+        default="dequant_bf16",
+        choices=[
+            "dequant_bf16",
+            "debug_no_quant",
+            "debug_no_activation_quant",
+            "triton_packed_matmul",
+        ],
+    )
     kernel_bench_parser.add_argument("--device", default="auto")
     kernel_bench_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
@@ -678,6 +688,7 @@ def main(argv: list[str] | None = None) -> int:
                     activation_bits=args.activation_bits,
                     block_size=args.block_size,
                     activation_kernel_backend=args.activation_kernel_backend,
+                    runtime_mode=args.runtime_mode,
                     device=args.device,
                     dtype=_torch_dtype(args.dtype),
                     warmup=args.warmup,

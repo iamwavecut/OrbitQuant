@@ -275,6 +275,72 @@ def _dequantize_packed_weight_kernel(
 
 
 @triton.jit
+def _matmul_packed_weight_kernel(
+    input_ptr,
+    packed_ptr,
+    row_norms_ptr,
+    centroids_ptr,
+    bias_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    bits: tl.constexpr,
+    has_bias: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * block_m + tl.arange(0, block_m)
+    offs_n = pid_n * block_n + tl.arange(0, block_n)
+    offs_k = tl.arange(0, block_k)
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
+
+    for k_start in range(0, in_features, block_k):
+        k = k_start + offs_k
+        input_values = tl.load(
+            input_ptr + offs_m[:, None] * in_features + k[None, :],
+            mask=(offs_m[:, None] < rows) & (k[None, :] < in_features),
+            other=0.0,
+        ).to(tl.float32)
+
+        value_offsets = offs_n[None, :] * in_features + k[:, None]
+        weight_mask = (offs_n[None, :] < out_features) & (k[:, None] < in_features)
+        bit_starts = value_offsets * bits
+        byte_indices = bit_starts // 8
+        bit_offsets = bit_starts % 8
+        low = tl.load(packed_ptr + byte_indices, mask=weight_mask, other=0).to(tl.uint32)
+        needs_high = bit_offsets + bits > 8
+        high = tl.load(
+            packed_ptr + byte_indices + 1,
+            mask=weight_mask & needs_high,
+            other=0,
+        ).to(tl.uint32)
+        raw = low | (high << 8)
+        indices = (raw >> bit_offsets) & ((1 << bits) - 1)
+        centroids = tl.load(centroids_ptr + indices, mask=weight_mask, other=0.0).to(
+            tl.float32
+        )
+        norms = tl.load(row_norms_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(
+            tl.float32
+        )
+        weights = centroids * norms[None, :]
+        accumulator += tl.dot(input_values, weights, input_precision="tf32")
+
+    if has_bias:
+        bias = tl.load(bias_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(tl.float32)
+        accumulator += bias[None, :]
+
+    tl.store(
+        output_ptr + offs_m[:, None] * out_features + offs_n[None, :],
+        accumulator,
+        mask=(offs_m[:, None] < rows) & (offs_n[None, :] < out_features),
+    )
+
+
+@triton.jit
 def _pack_lowbit_kernel(
     values_ptr,
     packed_ptr,
@@ -828,6 +894,68 @@ def dequantize_packed_weight_with_triton(
         block_size=block_size,
     )
     return output.reshape(out_features, in_features)
+
+
+def matmul_packed_weight_with_triton(
+    x: torch.Tensor,
+    packed_weight_indices: torch.Tensor,
+    row_norms: torch.Tensor,
+    codebook: LloydMaxCodebook,
+    *,
+    bits: int,
+    out_features: int,
+    in_features: int,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if bits <= 0 or bits > 8:
+        raise ValueError("bits must be in [1, 8]")
+    if not torch.cuda.is_available():
+        raise RuntimeError("triton_cuda backend requires CUDA tensors")
+    if not x.is_cuda:
+        raise RuntimeError("triton_cuda packed matmul requires CUDA input tensors")
+    if x.shape[-1] != in_features:
+        raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
+
+    triton, _ = _load_triton()
+    original_shape = x.shape
+    input_contiguous = x.contiguous().reshape(-1, in_features)
+    rows = input_contiguous.shape[0]
+    output = torch.empty((rows, out_features), device=x.device, dtype=x.dtype)
+    if rows == 0 or out_features == 0:
+        return output.reshape(*original_shape[:-1], out_features)
+
+    packed = packed_weight_indices.to(device=x.device, dtype=torch.uint8).contiguous()
+    norms = row_norms.to(device=x.device, dtype=torch.float32).contiguous()
+    centroids = codebook.centroids.to(device=x.device, dtype=torch.float32).contiguous()
+    if bias is None:
+        bias_tensor = output
+        has_bias = False
+    else:
+        bias_tensor = bias.to(device=x.device, dtype=torch.float32).contiguous()
+        has_bias = True
+
+    block_m = 16
+    block_n = 16
+    block_k = 32
+    grid = (triton.cdiv(rows, block_m), triton.cdiv(out_features, block_n))
+    _matmul_packed_weight_kernel[grid](
+        input_contiguous,
+        packed,
+        norms,
+        centroids,
+        bias_tensor,
+        output,
+        rows=rows,
+        out_features=out_features,
+        in_features=in_features,
+        bits=bits,
+        has_bias=has_bias,
+        block_m=block_m,
+        block_n=block_n,
+        block_k=block_k,
+        num_warps=4,
+    )
+    return output.reshape(*original_shape[:-1], out_features)
 
 
 def pack_lowbit_with_triton(

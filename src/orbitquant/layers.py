@@ -376,6 +376,26 @@ class OrbitQuantLinear(nn.Module):
                 constant_tensors=self._activation_kernel_constant_tensors(x.device),
             )
 
-        weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)
         bias = None if self.bias is None else self.bias.to(device=x.device, dtype=rotated_x.dtype)
+        if self.runtime_mode == "triton_packed_matmul":
+            if self.packed_weight_indices is None or self.row_norms is None:
+                raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
+            try:
+                from orbitquant.kernels.triton_cuda import matmul_packed_weight_with_triton
+            except Exception as exc:
+                raise RuntimeError(
+                    "triton_packed_matmul runtime requires the Triton CUDA backend"
+                ) from exc
+            return matmul_packed_weight_with_triton(
+                rotated_x,
+                self.packed_weight_indices,
+                self.row_norms,
+                self.weight_codebook,
+                bits=self.weight_bits,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                bias=bias,
+            )
+
+        weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)
         return F.linear(rotated_x, weight, bias)

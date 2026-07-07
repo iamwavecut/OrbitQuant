@@ -56,7 +56,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
             "triton_cuda": {
                 "optimized_stage": (
                     "codebook_lookup_rescale,packed_weight_dequant,"
-                    "lowbit_pack,weight_rotation_fwht_quant_pack,"
+                    "packed_weight_matmul,lowbit_pack,weight_rotation_fwht_quant_pack,"
                     "adaln_rtn_quant_pack,adaln_rtn_dequant"
                 ),
                 "weight_dequant_optimized": True,
@@ -89,7 +89,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["mps"]["full_fusion"] is False
     assert payload["triton_cuda"]["optimized_stage"] == (
         "codebook_lookup_rescale,packed_weight_dequant,"
-        "lowbit_pack,weight_rotation_fwht_quant_pack,"
+        "packed_weight_matmul,lowbit_pack,weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
     assert payload["triton_cuda"]["weight_dequant_optimized"] is True
@@ -115,6 +115,8 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
                 "8",
                 "--activation-kernel-backend",
                 "cpu",
+                "--runtime-mode",
+                "debug_no_activation_quant",
                 "--device",
                 "cpu",
                 "--dtype",
@@ -130,6 +132,7 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["device"] == "cpu"
+    assert payload["runtime_mode"] == "debug_no_activation_quant"
     assert payload["full_fusion"] is False
     assert payload["prewarm"]["total_modules"] == 1
     assert payload["timings_ms"]["weight_quantize_pack_cold_ms"] >= 0.0

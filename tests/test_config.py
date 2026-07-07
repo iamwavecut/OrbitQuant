@@ -20,6 +20,12 @@ def test_orbit_quant_config_round_trips_to_dict():
     assert restored.quant_method == "orbitquant"
 
 
+def test_orbit_quant_config_accepts_triton_packed_matmul_runtime_mode():
+    config = OrbitQuantConfig(runtime_mode="triton_packed_matmul")
+
+    assert config.runtime_mode == "triton_packed_matmul"
+
+
 def test_orbit_quant_config_rejects_invalid_bits():
     try:
         OrbitQuantConfig(weight_bits=1, activation_bits=4)

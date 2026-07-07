@@ -204,14 +204,16 @@ stages around that matmul:
 
 - runtime activation norm, RPBH/FWHT rotation, codebook lookup, and rescale;
 - packed weight dequantization;
+- opt-in packed-weight matmul via `runtime_mode="triton_packed_matmul"`;
 - low-bit pack/unpack helpers;
 - offline weight RPBH/FWHT codebook indexing with direct low-bit packing;
 - AdaLN INT4 RTN quantize/pack/dequant.
 
 Run `orbitquant kernel-info` to inspect the active backend and
 `scripts/run_cuda_kernel_checks.sh` to run the CUDA kernel test and benchmark
-gate on a GPU host. Fully fused low-bit matmul is not enabled in the current
-runtime mode.
+gate on a GPU host. The default runtime remains `dequant_bf16`; packed-weight
+matmul is available as an explicit CUDA/Triton runtime mode while broader
+activation-plus-matmul fusion remains future work.
 
 ## License
 
