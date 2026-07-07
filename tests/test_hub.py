@@ -290,6 +290,8 @@ def test_upload_orbitquant_artifact_creates_uploads_and_audits_model_repo(tmp_pa
     assert upload_call["revision"] == "main"
     assert upload_call["commit_message"] == "upload test artifact"
     assert upload_call["delete_patterns"] == "*"
+    assert ".gitattributes" in upload_call["ignore_patterns"]
+    assert ".gitignore" in upload_call["ignore_patterns"]
     assert ".cache/**" in upload_call["ignore_patterns"]
     assert "*/.cache/**" in upload_call["ignore_patterns"]
     assert result["upload"]["commit_oid"] == "uploaded-sha"

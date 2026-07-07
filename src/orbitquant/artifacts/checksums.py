@@ -5,6 +5,8 @@ from pathlib import Path
 
 _IGNORED_ARTIFACT_PATH_PARTS = {
     ".cache",
+    ".gitattributes",
+    ".gitignore",
     ".pytest_cache",
     ".ruff_cache",
     "__pycache__",

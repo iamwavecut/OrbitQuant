@@ -133,11 +133,13 @@ def test_sha256sums_ignore_huggingface_local_dir_cache_metadata(tmp_path):
     cache_metadata.write_text("transient hub metadata", encoding="utf-8")
     payload = tmp_path / "model.safetensors"
     payload.write_bytes(b"model")
+    (tmp_path / ".gitattributes").write_text("*.safetensors filter=lfs\n", encoding="utf-8")
 
     write_sha256sums(tmp_path)
     entries = read_sha256sums(tmp_path / "SHA256SUMS")
 
     assert "model.safetensors" in entries
+    assert ".gitattributes" not in entries
     assert ".cache/huggingface/download/.gitattributes.metadata" not in entries
 
     stale_sums = tmp_path / "SHA256SUMS"
@@ -145,6 +147,7 @@ def test_sha256sums_ignore_huggingface_local_dir_cache_metadata(tmp_path):
         "\n".join(
             [
                 f"{entries['model.safetensors']}  model.safetensors",
+                "0" * 64 + "  .gitattributes",
                 "0" * 64 + "  .cache/huggingface/download/.gitattributes.metadata",
             ]
         )
@@ -153,6 +156,7 @@ def test_sha256sums_ignore_huggingface_local_dir_cache_metadata(tmp_path):
     )
 
     validated = validate_sha256sums(tmp_path)
+    assert validated[".gitattributes"] == "0" * 64
     assert validated[".cache/huggingface/download/.gitattributes.metadata"] == "0" * 64
 
 

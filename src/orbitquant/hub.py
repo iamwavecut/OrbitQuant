@@ -19,6 +19,10 @@ from orbitquant.eval.native_settings import NativeSuite
 _DEFAULT_IGNORE_PATTERNS = [
     ".DS_Store",
     "*/.DS_Store",
+    ".gitattributes",
+    "*/.gitattributes",
+    ".gitignore",
+    "*/.gitignore",
     ".cache/*",
     ".cache/**",
     "*/.cache/*",
