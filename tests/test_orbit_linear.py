@@ -203,6 +203,10 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
         block_size=8,
         runtime_mode="triton_packed_matmul",
         activation_kernel_backend="triton_cuda",
+        packed_matmul_block_m=32,
+        packed_matmul_block_n=64,
+        packed_matmul_block_k=64,
+        packed_matmul_num_warps=8,
     )
     quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     x = torch.randn(2, 5, 16)
@@ -219,6 +223,10 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
                 "out_features": kwargs["out_features"],
                 "in_features": kwargs["in_features"],
                 "bias_is_none": kwargs["bias"] is None,
+                "block_m": kwargs["block_m"],
+                "block_n": kwargs["block_n"],
+                "block_k": kwargs["block_k"],
+                "num_warps": kwargs["num_warps"],
             }
         )
         return torch.zeros(
@@ -250,5 +258,9 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
             "out_features": 7,
             "in_features": 16,
             "bias_is_none": False,
+            "block_m": 32,
+            "block_n": 64,
+            "block_k": 64,
+            "num_warps": 8,
         }
     ]

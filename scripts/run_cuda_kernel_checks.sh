@@ -16,6 +16,10 @@ HIDDEN_FEATURES="${ORBITQUANT_BENCH_HIDDEN_FEATURES:-9216}"
 BLOCK_SIZE="${ORBITQUANT_BENCH_BLOCK_SIZE:-1024}"
 WARMUP="${ORBITQUANT_BENCH_WARMUP:-2}"
 ITERATIONS="${ORBITQUANT_BENCH_ITERATIONS:-5}"
+PACKED_MATMUL_BLOCK_M="${ORBITQUANT_PACKED_MATMUL_BLOCK_M:-32}"
+PACKED_MATMUL_BLOCK_N="${ORBITQUANT_PACKED_MATMUL_BLOCK_N:-64}"
+PACKED_MATMUL_BLOCK_K="${ORBITQUANT_PACKED_MATMUL_BLOCK_K:-64}"
+PACKED_MATMUL_NUM_WARPS="${ORBITQUANT_PACKED_MATMUL_NUM_WARPS:-8}"
 
 cd "$ROOT_DIR"
 
@@ -85,6 +89,10 @@ orbitquant kernel-bench \
   --block-size "$BLOCK_SIZE" \
   --activation-kernel-backend triton_cuda \
   --runtime-mode triton_packed_matmul \
+  --packed-matmul-block-m "$PACKED_MATMUL_BLOCK_M" \
+  --packed-matmul-block-n "$PACKED_MATMUL_BLOCK_N" \
+  --packed-matmul-block-k "$PACKED_MATMUL_BLOCK_K" \
+  --packed-matmul-num-warps "$PACKED_MATMUL_NUM_WARPS" \
   --device cuda \
   --dtype bfloat16 \
   --warmup "$WARMUP" \

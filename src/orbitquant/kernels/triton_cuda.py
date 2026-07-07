@@ -906,9 +906,15 @@ def matmul_packed_weight_with_triton(
     out_features: int,
     in_features: int,
     bias: torch.Tensor | None = None,
+    block_m: int = 32,
+    block_n: int = 64,
+    block_k: int = 64,
+    num_warps: int = 8,
 ) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
+    if block_m <= 0 or block_n <= 0 or block_k <= 0 or num_warps <= 0:
+        raise ValueError("packed matmul tile sizes and num_warps must be positive")
     if not torch.cuda.is_available():
         raise RuntimeError("triton_cuda backend requires CUDA tensors")
     if not x.is_cuda:
@@ -934,9 +940,6 @@ def matmul_packed_weight_with_triton(
         bias_tensor = bias.to(device=x.device, dtype=torch.float32).contiguous()
         has_bias = True
 
-    block_m = 16
-    block_n = 16
-    block_k = 32
     grid = (triton.cdiv(rows, block_m), triton.cdiv(out_features, block_n))
     _matmul_packed_weight_kernel[grid](
         input_contiguous,
@@ -953,7 +956,7 @@ def matmul_packed_weight_with_triton(
         block_m=block_m,
         block_n=block_n,
         block_k=block_k,
-        num_warps=4,
+        num_warps=num_warps,
     )
     return output.reshape(*original_shape[:-1], out_features)
 

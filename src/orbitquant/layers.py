@@ -105,6 +105,10 @@ class OrbitQuantLinear(nn.Module):
         self.activation_bits = config.activation_bits
         self.runtime_mode = config.runtime_mode
         self.activation_kernel_backend = config.activation_kernel_backend
+        self.packed_matmul_block_m = config.packed_matmul_block_m
+        self.packed_matmul_block_n = config.packed_matmul_block_n
+        self.packed_matmul_block_k = config.packed_matmul_block_k
+        self.packed_matmul_num_warps = config.packed_matmul_num_warps
         self.module_name = module_name
         self.activation_eps = config.activation_eps
         self.rotation = get_rpbh_rotation(
@@ -395,6 +399,10 @@ class OrbitQuantLinear(nn.Module):
                 out_features=self.out_features,
                 in_features=self.in_features,
                 bias=bias,
+                block_m=self.packed_matmul_block_m,
+                block_n=self.packed_matmul_block_n,
+                block_k=self.packed_matmul_block_k,
+                num_warps=self.packed_matmul_num_warps,
             )
 
         weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)

@@ -145,6 +145,42 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
     assert payload["quantization_buffers"]["packed_weight_indices_device"] == "cpu"
 
 
+def test_cli_kernel_bench_passes_packed_matmul_tile_options(monkeypatch, capsys):
+    seen_kwargs = []
+
+    def fake_benchmark_orbit_linear(**kwargs):
+        seen_kwargs.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(cli_main, "benchmark_orbit_linear", fake_benchmark_orbit_linear)
+
+    assert (
+        main(
+            [
+                "kernel-bench",
+                "--runtime-mode",
+                "triton_packed_matmul",
+                "--packed-matmul-block-m",
+                "32",
+                "--packed-matmul-block-n",
+                "64",
+                "--packed-matmul-block-k",
+                "64",
+                "--packed-matmul-num-warps",
+                "8",
+            ]
+        )
+        == 0
+    )
+
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert seen_kwargs[0]["runtime_mode"] == "triton_packed_matmul"
+    assert seen_kwargs[0]["packed_matmul_block_m"] == 32
+    assert seen_kwargs[0]["packed_matmul_block_n"] == 64
+    assert seen_kwargs[0]["packed_matmul_block_k"] == 64
+    assert seen_kwargs[0]["packed_matmul_num_warps"] == 8
+
+
 def test_cli_quantize_bench_prints_full_model_staging_timings(capsys):
     assert (
         main(

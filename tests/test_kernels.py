@@ -316,6 +316,10 @@ def test_triton_packed_weight_matmul_matches_dequantized_linear(bits):
         out_features=out_features,
         in_features=in_features,
         bias=bias,
+        block_m=16,
+        block_n=16,
+        block_k=32,
+        num_warps=4,
     )
 
     assert actual.is_cuda

@@ -57,3 +57,25 @@ def test_benchmark_orbit_linear_accepts_runtime_mode_override_on_cpu():
     )
 
     assert result["runtime_mode"] == "debug_no_activation_quant"
+
+
+def test_benchmark_orbit_linear_reports_tuned_packed_matmul_default_tile_on_cpu():
+    result = benchmark_orbit_linear(
+        tokens=4,
+        in_features=16,
+        out_features=8,
+        block_size=8,
+        activation_kernel_backend="cpu",
+        runtime_mode="debug_no_activation_quant",
+        device="cpu",
+        dtype=torch.float32,
+        warmup=0,
+        iterations=1,
+    )
+
+    assert result["packed_matmul_tile"] == {
+        "block_m": 32,
+        "block_n": 64,
+        "block_k": 64,
+        "num_warps": 8,
+    }

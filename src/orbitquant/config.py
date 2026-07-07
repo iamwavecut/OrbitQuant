@@ -61,6 +61,10 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     artifact_format_version: int = 1
     runtime_mode: str = "dequant_bf16"
     activation_kernel_backend: str = "auto"
+    packed_matmul_block_m: int = 32
+    packed_matmul_block_n: int = 64
+    packed_matmul_block_k: int = 64
+    packed_matmul_num_warps: int = 8
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
@@ -81,6 +85,14 @@ class OrbitQuantConfig(QuantizationConfigMixin):
                 "activation_kernel_backend must be one of "
                 f"{sorted(_SUPPORTED_ACTIVATION_KERNEL_BACKENDS)}"
             )
+        for field_name in (
+            "packed_matmul_block_m",
+            "packed_matmul_block_n",
+            "packed_matmul_block_k",
+            "packed_matmul_num_warps",
+        ):
+            if getattr(self, field_name) <= 0:
+                raise ValueError(f"{field_name} must be positive")
         if self.target_policy not in _SUPPORTED_TARGET_POLICIES:
             raise ValueError(f"target_policy must be one of {sorted(_SUPPORTED_TARGET_POLICIES)}")
         if self.adaln_group_size <= 0:

@@ -108,6 +108,10 @@ def benchmark_orbit_linear(
     block_size: int | str = "paper",
     activation_kernel_backend: str = "auto",
     runtime_mode: str = "dequant_bf16",
+    packed_matmul_block_m: int = 32,
+    packed_matmul_block_n: int = 64,
+    packed_matmul_block_k: int = 64,
+    packed_matmul_num_warps: int = 8,
     device: str | torch.device = "auto",
     dtype: torch.dtype = torch.bfloat16,
     warmup: int = 5,
@@ -136,6 +140,10 @@ def benchmark_orbit_linear(
         block_size=block_size,
         activation_kernel_backend=activation_kernel_backend,
         runtime_mode=runtime_mode,
+        packed_matmul_block_m=packed_matmul_block_m,
+        packed_matmul_block_n=packed_matmul_block_n,
+        packed_matmul_block_k=packed_matmul_block_k,
+        packed_matmul_num_warps=packed_matmul_num_warps,
     )
     source = torch.nn.Linear(
         in_features,
@@ -282,6 +290,12 @@ def benchmark_orbit_linear(
             else "torch_reference"
         ),
         "runtime_mode": config.runtime_mode,
+        "packed_matmul_tile": {
+            "block_m": config.packed_matmul_block_m,
+            "block_n": config.packed_matmul_block_n,
+            "block_k": config.packed_matmul_block_k,
+            "num_warps": config.packed_matmul_num_warps,
+        },
         "full_fusion": False,
         "prewarm": prewarm.__dict__,
         "timings_ms": timings,

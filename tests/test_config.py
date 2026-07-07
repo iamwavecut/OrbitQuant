@@ -26,6 +26,22 @@ def test_orbit_quant_config_accepts_triton_packed_matmul_runtime_mode():
     assert config.runtime_mode == "triton_packed_matmul"
 
 
+def test_orbit_quant_config_round_trips_packed_matmul_tile_config():
+    config = OrbitQuantConfig(
+        packed_matmul_block_m=32,
+        packed_matmul_block_n=64,
+        packed_matmul_block_k=64,
+        packed_matmul_num_warps=8,
+    )
+
+    restored = OrbitQuantConfig.from_dict(config.to_dict())
+
+    assert restored.packed_matmul_block_m == 32
+    assert restored.packed_matmul_block_n == 64
+    assert restored.packed_matmul_block_k == 64
+    assert restored.packed_matmul_num_warps == 8
+
+
 def test_orbit_quant_config_rejects_invalid_bits():
     try:
         OrbitQuantConfig(weight_bits=1, activation_bits=4)
