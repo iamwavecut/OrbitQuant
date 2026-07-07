@@ -143,6 +143,44 @@ def _fwht_stage_kernel(
 
 
 @triton.jit
+def _fwht_two_stage_kernel(
+    work_ptr,
+    total_quads: tl.constexpr,
+    in_features: tl.constexpr,
+    num_blocks: tl.constexpr,
+    orbit_block_size: tl.constexpr,
+    stage_width: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    quad_offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = quad_offsets < total_quads
+    quads_per_orbit_block: tl.constexpr = orbit_block_size // 4
+    row_block = quad_offsets // quads_per_orbit_block
+    quad_in_orbit_block = quad_offsets % quads_per_orbit_block
+    rows = row_block // num_blocks
+    orbit_blocks = row_block % num_blocks
+    groups = quad_in_orbit_block // stage_width
+    inner = quad_in_orbit_block % stage_width
+    base_cols = orbit_blocks * orbit_block_size + groups * (stage_width * 4) + inner
+    offsets0 = rows * in_features + base_cols
+    offsets1 = offsets0 + stage_width
+    offsets2 = offsets0 + stage_width * 2
+    offsets3 = offsets0 + stage_width * 3
+    value0 = tl.load(work_ptr + offsets0, mask=mask, other=0.0).to(tl.float32)
+    value1 = tl.load(work_ptr + offsets1, mask=mask, other=0.0).to(tl.float32)
+    value2 = tl.load(work_ptr + offsets2, mask=mask, other=0.0).to(tl.float32)
+    value3 = tl.load(work_ptr + offsets3, mask=mask, other=0.0).to(tl.float32)
+    sum01 = value0 + value1
+    diff01 = value0 - value1
+    sum23 = value2 + value3
+    diff23 = value2 - value3
+    tl.store(work_ptr + offsets0, sum01 + sum23, mask=mask)
+    tl.store(work_ptr + offsets1, diff01 + diff23, mask=mask)
+    tl.store(work_ptr + offsets2, sum01 - sum23, mask=mask)
+    tl.store(work_ptr + offsets3, diff01 - diff23, mask=mask)
+
+
+@triton.jit
 def _dequantize_packed_weight_kernel(
     packed_ptr,
     row_norms_ptr,
@@ -490,9 +528,21 @@ def quantize_activations_with_triton(
 
     orbit_block_size = int(rotation.block_size)
     num_blocks = int(rotation.num_blocks)
-    total_pairs = rows * num_blocks * (orbit_block_size // 2)
     stage_width = 1
-    while stage_width < orbit_block_size:
+    while stage_width * 2 < orbit_block_size:
+        total_quads = rows * num_blocks * (orbit_block_size // 4)
+        _fwht_two_stage_kernel[(triton.cdiv(total_quads, element_block_size),)](
+            work,
+            total_quads=total_quads,
+            in_features=dim,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+        stage_width *= 4
+    if stage_width < orbit_block_size:
+        total_pairs = rows * num_blocks * (orbit_block_size // 2)
         _fwht_stage_kernel[(triton.cdiv(total_pairs, element_block_size),)](
             work,
             total_pairs=total_pairs,
@@ -502,7 +552,6 @@ def quantize_activations_with_triton(
             stage_width=stage_width,
             block_size=element_block_size,
         )
-        stage_width *= 2
 
     _quantize_activation_work_rescale_kernel[(triton.cdiv(total, element_block_size),)](
         work,
@@ -720,9 +769,21 @@ def quantize_weight_indices_with_triton(
 
     orbit_block_size = int(rotation.block_size)
     num_blocks = int(rotation.num_blocks)
-    total_pairs = out_features * num_blocks * (orbit_block_size // 2)
     stage_width = 1
-    while stage_width < orbit_block_size:
+    while stage_width * 2 < orbit_block_size:
+        total_quads = out_features * num_blocks * (orbit_block_size // 4)
+        _fwht_two_stage_kernel[(triton.cdiv(total_quads, element_block_size),)](
+            work,
+            total_quads=total_quads,
+            in_features=in_features,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+        stage_width *= 4
+    if stage_width < orbit_block_size:
+        total_pairs = out_features * num_blocks * (orbit_block_size // 2)
         _fwht_stage_weight_kernel[(triton.cdiv(total_pairs, element_block_size),)](
             work,
             total_pairs=total_pairs,
@@ -732,7 +793,6 @@ def quantize_weight_indices_with_triton(
             stage_width=stage_width,
             block_size=element_block_size,
         )
-        stage_width *= 2
 
     _quantize_rotated_weight_indices_kernel[(triton.cdiv(total, element_block_size),)](
         work,
