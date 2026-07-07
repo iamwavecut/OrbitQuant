@@ -98,7 +98,6 @@ def _row_norm_kernel(
     values = tl.load(input_ptr + row * dim + offsets, mask=mask, other=0.0).to(tl.float32)
     squared_sum = tl.sum(values * values, axis=0)
     norm = tl.sqrt(squared_sum)
-    norm = tl.maximum(norm, eps)
     tl.store(norms_ptr + row, norm, mask=row < rows)
 
 
@@ -111,6 +110,7 @@ def _permute_sign_normalize_activation_kernel(
     work_ptr,
     total: tl.constexpr,
     dim: tl.constexpr,
+    eps: tl.constexpr,
     block_size: tl.constexpr,
 ):
     offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
@@ -123,7 +123,7 @@ def _permute_sign_normalize_activation_kernel(
     values = tl.load(input_ptr + rows * dim + source_cols, mask=mask, other=0.0).to(
         tl.float32
     )
-    tl.store(work_ptr + offsets, values * signs / norms, mask=mask)
+    tl.store(work_ptr + offsets, values * signs / (norms + eps), mask=mask)
 
 
 @triton.jit
@@ -452,6 +452,7 @@ def _quantize_rotated_weight_indices_kernel(
     total: tl.constexpr,
     in_features: tl.constexpr,
     levels: tl.constexpr,
+    eps: tl.constexpr,
     inv_sqrt_block: tl.constexpr,
     block_size: tl.constexpr,
 ):
@@ -460,7 +461,7 @@ def _quantize_rotated_weight_indices_kernel(
     rows = offsets // in_features
     norms = tl.load(row_norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
     values = tl.load(work_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
-    values = values * inv_sqrt_block / norms
+    values = values * inv_sqrt_block / tl.maximum(norms, eps)
     indices = tl.zeros((block_size,), dtype=tl.int32)
     for idx in tl.static_range(0, levels - 1):
         boundary = tl.load(boundaries_ptr + idx)
@@ -479,6 +480,7 @@ def _quantize_rotated_weight_pack_kernel(
     in_features: tl.constexpr,
     bits: tl.constexpr,
     levels: tl.constexpr,
+    eps: tl.constexpr,
     inv_sqrt_block: tl.constexpr,
     block_size: tl.constexpr,
 ):
@@ -494,7 +496,7 @@ def _quantize_rotated_weight_pack_kernel(
         rows = value_offsets // in_features
         norms = tl.load(row_norms_ptr + rows, mask=valid, other=1.0).to(tl.float32)
         values = tl.load(work_ptr + value_offsets, mask=valid, other=0.0).to(tl.float32)
-        values = values * inv_sqrt_block / norms
+        values = values * inv_sqrt_block / tl.maximum(norms, eps)
         indices = tl.zeros((block_size,), dtype=tl.int32)
         for idx in tl.static_range(0, levels - 1):
             boundary = tl.load(boundaries_ptr + idx)
@@ -719,6 +721,7 @@ def quantize_activations_with_triton(
         work,
         total=total,
         dim=dim,
+        eps=float(eps),
         block_size=element_block_size,
     )
 
@@ -1054,6 +1057,7 @@ def quantize_weight_indices_with_triton(
     *,
     rotation: RPBHRotation,
     codebook: LloydMaxCodebook,
+    eps: float = 1e-10,
 ) -> torch.Tensor:
     if not weight.is_cuda:
         raise RuntimeError("triton_cuda weight quantization requires CUDA tensors")
@@ -1123,6 +1127,7 @@ def quantize_weight_indices_with_triton(
         total=total,
         in_features=in_features,
         levels=codebook.centroids.numel(),
+        eps=float(eps),
         inv_sqrt_block=float(rotation.normalization),
         block_size=element_block_size,
     )
@@ -1136,6 +1141,7 @@ def quantize_weight_packed_with_triton(
     rotation: RPBHRotation,
     codebook: LloydMaxCodebook,
     bits: int,
+    eps: float = 1e-10,
 ) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
@@ -1211,6 +1217,7 @@ def quantize_weight_packed_with_triton(
         in_features=in_features,
         bits=bits,
         levels=codebook.centroids.numel(),
+        eps=float(eps),
         inv_sqrt_block=float(rotation.normalization),
         block_size=element_block_size,
     )

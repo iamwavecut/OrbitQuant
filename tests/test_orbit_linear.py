@@ -7,6 +7,7 @@ import torch
 
 import orbitquant.kernels.dispatch as dispatch_module
 import orbitquant.layers as layers_module
+from orbitquant.codebooks import clear_codebook_cache
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 
@@ -95,6 +96,68 @@ def test_orbit_linear_weight_indices_quantize_rotated_unit_directions():
     ).reshape(quantized.out_features, quantized.in_features)
 
     assert torch.equal(actual_indices, expected_indices)
+
+
+def test_orbit_linear_stores_raw_zero_row_norm_and_dequantizes_zero_row():
+    source = torch.nn.Linear(16, 7, bias=False)
+    with torch.no_grad():
+        source.weight[0].zero_()
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    dequantized = quantized._dequantize_weight(device=torch.device("cpu"), dtype=torch.float32)
+
+    assert quantized.row_norms is not None
+    assert quantized.row_norms[0].item() == 0
+    assert torch.equal(dequantized[0], torch.zeros_like(dequantized[0]))
+
+
+def test_orbit_linear_quantized_forward_matches_manual_paper_equation(monkeypatch):
+    monkeypatch.setenv("ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE", "1")
+    clear_codebook_cache()
+    torch.manual_seed(7)
+    source = torch.nn.Linear(24, 5)
+    with torch.no_grad():
+        source.weight[1].zero_()
+    x = torch.randn(2, 3, 24)
+    x[0, 0].zero_()
+    config = OrbitQuantConfig(
+        weight_bits=3,
+        activation_bits=3,
+        rotation_seed=13,
+        block_size="paper",
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+
+    weight = source.weight.detach().to(torch.float32)
+    rotated_weight = quantized.rotation.apply_to_weight(weight)
+    raw_row_norms = rotated_weight.norm(dim=-1)
+    weight_unit = rotated_weight / raw_row_norms.clamp_min(config.activation_eps)[:, None]
+    weight_indices = quantized.weight_codebook.quantize_indices(weight_unit)
+    dequantized_weight = (
+        quantized.row_norms.to(torch.float32)[:, None]
+        * quantized.weight_codebook.centroids[weight_indices.to(torch.long)]
+    )
+
+    work = x.to(torch.float32)
+    token_norms = work.norm(dim=-1, keepdim=True)
+    activation_unit = work / (token_norms + config.activation_eps)
+    rotated_activation = quantized.rotation.apply_to_activations(activation_unit)
+    dequantized_activation = token_norms * quantized.activation_codebook.quantize(
+        rotated_activation
+    )
+    expected = torch.nn.functional.linear(
+        dequantized_activation,
+        dequantized_weight,
+        source.bias.detach().to(torch.float32),
+    )
+
+    actual = quantized(x)
+
+    assert quantized.rotation.block_size == 8
+    assert torch.equal(actual[0, 0], source.bias.detach())
+    assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)
 
 
 def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):

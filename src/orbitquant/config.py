@@ -51,7 +51,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     codebook_dtype: str = "float32"
     row_norm_dtype: str = "bfloat16"
     activation_norm_dtype: str = "float32"
-    activation_eps: float = 1e-12
+    activation_eps: float = 1e-10
     weight_pack_dtype: str = "uint8"
     target_policy: str = "auto"
     adaln_policy: str = "int4_rtn"

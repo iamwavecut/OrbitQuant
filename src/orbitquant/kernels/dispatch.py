@@ -157,8 +157,8 @@ def _mps_quantize_activations(
 
     original_dtype = x.dtype
     work = x.to(torch.float32)
-    norms = work.norm(dim=-1, keepdim=True).clamp_min(eps)
-    rotated = rotation.apply_to_activations(work / norms)
+    norms = work.norm(dim=-1, keepdim=True)
+    rotated = rotation.apply_to_activations(work / (norms + eps))
     quantized = quantize_rotated_activations_with_mps(rotated, norms, codebook)
     return quantized.to(original_dtype)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from contextlib import suppress
 from dataclasses import dataclass
@@ -81,6 +82,57 @@ def codebook_cache_path(dim: int, bits: int) -> Path | None:
     return root / f"lloyd_max_v{_ALGORITHM_VERSION}_dim{dim}_bits{bits}.safetensors"
 
 
+def _codebook_checksum(
+    *, dim: int, bits: int, centroids: torch.Tensor, boundaries: torch.Tensor
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"lloyd_max_v{_ALGORITHM_VERSION}:dim={dim}:bits={bits}".encode("ascii"))
+    for tensor in (centroids, boundaries):
+        contiguous = tensor.detach().cpu().to(torch.float32).contiguous()
+        digest.update(str(tuple(contiguous.shape)).encode("ascii"))
+        digest.update(contiguous.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _checksum_tensor(value: str) -> torch.Tensor:
+    return torch.tensor(list(value.encode("ascii")), dtype=torch.uint8)
+
+
+def _checksum_string(value: torch.Tensor) -> str:
+    return bytes(value.detach().cpu().to(torch.uint8).tolist()).decode("ascii")
+
+
+def _valid_cached_codebook_tensors(
+    *,
+    dim: int,
+    bits: int,
+    centroids: torch.Tensor,
+    boundaries: torch.Tensor,
+    checksum: str,
+) -> bool:
+    if centroids.shape != (2**bits,) or boundaries.shape != (2**bits - 1,):
+        return False
+    if centroids.dtype != torch.float32 or boundaries.dtype != torch.float32:
+        return False
+    if not torch.isfinite(centroids).all() or not torch.isfinite(boundaries).all():
+        return False
+    if not torch.all(centroids[1:] > centroids[:-1]):
+        return False
+    if boundaries.numel() and not torch.all(boundaries[1:] > boundaries[:-1]):
+        return False
+    if centroids.numel() and (centroids[0] < -1 or centroids[-1] > 1):
+        return False
+    if not torch.allclose(centroids, -torch.flip(centroids, dims=[0]), atol=1e-5):
+        return False
+    expected_boundaries = (centroids[:-1] + centroids[1:]) / 2
+    if not torch.allclose(boundaries, expected_boundaries, atol=1e-6):
+        return False
+    expected_checksum = _codebook_checksum(
+        dim=dim, bits=bits, centroids=centroids, boundaries=boundaries
+    )
+    return checksum == expected_checksum
+
+
 def _load_cached_codebook(dim: int, bits: int) -> LloydMaxCodebook | None:
     path = codebook_cache_path(dim, bits)
     if path is None or not path.exists():
@@ -88,13 +140,18 @@ def _load_cached_codebook(dim: int, bits: int) -> LloydMaxCodebook | None:
     try:
         tensors = load_file(path)
         version = int(tensors["algorithm_version"].item())
+        cached_dim = int(tensors["dim"].item())
+        cached_bits = int(tensors["bits"].item())
         centroids = tensors["centroids"].to(torch.float32)
         boundaries = tensors["boundaries"].to(torch.float32)
+        checksum = _checksum_string(tensors["cache_checksum"])
     except Exception:
         return None
-    if version != _ALGORITHM_VERSION:
+    if version != _ALGORITHM_VERSION or cached_dim != dim or cached_bits != bits:
         return None
-    if centroids.shape != (2**bits,) or boundaries.shape != (2**bits - 1,):
+    if not _valid_cached_codebook_tensors(
+        dim=dim, bits=bits, centroids=centroids, boundaries=boundaries, checksum=checksum
+    ):
         return None
     return LloydMaxCodebook(
         dim=dim,
@@ -117,8 +174,18 @@ def _write_cached_codebook(codebook: LloydMaxCodebook) -> None:
             {
                 "centroids": codebook.centroids.detach().cpu().to(torch.float32),
                 "boundaries": codebook.boundaries.detach().cpu().to(torch.float32),
+                "dim": torch.tensor([codebook.dim], dtype=torch.int32),
+                "bits": torch.tensor([codebook.bits], dtype=torch.int32),
                 "algorithm_version": torch.tensor(
                     [codebook.algorithm_version], dtype=torch.int32
+                ),
+                "cache_checksum": _checksum_tensor(
+                    _codebook_checksum(
+                        dim=codebook.dim,
+                        bits=codebook.bits,
+                        centroids=codebook.centroids,
+                        boundaries=codebook.boundaries,
+                    )
                 ),
             },
             tmp_path,

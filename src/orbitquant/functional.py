@@ -15,8 +15,8 @@ def quantize_activations(
 ) -> torch.Tensor:
     original_dtype = x.dtype
     work = x.to(torch.float32)
-    norms = work.norm(dim=-1, keepdim=True).clamp_min(eps)
-    unit = work / norms
+    norms = work.norm(dim=-1, keepdim=True)
+    unit = work / (norms + eps)
     rotated = rotation.apply_to_activations(unit)
     quantized = codebook.quantize(rotated)
     return (quantized * norms).to(original_dtype)

@@ -59,6 +59,16 @@ def test_activation_quantization_is_per_token_scale_equivariant_and_batch_indepe
     assert torch.equal(with_outlier[:-1], baseline.reshape(-1, 16))
 
 
+def test_activation_quantization_rescales_with_raw_norm_so_zero_tokens_stay_zero():
+    x = torch.zeros(2, 3, 16)
+    rotation = RPBHRotation(dim=16, seed=3, block_size=8)
+    codebook = get_codebook(dim=16, bits=4)
+
+    actual = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-10)
+
+    assert torch.equal(actual, torch.zeros_like(x))
+
+
 def test_backend_selection_is_explicit_and_fails_loud_for_unavailable_backends():
     assert available_backends()["cpu"] is True
     assert select_backend(torch.device("cpu"), requested="auto") == "cpu"

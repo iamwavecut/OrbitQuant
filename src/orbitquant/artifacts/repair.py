@@ -50,7 +50,8 @@ def repair_artifact_metadata(
     config_path = artifact_path / "quantization_config.json"
 
     config = OrbitQuantConfig.from_dict(_read_json(config_path))
-    manifest = OrbitQuantManifest.from_dict(_read_json(manifest_path))
+    manifest_payload = _read_json(manifest_path)
+    manifest = OrbitQuantManifest.from_dict(manifest_payload)
     model_index = _read_json(model_index_path)
     benchmark_summary = _read_json(benchmark_path)
 
@@ -71,6 +72,7 @@ def repair_artifact_metadata(
         target_policy=manifest.target_policy,
         runtime_mode=manifest.runtime_mode,
         activation_kernel_backend=manifest.activation_kernel_backend,
+        activation_eps=float(manifest_payload.get("activation_eps", config.activation_eps)),
         quantization_device=next_quantization_device,
         weight_quantization_backend=next_weight_backend,
         quantization_staging_mode=next_staging_mode,
@@ -88,9 +90,11 @@ def repair_artifact_metadata(
     model_index["quantization_device"] = next_quantization_device
     model_index["weight_quantization_backend"] = next_weight_backend
     model_index["quantization_staging_mode"] = next_staging_mode
+    model_index["activation_eps"] = manifest.activation_eps
     benchmark_summary["quantization_device"] = next_quantization_device
     benchmark_summary["weight_quantization_backend"] = next_weight_backend
     benchmark_summary["quantization_staging_mode"] = next_staging_mode
+    benchmark_summary["activation_eps"] = manifest.activation_eps
 
     _write_json(model_index_path, model_index)
     _write_json(benchmark_path, benchmark_summary)

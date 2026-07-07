@@ -24,6 +24,7 @@ from orbitquant.artifacts.checksums import (
 )
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
+from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.native_runner import target_policy_for_suite
 from orbitquant.eval.native_settings import NativeSuite
@@ -1307,7 +1308,10 @@ def repair_hf_artifact_metadata(
     readme_bytes = _read_remote_bytes(repo_id, "README.md", revision=revision)
     sha256sums_bytes = _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
 
-    manifest = OrbitQuantManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
+    manifest_payload = json.loads(manifest_bytes.decode("utf-8"))
+    config_payload = json.loads(config_bytes.decode("utf-8"))
+    manifest = OrbitQuantManifest.from_dict(manifest_payload)
+    config = OrbitQuantConfig.from_dict(config_payload)
     model_index = json.loads(model_index_bytes.decode("utf-8"))
     benchmark_summary = json.loads(benchmark_bytes.decode("utf-8"))
 
@@ -1329,6 +1333,7 @@ def repair_hf_artifact_metadata(
         target_policy=manifest.target_policy,
         runtime_mode=manifest.runtime_mode,
         activation_kernel_backend=manifest.activation_kernel_backend,
+        activation_eps=float(manifest_payload.get("activation_eps", config.activation_eps)),
         quantization_device=quantization_device,
         weight_quantization_backend=weight_quantization_backend,
         quantization_staging_mode=quantization_staging_mode
@@ -1347,9 +1352,11 @@ def repair_hf_artifact_metadata(
     model_index["quantization_device"] = quantization_device
     model_index["weight_quantization_backend"] = weight_quantization_backend
     model_index["quantization_staging_mode"] = repaired_manifest.quantization_staging_mode
+    model_index["activation_eps"] = repaired_manifest.activation_eps
     benchmark_summary["quantization_device"] = quantization_device
     benchmark_summary["weight_quantization_backend"] = weight_quantization_backend
     benchmark_summary["quantization_staging_mode"] = repaired_manifest.quantization_staging_mode
+    benchmark_summary["activation_eps"] = repaired_manifest.activation_eps
 
     next_model_index_bytes = _json_bytes(model_index)
     next_benchmark_bytes = _json_bytes(benchmark_summary)

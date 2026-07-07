@@ -48,7 +48,7 @@ _BLOCK_TOKENS = (
     "mlp",
 )
 
-_MODULATION_TOKENS = ("adaln", "modulation", "norm1_context", "norm1", ".norm.linear")
+_MODULATION_TOKENS = ("adaln", "modulation")
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,7 @@ _POLICY_RULES: dict[str, PolicyRules] = {
     "generic_dit": PolicyRules(),
     "flux": PolicyRules(
         block_tokens=("transformer_blocks", "single_transformer_blocks"),
+        modulation_tokens=("adaln", "modulation", "norm1_context", "norm1", ".norm.linear"),
         modulation_scopes=("transformer_blocks", "single_transformer_blocks"),
         projection_tokens=(
             "to_q",

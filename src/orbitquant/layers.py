@@ -35,6 +35,7 @@ def _quantize_weight_indices(
     *,
     rotation: RPBHRotation,
     codebook,
+    eps: float,
 ) -> torch.Tensor:
     if weight.is_cuda:
         from orbitquant.kernels.triton_cuda import quantize_weight_indices_with_triton
@@ -44,12 +45,13 @@ def _quantize_weight_indices(
             row_norms,
             rotation=rotation,
             codebook=codebook,
+            eps=eps,
         )
 
     rotated_weight = rotation.apply_to_weight(weight)
     # RPBH is norm-preserving, so rotating first and dividing by the original
     # row norm is equivalent to rotating the unit direction from the paper.
-    unit_weight = rotated_weight / row_norms[:, None]
+    unit_weight = rotated_weight / row_norms.clamp_min(eps)[:, None]
     return codebook.quantize_indices(unit_weight)
 
 
@@ -60,6 +62,7 @@ def _quantize_weight_pack(
     rotation: RPBHRotation,
     codebook,
     bits: int,
+    eps: float,
 ) -> torch.Tensor:
     if weight.is_cuda:
         from orbitquant.kernels.triton_cuda import quantize_weight_packed_with_triton
@@ -70,6 +73,7 @@ def _quantize_weight_pack(
             rotation=rotation,
             codebook=codebook,
             bits=bits,
+            eps=eps,
         )
 
     weight_indices = _quantize_weight_indices(
@@ -77,6 +81,7 @@ def _quantize_weight_pack(
         row_norms,
         rotation=rotation,
         codebook=codebook,
+        eps=eps,
     )
     return pack_lowbit(weight_indices, bits=bits, validate=False)
 
@@ -200,7 +205,7 @@ class OrbitQuantLinear(nn.Module):
             quantization_weight = source_weight
         else:
             quantization_weight = source_weight.to(torch.float32)
-            row_norms = quantization_weight.norm(dim=-1).clamp_min(config.activation_eps)
+            row_norms = quantization_weight.norm(dim=-1)
         codebook = get_codebook(layer.in_features, config.weight_bits)
         packed = _quantize_weight_pack(
             quantization_weight,
@@ -208,6 +213,7 @@ class OrbitQuantLinear(nn.Module):
             rotation=rotation,
             codebook=codebook,
             bits=config.weight_bits,
+            eps=config.activation_eps,
         )
 
         return cls(
@@ -380,8 +386,10 @@ class OrbitQuantLinear(nn.Module):
             rotated_x = self.rotation.apply_to_activations(x.to(torch.float32)).to(x.dtype)
         elif self.runtime_mode == "debug_no_activation_quant":
             work = x.to(torch.float32)
-            norms = work.norm(dim=-1, keepdim=True).clamp_min(self.activation_eps)
-            rotated_x = (self.rotation.apply_to_activations(work / norms) * norms).to(x.dtype)
+            norms = work.norm(dim=-1, keepdim=True)
+            rotated_x = (
+                self.rotation.apply_to_activations(work / (norms + self.activation_eps)) * norms
+            ).to(x.dtype)
         else:
             rotated_x = quantize_activations_kernel(
                 x,

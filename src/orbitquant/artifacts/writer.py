@@ -84,6 +84,7 @@ def _model_index_payload(
         "target_policy": config.target_policy,
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "activation_eps": config.activation_eps,
         "quantization_device": quantization_device,
         "weight_quantization_backend": weight_quantization_backend,
         "quantization_staging_mode": quantization_staging_mode,
@@ -151,6 +152,7 @@ def save_orbitquant_artifact(
         "target_policy": config.target_policy,
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "activation_eps": config.activation_eps,
         "quantization_device": getattr(summary, "quantization_device", "unknown"),
         "weight_quantization_backend": getattr(
             summary, "weight_quantization_backend", "unknown"

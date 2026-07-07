@@ -1,6 +1,7 @@
 import torch
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 
+import orbitquant.codebooks.lloyd_max as lloyd_max_module
 from orbitquant.codebooks import clear_codebook_cache, codebook_cache_path, get_codebook
 
 
@@ -33,7 +34,27 @@ def test_lloyd_max_quantization_error_decreases_with_bits():
     assert mse4 < mse3 < mse2
 
 
-def test_lloyd_max_codebook_reuses_persistent_disk_cache(tmp_path, monkeypatch):
+def test_lloyd_max_codebook_reuses_valid_persistent_disk_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORBITQUANT_CODEBOOK_CACHE_DIR", str(tmp_path))
+    clear_codebook_cache()
+    cache_path = codebook_cache_path(dim=40, bits=2)
+    assert cache_path is not None
+
+    generated = get_codebook(dim=40, bits=2)
+    clear_codebook_cache()
+
+    def fail_generation(*args, **kwargs):
+        raise AssertionError("valid disk cache should be used without regeneration")
+
+    monkeypatch.setattr(lloyd_max_module, "_generate_codebook", fail_generation)
+
+    restored = get_codebook(dim=40, bits=2)
+
+    assert torch.equal(restored.centroids, generated.centroids)
+    assert torch.equal(restored.boundaries, generated.boundaries)
+
+
+def test_lloyd_max_codebook_rejects_untrusted_legacy_disk_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("ORBITQUANT_CODEBOOK_CACHE_DIR", str(tmp_path))
     clear_codebook_cache()
     cache_path = codebook_cache_path(dim=40, bits=2)
@@ -52,9 +73,13 @@ def test_lloyd_max_codebook_reuses_persistent_disk_cache(tmp_path, monkeypatch):
     )
 
     codebook = get_codebook(dim=40, bits=2)
+    tensors = load_file(cache_path)
 
-    assert torch.equal(codebook.centroids, centroids)
-    assert torch.equal(codebook.boundaries, boundaries)
+    assert not torch.equal(codebook.centroids, centroids)
+    assert not torch.equal(codebook.boundaries, boundaries)
+    assert int(tensors["dim"].item()) == 40
+    assert int(tensors["bits"].item()) == 2
+    assert "cache_checksum" in tensors
 
 
 def test_lloyd_max_codebook_writes_persistent_disk_cache(tmp_path, monkeypatch):
@@ -66,6 +91,10 @@ def test_lloyd_max_codebook_writes_persistent_disk_cache(tmp_path, monkeypatch):
     codebook = get_codebook(dim=48, bits=3)
 
     assert cache_path.exists()
+    tensors = load_file(cache_path)
+    assert int(tensors["dim"].item()) == 48
+    assert int(tensors["bits"].item()) == 3
+    assert "cache_checksum" in tensors
     clear_codebook_cache()
     restored = get_codebook(dim=48, bits=3)
     assert torch.equal(restored.centroids, codebook.centroids)

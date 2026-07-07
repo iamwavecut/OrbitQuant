@@ -64,6 +64,8 @@ def _validate_model_index(
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
     }
+    if "activation_eps" in model_index:
+        expected["activation_eps"] = config.activation_eps
     if manifest.quantization_device != "unknown" or "quantization_device" in model_index:
         expected["quantization_device"] = manifest.quantization_device
     if (
@@ -140,6 +142,7 @@ def validate_orbitquant_artifact(
         "component": model_index["component"],
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "activation_eps": config.activation_eps,
         "adaln_group_size": manifest.adaln_group_size,
         "quantization_device": manifest.quantization_device,
         "weight_quantization_backend": manifest.weight_quantization_backend,

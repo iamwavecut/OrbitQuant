@@ -20,6 +20,7 @@ class OrbitQuantManifest:
     target_policy: str
     runtime_mode: str
     activation_kernel_backend: str
+    activation_eps: float = 1e-10
     adaln_group_size: int = 64
     quantization_device: str = "unknown"
     weight_quantization_backend: str = "unknown"
@@ -62,6 +63,7 @@ class OrbitQuantManifest:
             target_policy=config.target_policy,
             runtime_mode=config.runtime_mode,
             activation_kernel_backend=config.activation_kernel_backend,
+            activation_eps=config.activation_eps,
             adaln_group_size=config.adaln_group_size,
             quantization_device=quantization_device,
             weight_quantization_backend=weight_quantization_backend,
@@ -92,6 +94,7 @@ class OrbitQuantManifest:
             "row_norm_dtype": "bfloat16",
             "runtime_mode": self.runtime_mode,
             "activation_kernel_backend": self.activation_kernel_backend,
+            "activation_eps": self.activation_eps,
             "adaln_group_size": self.adaln_group_size,
             "quantization_device": self.quantization_device,
             "weight_quantization_backend": self.weight_quantization_backend,
@@ -122,6 +125,7 @@ class OrbitQuantManifest:
             target_policy=data.get("target_policy", "auto"),
             runtime_mode=data.get("runtime_mode", "dequant_bf16"),
             activation_kernel_backend=data.get("activation_kernel_backend", "auto"),
+            activation_eps=float(data.get("activation_eps", 1e-10)),
             adaln_group_size=int(data.get("adaln_group_size", 64)),
             quantization_device=data.get("quantization_device", "unknown"),
             weight_quantization_backend=data.get("weight_quantization_backend", "unknown"),

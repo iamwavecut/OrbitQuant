@@ -90,6 +90,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert model_index["quantization_device"] == summary.quantization_device
     assert model_index["weight_quantization_backend"] == summary.weight_quantization_backend
     assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert model_index["activation_eps"] == 1e-10
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "model_index.json" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
