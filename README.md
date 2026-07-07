@@ -272,21 +272,28 @@ Each artifact is intentionally inspectable without executing code:
 
 The default correctness runtime still uses BF16 PyTorch matmul after low-bit
 dequantization, so disk compression and runtime VRAM/latency are reported
-separately. The CUDA/Triton backend currently covers the heavy OrbitQuant
-stages around that matmul:
+separately. Kernel support is backend-specific:
 
-- runtime activation norm, RPBH/FWHT rotation, codebook lookup, and rescale;
-- packed weight dequantization;
-- opt-in packed-weight matmul via `runtime_mode="triton_packed_matmul"`;
-- low-bit pack/unpack helpers;
-- offline weight RPBH/FWHT codebook indexing with direct low-bit packing;
-- AdaLN INT4 RTN quantize/pack/dequant.
+- CPU is a correctness reference path only and does not claim optimized CPU
+  kernels.
+- MPS/Metal is partially optimized: Metal handles codebook lookup/rescale and
+  packed weight dequantization; PyTorch still handles norm, RPBH rotation, and
+  `F.linear`.
+- CUDA/Triton is partially optimized: Triton covers runtime activation norm,
+  RPBH/FWHT rotation, codebook lookup/rescale, packed weight dequantization,
+  low-bit pack/unpack, offline weight RPBH/FWHT codebook indexing with direct
+  low-bit packing, AdaLN INT4 RTN quantize/pack/dequant, and opt-in
+  packed-weight matmul via `runtime_mode="triton_packed_matmul"`.
+- ROCm and XPU are not implemented backends in this repository.
 
 Run `orbitquant kernel-info` to inspect the active backend and
 `scripts/run_cuda_kernel_checks.sh` to run the CUDA kernel test and benchmark
-gate on a GPU host. The default runtime remains `dequant_bf16`; packed-weight
-matmul is available as an explicit CUDA/Triton runtime mode while broader
-activation-plus-matmul fusion remains future work.
+gate on a GPU host. Use `scripts/run_mps_kernel_checks.sh` for the equivalent
+short MPS/Metal gate on Apple Silicon. The default runtime remains
+`dequant_bf16`; packed-weight matmul is available as an explicit CUDA/Triton
+runtime mode while broader activation-plus-matmul fusion remains future work.
+See [docs/kernel-audit.md](docs/kernel-audit.md) for the release claim
+boundary.
 
 ## License
 

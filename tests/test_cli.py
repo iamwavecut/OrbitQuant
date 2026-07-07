@@ -37,6 +37,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
         lambda: {
             "cpu": {
                 "available": True,
+                "claim_status": "reference_only",
                 "optimized": False,
                 "weight_dequant_optimized": False,
                 "weight_pack_optimized": False,
@@ -45,8 +46,9 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
                 "adaln_dequant_optimized": False,
             },
             "mps": {
+                "claim_status": "partial_optimized",
                 "implementation": "metal_codebook_rescale",
-                "optimized_stage": "codebook_lookup_rescale",
+                "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant",
                 "weight_dequant_optimized": True,
                 "weight_pack_optimized": False,
                 "weight_quant_optimized": False,
@@ -55,9 +57,11 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
                 "full_fusion": False,
             },
             "triton_cuda": {
+                "claim_status": "partial_optimized",
                 "optimized_stage": (
-                    "codebook_lookup_rescale,packed_weight_dequant,"
-                    "packed_weight_matmul,lowbit_pack,weight_rotation_fwht_quant_pack,"
+                    "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
+                    "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
+                    "weight_rotation_fwht_quant_pack,"
                     "adaln_rtn_quant_pack,adaln_rtn_dequant"
                 ),
                 "weight_dequant_optimized": True,
@@ -74,6 +78,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["cpu"]["available"] is True
+    assert payload["cpu"]["claim_status"] == "reference_only"
     assert payload["cpu"]["optimized"] is False
     assert payload["cpu"]["weight_dequant_optimized"] is False
     assert payload["cpu"]["weight_pack_optimized"] is False
@@ -81,7 +86,8 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["cpu"]["adaln_quant_optimized"] is False
     assert payload["cpu"]["adaln_dequant_optimized"] is False
     assert payload["mps"]["implementation"] == "metal_codebook_rescale"
-    assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert payload["mps"]["claim_status"] == "partial_optimized"
+    assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
     assert payload["mps"]["weight_dequant_optimized"] is True
     assert payload["mps"]["weight_pack_optimized"] is False
     assert payload["mps"]["weight_quant_optimized"] is False
@@ -89,10 +95,12 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["mps"]["adaln_dequant_optimized"] is False
     assert payload["mps"]["full_fusion"] is False
     assert payload["triton_cuda"]["optimized_stage"] == (
-        "codebook_lookup_rescale,packed_weight_dequant,"
-        "packed_weight_matmul,lowbit_pack,weight_rotation_fwht_quant_pack,"
+        "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
+        "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
+        "weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
+    assert payload["triton_cuda"]["claim_status"] == "partial_optimized"
     assert payload["triton_cuda"]["weight_dequant_optimized"] is True
     assert payload["triton_cuda"]["weight_pack_optimized"] is True
     assert payload["triton_cuda"]["weight_quant_optimized"] is True

@@ -1,6 +1,6 @@
 import torch
 
-from orbitquant.benchmarks import benchmark_orbit_linear
+from orbitquant.benchmarks import _weight_quantization_backend_label, benchmark_orbit_linear
 
 
 def test_benchmark_orbit_linear_reports_stage_timings_on_cpu():
@@ -79,3 +79,8 @@ def test_benchmark_orbit_linear_reports_tuned_packed_matmul_default_tile_on_cpu(
         "block_k": 64,
         "num_warps": 8,
     }
+
+
+def test_benchmark_weight_backend_label_separates_reference_mps_from_cpu():
+    assert _weight_quantization_backend_label(torch.device("cpu")) == "torch_reference"
+    assert _weight_quantization_backend_label(torch.device("mps")) == "torch_reference_mps"

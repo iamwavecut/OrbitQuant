@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 
@@ -21,3 +22,14 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "uv pip install --python" in text
     assert "dist/orbitquant-0.1.0-py3-none-any.whl" in text
     assert "orbitquant --version" in text
+
+
+def test_kernel_check_scripts_are_executable_and_stage_logged():
+    for script_name in ("run_cuda_kernel_checks.sh", "run_mps_kernel_checks.sh"):
+        script = Path("scripts") / script_name
+        assert script.is_file()
+        assert os.access(script, os.X_OK)
+
+        text = script.read_text(encoding="utf-8")
+        assert "REMOTE_STAGE" in text
+        assert "orbitquant kernel-info" in text

@@ -98,6 +98,14 @@ def _peak_memory_bytes(device: torch.device) -> int | None:
     return int(torch.cuda.max_memory_allocated(device))
 
 
+def _weight_quantization_backend_label(device: torch.device) -> str:
+    if device.type == "cuda" and backend_capabilities()["triton_cuda"]["available"]:
+        return "triton_cuda"
+    if device.type == "mps":
+        return "torch_reference_mps"
+    return "torch_reference"
+
+
 def benchmark_orbit_linear(
     *,
     tokens: int = 1024,
@@ -284,11 +292,7 @@ def benchmark_orbit_linear(
         "selected_activation_kernel_backend": select_backend(
             target_device, requested=activation_kernel_backend
         ),
-        "weight_quantization_backend": (
-            "triton_cuda"
-            if target_device.type == "cuda" and backend_capabilities()["triton_cuda"]["available"]
-            else "torch_reference"
-        ),
+        "weight_quantization_backend": _weight_quantization_backend_label(target_device),
         "runtime_mode": config.runtime_mode,
         "packed_matmul_tile": {
             "block_m": config.packed_matmul_block_m,

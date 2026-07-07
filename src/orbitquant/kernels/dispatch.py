@@ -38,6 +38,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
     return {
         "cpu": {
             "available": bool(available["cpu"]),
+            "claim_status": "reference_only",
             "optimized": False,
             "full_fusion": False,
             "optimized_stage": None,
@@ -53,9 +54,12 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
         },
         "mps": {
             "available": bool(available["mps"]),
+            "claim_status": "partial_optimized" if mps_optimized else "reference_only",
             "optimized": mps_optimized,
             "full_fusion": False,
-            "optimized_stage": "codebook_lookup_rescale" if mps_optimized else None,
+            "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant"
+            if mps_optimized
+            else None,
             "weight_dequant_optimized": mps_optimized,
             "weight_pack_optimized": False,
             "lowbit_unpack_optimized": False,
@@ -76,6 +80,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
         },
         "triton_cuda": {
             "available": bool(available["triton_cuda"]),
+            "claim_status": "partial_optimized" if available["triton_cuda"] else "unavailable",
             "optimized": bool(available["triton_cuda"]),
             "full_fusion": False,
             "optimized_stage": (

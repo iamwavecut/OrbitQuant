@@ -17,7 +17,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "not ordinary compact artifact development, artifact cleanup, kernel" in release_gates
     assert "work, or model-card refreshes" in release_gates
     assert "Full-model module classification inventories" in release_gates
-    assert "CUDA/Triton, CPU, Metal/MPS, ROCm, and XPU" in release_gates
+    assert "CUDA/Triton partial optimized" in release_gates
+    assert "Metal/MPS partial optimized" in release_gates
+    assert "CPU\n  reference-only" in release_gates
+    assert "ROCm/XPU explicitly unsupported" in release_gates
+    assert "[kernel-audit.md](kernel-audit.md)" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
         in release_gates
@@ -32,3 +36,17 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "python -m twine upload\n  dist/*" in release_gates
     assert "PyPI token or browser\n  action" in release_gates
     assert "chronology" not in release_gates.lower()
+
+
+def test_kernel_audit_documents_backend_claim_boundaries():
+    kernel_audit = Path("docs/kernel-audit.md").read_text(encoding="utf-8")
+
+    assert "CPU | Reference-only" in kernel_audit
+    assert "MPS/Metal | Partial optimized" in kernel_audit
+    assert "CUDA/Triton | Partial optimized" in kernel_audit
+    assert "ROCm | Unsupported" in kernel_audit
+    assert "XPU | Unsupported" in kernel_audit
+    assert "default low-bit tensor-core speedup" in kernel_audit
+    assert "full activation-plus-matmul fusion" in kernel_audit
+    assert "`claim_status` values" in kernel_audit
+    assert "not a\nHugging Face Kernels Hub `kernel-builder` package" in kernel_audit

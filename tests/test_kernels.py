@@ -59,6 +59,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     )
 
     assert capabilities["cpu"]["available"] is True
+    assert capabilities["cpu"]["claim_status"] == "reference_only"
     assert capabilities["cpu"]["optimized"] is False
     assert capabilities["cpu"]["weight_dequant_optimized"] is False
     assert capabilities["cpu"]["weight_pack_optimized"] is False
@@ -68,6 +69,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["cpu"]["adaln_dequant_optimized"] is False
     assert capabilities["cpu"]["implementation"] == "torch_reference"
     assert capabilities["mps"]["available"] is True
+    assert capabilities["mps"]["claim_status"] == "reference_only"
     assert capabilities["mps"]["optimized"] is False
     assert capabilities["mps"]["weight_dequant_optimized"] is False
     assert capabilities["mps"]["weight_pack_optimized"] is False
@@ -77,6 +79,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["mps"]["adaln_dequant_optimized"] is False
     assert capabilities["mps"]["implementation"] == "torch_reference_mps"
     assert capabilities["triton_cuda"]["available"] is True
+    assert capabilities["triton_cuda"]["claim_status"] == "partial_optimized"
     assert capabilities["triton_cuda"]["optimized"] is True
     assert capabilities["triton_cuda"]["optimized_stage"] == (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
@@ -100,9 +103,10 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     )
 
     assert capabilities["mps"]["available"] is True
+    assert capabilities["mps"]["claim_status"] == "partial_optimized"
     assert capabilities["mps"]["optimized"] is True
     assert capabilities["mps"]["implementation"] == "metal_codebook_rescale"
-    assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale"
+    assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
     assert capabilities["mps"]["weight_dequant_optimized"] is True
     assert capabilities["mps"]["weight_pack_optimized"] is False
     assert capabilities["mps"]["lowbit_unpack_optimized"] is False
@@ -111,6 +115,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["adaln_dequant_optimized"] is False
     assert capabilities["mps"]["full_fusion"] is False
     assert capabilities["triton_cuda"]["available"] is False
+    assert capabilities["triton_cuda"]["claim_status"] == "unavailable"
     assert capabilities["triton_cuda"]["optimized"] is False
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is False
     assert capabilities["triton_cuda"]["weight_pack_optimized"] is False

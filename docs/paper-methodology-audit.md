@@ -102,7 +102,7 @@ Required before final publication:
 | --- | --- | --- | --- |
 | CPU | Pass as reference | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/functional.py` | Correctness baseline only; no optimized CPU kernel claim. |
 | CUDA/Triton | Partial optimized path | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Covers activation norm/RPBH/lookup/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and opt-in packed matmul. Default `dequant_bf16` still uses PyTorch BF16 matmul. |
-| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py` | Metal handles codebook lookup/rescale and packed weight dequant. Norm and RPBH rotation still use PyTorch. |
+| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py` | Metal handles codebook lookup/rescale and packed weight dequant. Norm, RPBH rotation, and `F.linear` still use PyTorch. |
 | ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
 | XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
 

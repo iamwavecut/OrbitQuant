@@ -26,9 +26,10 @@ URL, or signed-off audit note.
   local under ignored `reports/`, but each published artifact manifest must be
   cross-checked against the captured summary for quantized, AdaLN INT4, and
   skipped modules.
-- [ ] Optimized kernel audit and benchmarks are complete for the supported or
-  targeted backends: CUDA/Triton, CPU, Metal/MPS, ROCm, and XPU. Unsupported
-  backends have an explicit exclusion note instead of a silent gap.
+- [ ] Kernel audit and benchmarks match the advertised backend claim boundary:
+  CUDA/Triton partial optimized, Metal/MPS partial optimized, CPU
+  reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
+  The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
 - [ ] Compatibility is verified against the latest published releases and dev
   branches of Diffusers and Transformers.
 - [ ] ComfyUI compatibility is verified after the relevant schema stabilizes,

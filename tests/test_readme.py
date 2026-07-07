@@ -35,6 +35,12 @@ def test_readme_documents_component_artifact_usage():
     assert "--prompt-metadata-jsonl /path/to/GenEval/evaluation_metadata.jsonl" in readme
     assert "orbitquant external-eval-script" in readme
     assert "[docs/release-gates.md](docs/release-gates.md)" in readme
+    assert "CPU is a correctness reference path only" in readme
+    assert "MPS/Metal is partially optimized" in readme
+    assert "CUDA/Triton is partially optimized" in readme
+    assert "ROCm and XPU are not implemented backends" in readme
+    assert "scripts/run_mps_kernel_checks.sh" in readme
+    assert "[docs/kernel-audit.md](docs/kernel-audit.md)" in readme
     assert "stage_log START/END" not in readme
     assert "RunPod" not in readme
     assert "REMOTE_STAGE" not in readme
