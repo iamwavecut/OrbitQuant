@@ -44,7 +44,7 @@ def quantize_pipeline(
     config: OrbitQuantConfig,
     *,
     component: str = "transformer",
-    quantization_device: str | torch.device | None = None,
+    quantization_device: str | torch.device | None = "auto",
 ) -> QuantizationSummary:
     target = _get_pipeline_component(pipeline, component)
     return quantize_linear_modules(

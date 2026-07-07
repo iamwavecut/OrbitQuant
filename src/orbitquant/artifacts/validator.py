@@ -69,6 +69,13 @@ def _validate_model_index(
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
     }
+    if manifest.quantization_device != "unknown" or "quantization_device" in model_index:
+        expected["quantization_device"] = manifest.quantization_device
+    if (
+        manifest.weight_quantization_backend != "unknown"
+        or "weight_quantization_backend" in model_index
+    ):
+        expected["weight_quantization_backend"] = manifest.weight_quantization_backend
     mismatches = [
         mismatch
         for key, value in expected.items()
@@ -133,6 +140,8 @@ def validate_orbitquant_artifact(
         "component": model_index["component"],
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "quantization_device": manifest.quantization_device,
+        "weight_quantization_backend": manifest.weight_quantization_backend,
         "tensor_count": len(expected_shapes),
         "tensor_validation": "checked" if validate_tensors else "skipped",
         "checksum_validation": "checked" if validate_checksums_enabled else "skipped",

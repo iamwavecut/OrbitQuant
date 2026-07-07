@@ -154,10 +154,10 @@ class RTNInt4Linear(nn.Module):
                 return dequantized
 
         total = self.out_features * self.num_groups * self.group_size
-        unsigned = unpack_lowbit(self.packed_weight, bits=4, length=total)
+        unsigned = unpack_lowbit(self.packed_weight, bits=4, length=total).to(device=device)
         signed = unsigned.to(torch.int16).sub(8).to(torch.float32)
         grouped = signed.reshape(self.out_features, self.num_groups, self.group_size)
-        scales = self.scales.to(device="cpu", dtype=torch.float32)
+        scales = self.scales.to(device=device, dtype=torch.float32)
         weight = (grouped * scales[..., None]).reshape(
             self.out_features, self.num_groups * self.group_size
         )

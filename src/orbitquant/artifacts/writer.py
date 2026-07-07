@@ -62,6 +62,8 @@ def _model_index_payload(
     source_revision: str,
     source_license: str,
     component: str,
+    quantization_device: str,
+    weight_quantization_backend: str,
 ) -> dict[str, Any]:
     return {
         "_class_name": "OrbitQuantComponentArtifact",
@@ -81,6 +83,8 @@ def _model_index_payload(
         "target_policy": config.target_policy,
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "quantization_device": quantization_device,
+        "weight_quantization_backend": weight_quantization_backend,
     }
 
 
@@ -116,6 +120,10 @@ def save_orbitquant_artifact(
                 source_revision=source_revision,
                 source_license=source_license,
                 component=component,
+                quantization_device=getattr(summary, "quantization_device", "unknown"),
+                weight_quantization_backend=getattr(
+                    summary, "weight_quantization_backend", "unknown"
+                ),
             ),
             indent=2,
         )
@@ -138,6 +146,10 @@ def save_orbitquant_artifact(
         "target_policy": config.target_policy,
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "quantization_device": getattr(summary, "quantization_device", "unknown"),
+        "weight_quantization_backend": getattr(
+            summary, "weight_quantization_backend", "unknown"
+        ),
     }
     benchmark_path.write_text(json.dumps(benchmark_summary, indent=2) + "\n", encoding="utf-8")
     original_metrics_jsonl_path = output_path / "benchmark" / "original.metrics.jsonl"
@@ -177,6 +189,10 @@ def save_orbitquant_artifact(
         skipped_modules=skipped,
         module_shapes=_module_shapes(model),
         checksums=checksums,
+        quantization_device=getattr(summary, "quantization_device", "unknown"),
+        weight_quantization_backend=getattr(
+            summary, "weight_quantization_backend", "unknown"
+        ),
     )
 
     (output_path / "orbitquant_manifest.json").write_text(

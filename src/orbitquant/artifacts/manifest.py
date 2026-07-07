@@ -20,6 +20,8 @@ class OrbitQuantManifest:
     target_policy: str
     runtime_mode: str
     activation_kernel_backend: str
+    quantization_device: str = "unknown"
+    weight_quantization_backend: str = "unknown"
     quantized_modules: list[str] = field(default_factory=list)
     adaln_modules: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
@@ -39,6 +41,8 @@ class OrbitQuantManifest:
         adaln_modules: list[str] | None = None,
         module_shapes: dict[str, list[int]] | None = None,
         checksums: dict[str, str] | None = None,
+        quantization_device: str = "unknown",
+        weight_quantization_backend: str = "unknown",
     ) -> OrbitQuantManifest:
         return cls(
             source_model_id=source_model_id,
@@ -55,6 +59,8 @@ class OrbitQuantManifest:
             target_policy=config.target_policy,
             runtime_mode=config.runtime_mode,
             activation_kernel_backend=config.activation_kernel_backend,
+            quantization_device=quantization_device,
+            weight_quantization_backend=weight_quantization_backend,
             quantized_modules=list(quantized_modules),
             adaln_modules=[] if adaln_modules is None else list(adaln_modules),
             skipped_modules=list(skipped_modules),
@@ -81,6 +87,8 @@ class OrbitQuantManifest:
             "row_norm_dtype": "bfloat16",
             "runtime_mode": self.runtime_mode,
             "activation_kernel_backend": self.activation_kernel_backend,
+            "quantization_device": self.quantization_device,
+            "weight_quantization_backend": self.weight_quantization_backend,
             "target_policy": self.target_policy,
             "adaln_policy": "int4_rtn_group64_bf16_activation",
             "quantized_modules": self.quantized_modules,
@@ -107,6 +115,8 @@ class OrbitQuantManifest:
             target_policy=data.get("target_policy", "auto"),
             runtime_mode=data.get("runtime_mode", "dequant_bf16"),
             activation_kernel_backend=data.get("activation_kernel_backend", "auto"),
+            quantization_device=data.get("quantization_device", "unknown"),
+            weight_quantization_backend=data.get("weight_quantization_backend", "unknown"),
             quantized_modules=list(data.get("quantized_modules", [])),
             adaln_modules=list(data.get("adaln_modules", [])),
             skipped_modules=list(data.get("skipped_modules", [])),

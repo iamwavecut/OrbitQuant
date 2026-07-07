@@ -156,6 +156,21 @@ def test_on_the_fly_quantizer_passes_quantization_device_to_post_load_quantizati
     assert seen_devices == [torch.device("cpu")]
 
 
+def test_quantizer_defaults_to_auto_quantization_device(monkeypatch):
+    seen_values = []
+
+    def fake_quantization_device(value):
+        seen_values.append(value)
+        return torch.device("cuda" if value == "auto" else value)
+
+    monkeypatch.setattr("orbitquant.quantizer._quantization_device", fake_quantization_device)
+
+    quantizer = OrbitQuantizer(OrbitQuantConfig(block_size=8), pre_quantized=False)
+
+    assert quantizer.quantization_device == torch.device("cuda")
+    assert seen_values == ["auto"]
+
+
 def test_transformers_streaming_conversion_moves_weight_to_quantization_device(monkeypatch):
     pytest.importorskip("transformers")
     from orbitquant.transformers_ops import OrbitQuantWeightQuantize
@@ -217,12 +232,12 @@ def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():
     assert isinstance(restored.transformer_blocks[0]["modulation"], RTNInt4Linear)
     restored_state = restored.state_dict()
     assert torch.equal(
-        restored_state["transformer_blocks.0.attn.to_q.packed_weight_indices"],
-        source_state["transformer_blocks.0.attn.to_q.packed_weight_indices"],
+        restored_state["transformer_blocks.0.attn.to_q.packed_weight_indices"].cpu(),
+        source_state["transformer_blocks.0.attn.to_q.packed_weight_indices"].cpu(),
     )
     assert torch.equal(
-        restored_state["transformer_blocks.0.modulation.packed_weight"],
-        source_state["transformer_blocks.0.modulation.packed_weight"],
+        restored_state["transformer_blocks.0.modulation.packed_weight"].cpu(),
+        source_state["transformer_blocks.0.modulation.packed_weight"].cpu(),
     )
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(restored.transformer_blocks[0]["attn"]["to_q"](x)).all()
@@ -264,7 +279,7 @@ def test_pre_quantized_quantizer_materializes_streamed_packed_tensors():
 
     restored_state = restored.state_dict()
     for key in streamed_keys:
-        assert torch.equal(restored_state[key], source_state[key])
+        assert torch.equal(restored_state[key].cpu(), source_state[key].cpu())
         assert key not in unexpected_keys
 
 
@@ -302,7 +317,7 @@ def test_diffusers_meta_loader_streams_pre_quantized_tensors_through_quantizer()
 
     restored_state = restored.state_dict()
     for key in streamed_keys:
-        assert torch.equal(restored_state[key], source_state[key])
+        assert torch.equal(restored_state[key].cpu(), source_state[key].cpu())
         assert key not in unexpected_keys
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(restored.transformer_blocks[0]["attn"]["to_q"](x)).all()
@@ -328,6 +343,6 @@ def test_quantizer_dequantize_restores_torch_linear_modules_for_debugging():
     assert isinstance(adaln_layer, torch.nn.Linear)
     assert orbit_layer.weight.requires_grad is False
     assert adaln_layer.weight.requires_grad is False
-    x = torch.randn(2, 3, 16)
+    x = torch.randn(2, 3, 16, device=orbit_layer.weight.device)
     assert torch.isfinite(orbit_layer(x)).all()
-    assert torch.isfinite(adaln_layer(x)).all()
+    assert torch.isfinite(adaln_layer(x.to(device=adaln_layer.weight.device))).all()

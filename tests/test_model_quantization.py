@@ -1,5 +1,6 @@
 import torch
 
+import orbitquant.modeling as modeling_module
 from orbitquant import OrbitQuantConfig, OrbitQuantLinear
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
@@ -33,6 +34,8 @@ def test_quantize_linear_modules_replaces_orbit_and_adaln_targets_only():
     assert summary.quantized_modules == ["transformer_blocks.0.attn.to_q"]
     assert summary.adaln_modules == ["transformer_blocks.0.modulation"]
     assert summary.skipped_modules == ["proj_out"]
+    assert summary.quantization_device == ("cuda" if torch.cuda.is_available() else "cpu")
+    assert summary.weight_quantization_backend in {"torch_reference", "triton_cuda"}
 
 
 def test_quantize_linear_modules_keeps_dtype_overridden_modules_unquantized():
@@ -63,6 +66,24 @@ def test_quantize_linear_modules_fails_loud_for_unavailable_cuda_device(monkeypa
         assert "CUDA quantization device requested" in str(exc)
     else:
         raise AssertionError("unavailable CUDA quantization device was accepted")
+
+
+def test_auto_quantization_device_prefers_cuda_and_falls_back_to_cpu(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert modeling_module._quantization_device("auto") == torch.device("cuda")
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert modeling_module._quantization_device("auto") == torch.device("cpu")
+
+
+def test_quantize_linear_modules_preserve_device_mode_records_reference_backend():
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+
+    summary = quantize_linear_modules(model, config, quantization_device=None)
+
+    assert summary.quantization_device == "preserve"
+    assert summary.weight_quantization_backend == "module_device"
 
 
 def test_prewarm_quantized_linear_modules_materializes_weight_caches():

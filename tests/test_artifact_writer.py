@@ -56,6 +56,10 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert model_index["quantization_config"] == "quantization_config.json"
     assert model_index["manifest"] == "orbitquant_manifest.json"
     assert manifest["source_model_id"] == "example/model"
+    assert manifest["quantization_device"] == summary.quantization_device
+    assert manifest["weight_quantization_backend"] == summary.weight_quantization_backend
+    assert model_index["quantization_device"] == summary.quantization_device
+    assert model_index["weight_quantization_backend"] == summary.weight_quantization_backend
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "model_index.json" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
@@ -106,6 +110,8 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert any("КВАНТОВАНИЕ" in item["prompt"] for item in prompts["prompts"])
     assert benchmark_summary["status"] == "not_run"
     assert benchmark_summary["source_model_id"] == "example/model"
+    assert benchmark_summary["quantization_device"] == summary.quantization_device
+    assert benchmark_summary["weight_quantization_backend"] == summary.weight_quantization_backend
     assert (tmp_path / "benchmark" / "original.metrics.jsonl").read_text() == ""
     assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
     assert (tmp_path / "benchmark" / "original.metrics.csv").read_text() == "metric,value\n"

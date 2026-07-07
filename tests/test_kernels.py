@@ -3,6 +3,7 @@ import torch
 
 import orbitquant.kernels.dispatch as dispatch_module
 from orbitquant.codebooks import get_codebook
+from orbitquant.config import OrbitQuantConfig
 from orbitquant.functional import quantize_activations
 from orbitquant.kernels import (
     available_backends,
@@ -10,6 +11,8 @@ from orbitquant.kernels import (
     quantize_activations_kernel,
     select_backend,
 )
+from orbitquant.layers import OrbitQuantLinear
+from orbitquant.modeling import quantize_linear_modules
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation
 
@@ -412,3 +415,30 @@ def test_triton_cuda_activation_kernel_matches_paper_sized_rpbh_block():
 
     assert rotation.block_size == 1024
     assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+def test_cuda_quantize_linear_modules_keeps_packed_buffers_on_gpu_until_serialization():
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(3)
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [
+            torch.nn.ModuleDict(
+                {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(32, 32)})}
+            )
+        ]
+    )
+    config = OrbitQuantConfig(block_size=8, target_policy="generic_dit")
+
+    summary = quantize_linear_modules(model, config, quantization_device="cuda")
+
+    quantized = model.transformer_blocks[0]["attn"]["to_q"]
+    assert isinstance(quantized, OrbitQuantLinear)
+    assert summary.quantization_device == "cuda"
+    assert summary.weight_quantization_backend == "triton_cuda"
+    assert quantized.packed_weight_indices is not None
+    assert quantized.row_norms is not None
+    assert quantized.packed_weight_indices.is_cuda
+    assert quantized.row_norms.is_cuda

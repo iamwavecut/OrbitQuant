@@ -561,6 +561,8 @@ def main(argv: list[str] | None = None) -> int:
                     "source_model_id": model_id,
                     "source_revision": manifest.source_revision,
                     "source_license": manifest.source_license,
+                    "quantization_device": summary.quantization_device,
+                    "weight_quantization_backend": summary.weight_quantization_backend,
                     "quantized_modules": summary.quantized_modules,
                     "adaln_modules": summary.adaln_modules,
                     "skipped_modules": summary.skipped_modules,

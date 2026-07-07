@@ -17,6 +17,7 @@ from orbitquant.policies import classify_linear_modules
 
 _ORBITQUANT_STATE_TENSORS = {"packed_weight_indices", "row_norms", "debug_weight", "bias"}
 _RTN_INT4_STATE_TENSORS = {"packed_weight", "scales", "bias"}
+_MISSING = object()
 
 
 def _hf_base_classes() -> tuple[type, ...]:
@@ -132,8 +133,9 @@ class OrbitQuantizer(*_hf_base_classes()):
     ) -> None:
         if isinstance(quantization_config, dict):
             quantization_config = OrbitQuantConfig.from_dict(quantization_config)
+        quantization_device_arg = kwargs.pop("quantization_device", _MISSING)
         quantization_device = _normalise_quantization_device(
-            kwargs.pop("quantization_device", None)
+            "auto" if quantization_device_arg is _MISSING else quantization_device_arg
         )
         modules_to_not_convert = list(kwargs.get("modules_to_not_convert") or [])
         modules_dtype_dict = {

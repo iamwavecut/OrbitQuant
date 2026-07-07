@@ -7,6 +7,7 @@ import torch
 
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.kernels import available_backends
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.policies import PolicyDecision, classify_linear_modules
 
@@ -25,6 +26,8 @@ class QuantizationSummary:
     quantized_modules: list[str] = field(default_factory=list)
     adaln_modules: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
+    quantization_device: str = "auto"
+    weight_quantization_backend: str = "torch_reference"
 
 
 @dataclass(frozen=True)
@@ -63,9 +66,17 @@ def _apply_dtype_override(module: torch.nn.Module, decision: PolicyDecision) -> 
     module.to(dtype=_TORCH_DTYPE_BY_NAME[decision.dtype])
 
 
+def _auto_quantization_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 def _quantization_device(device: str | torch.device | None) -> torch.device | None:
     if device is None:
         return None
+    if device == "auto":
+        return _auto_quantization_device()
     torch_device = torch.device(device)
     if torch_device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA quantization device requested but CUDA is not available")
@@ -74,19 +85,31 @@ def _quantization_device(device: str | torch.device | None) -> torch.device | No
     return torch_device
 
 
+def _weight_quantization_backend(device: torch.device | None) -> str:
+    if device is None:
+        return "module_device"
+    if device.type == "cuda" and available_backends()["triton_cuda"]:
+        return "triton_cuda"
+    if device.type == "mps":
+        return "torch_reference_mps"
+    return "torch_reference"
+
+
 def quantize_linear_modules(
     model: torch.nn.Module,
     config: OrbitQuantConfig,
     *,
-    quantization_device: str | torch.device | None = None,
+    quantization_device: str | torch.device | None = "auto",
 ) -> QuantizationSummary:
     decisions = classify_linear_modules(model, config)
-    modules = dict(model.named_modules())
-    summary = QuantizationSummary()
     target_device = _quantization_device(quantization_device)
+    summary = QuantizationSummary(
+        quantization_device="preserve" if target_device is None else str(target_device),
+        weight_quantization_backend=_weight_quantization_backend(target_device),
+    )
 
     for name, decision in decisions.items():
-        module = modules[name]
+        module = model.get_submodule(name)
         if not isinstance(module, torch.nn.Linear):
             continue
         if decision.action == "orbitquant":
@@ -114,11 +137,10 @@ def prepare_prequantized_linear_modules(
     model: torch.nn.Module, config: OrbitQuantConfig
 ) -> QuantizationSummary:
     decisions = classify_linear_modules(model, config)
-    modules = dict(model.named_modules())
     summary = QuantizationSummary()
 
     for name, decision in decisions.items():
-        module = modules[name]
+        module = model.get_submodule(name)
         if not isinstance(module, torch.nn.Linear):
             continue
         if decision.action == "orbitquant":
