@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 
 
@@ -292,12 +294,71 @@ def _validation_status_section(source_model_id: str) -> list[str]:
     ]
 
 
-def render_model_card(manifest: OrbitQuantManifest) -> str:
+def _native_validation_proof_section(
+    benchmark_summary: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(benchmark_summary, dict):
+        return []
+    proof = benchmark_summary.get("native_smoke")
+    if not isinstance(proof, dict):
+        return []
+
+    rows: list[tuple[str, str]] = []
+    comparison_asset_path = proof.get("comparison_asset_path")
+    if isinstance(comparison_asset_path, str) and comparison_asset_path:
+        rows.append(("Comparison matrix", f"`{comparison_asset_path}`"))
+
+    paired_count = proof.get("paired_prompt_seed_count")
+    if paired_count is not None:
+        rows.append(("Paired prompt/seed count", f"`{paired_count}`"))
+
+    splits = proof.get("splits")
+    if isinstance(splits, dict):
+        for split, label in (
+            ("original", "BF16 source"),
+            ("orbitquant", "OrbitQuant"),
+        ):
+            split_payload = splits.get(split)
+            if not isinstance(split_payload, dict):
+                continue
+            for key, name in (
+                ("generated_samples", "generated samples"),
+                ("generated_frames", "generated frames"),
+                ("nonempty_output_count", "nonempty outputs"),
+            ):
+                value = split_payload.get(key)
+                if value is not None:
+                    rows.append((f"{label} {name}", f"`{value}`"))
+
+    if not rows:
+        return []
+
+    lines = [
+        "## Native Validation Proof",
+        "",
+        "The compact benchmark summary records native BF16-vs-OrbitQuant "
+        "evidence for the comparison matrix below. Raw generation records are "
+        "kept local-only and are not part of this published artifact.",
+        "",
+        "| Evidence | Value |",
+        "| --- | --- |",
+    ]
+    lines.extend(f"| {name} | {value} |" for name, value in rows)
+    lines.append("")
+    return lines
+
+
+def render_model_card(
+    manifest: OrbitQuantManifest,
+    *,
+    benchmark_summary: dict[str, Any] | None = None,
+) -> str:
     data = manifest.to_dict()
     bits = f"W{data['weight_bits']}A{data['activation_bits']}"
     comparison_assets = _comparison_assets(data["checksums"])
     native_settings_lines = _native_settings_section(data["source_model_id"])
     validation_status_lines = _validation_status_section(data["source_model_id"])
+    native_validation_proof_lines = _native_validation_proof_section(benchmark_summary)
     adaln_group_size = int(data.get("adaln_group_size", 64))
     adaln_default_note = (
         "- AdaLN group-size note: paper default."
@@ -368,6 +429,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             "",
             *native_settings_lines,
             *validation_status_lines,
+            *native_validation_proof_lines,
             "## Quantization",
             "",
             f"- Method: `{data['quant_method']}`",

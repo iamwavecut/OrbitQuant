@@ -106,7 +106,10 @@ def repair_artifact_metadata(
         }
     )
     _write_json(manifest_path, manifest.to_dict())
-    (artifact_path / "README.md").write_text(render_model_card(manifest), encoding="utf-8")
+    (artifact_path / "README.md").write_text(
+        render_model_card(manifest, benchmark_summary=benchmark_summary),
+        encoding="utf-8",
+    )
     write_sha256sums_from_manifest(artifact_path, manifest.checksums)
 
     after = validate_orbitquant_artifact(

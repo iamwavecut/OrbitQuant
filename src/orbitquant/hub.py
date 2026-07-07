@@ -1501,7 +1501,10 @@ def repair_hf_artifact_metadata(
         }
     )
     next_manifest_bytes = _json_bytes(repaired_manifest.to_dict())
-    next_readme_bytes = render_model_card(repaired_manifest).encode("utf-8")
+    next_readme_bytes = render_model_card(
+        repaired_manifest,
+        benchmark_summary=benchmark_summary,
+    ).encode("utf-8")
 
     sha_entries = _parse_sha256sums_bytes(sha256sums_bytes)
     sha_entries.update(
@@ -1588,6 +1591,7 @@ def repair_hf_native_smoke_proof(
 
     manifest_bytes = _read_remote_bytes(repo_id, "orbitquant_manifest.json", revision=revision)
     benchmark_bytes = _read_remote_bytes(repo_id, "benchmark/summary.json", revision=revision)
+    readme_bytes = _read_remote_bytes(repo_id, "README.md", revision=revision)
     sha256sums_bytes = _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
 
     manifest = OrbitQuantManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
@@ -1609,6 +1613,44 @@ def repair_hf_native_smoke_proof(
         "commit": None,
     }
     if current_status["ready"]:
+        next_readme_bytes = render_model_card(
+            manifest,
+            benchmark_summary=benchmark_summary,
+        ).encode("utf-8")
+        if next_readme_bytes == readme_bytes:
+            return result
+        sha_entries = _parse_sha256sums_bytes(sha256sums_bytes)
+        sha_entries.update({"README.md": _sha256_bytes(next_readme_bytes)})
+        sha_entries.pop("SHA256SUMS", None)
+        next_sha256sums_bytes = _sha256sums_bytes(sha_entries)
+        file_payloads = {
+            "README.md": next_readme_bytes,
+            "SHA256SUMS": next_sha256sums_bytes,
+        }
+        original_payloads = {
+            "README.md": readme_bytes,
+            "SHA256SUMS": sha256sums_bytes,
+        }
+        changed_files = [
+            filename
+            for filename, payload in file_payloads.items()
+            if original_payloads.get(filename) != payload
+        ]
+        result["changed_files"] = changed_files
+        if dry_run or not changed_files:
+            return result
+        operations = [
+            CommitOperationAdd(path_in_repo=filename, path_or_fileobj=file_payloads[filename])
+            for filename in changed_files
+        ]
+        commit_info = api.create_commit(
+            repo_id=repo_id,
+            repo_type="model",
+            revision=revision,
+            operations=operations,
+            commit_message=commit_message or "Refresh OrbitQuant native smoke model card",
+        )
+        result["commit"] = _commit_info_payload(commit_info)
         return result
 
     native_smoke, skipped_reason = _recover_native_smoke_proof_from_compact_summary(
@@ -1642,12 +1684,17 @@ def repair_hf_native_smoke_proof(
         },
     )
     next_manifest_bytes = _json_bytes(next_manifest.to_dict())
+    next_readme_bytes = render_model_card(
+        next_manifest,
+        benchmark_summary=next_benchmark_summary,
+    ).encode("utf-8")
 
     sha_entries = _parse_sha256sums_bytes(sha256sums_bytes)
     sha_entries.update(
         {
             "benchmark/summary.json": _sha256_bytes(next_benchmark_bytes),
             "orbitquant_manifest.json": _sha256_bytes(next_manifest_bytes),
+            "README.md": _sha256_bytes(next_readme_bytes),
         }
     )
     sha_entries.pop("SHA256SUMS", None)
@@ -1656,11 +1703,13 @@ def repair_hf_native_smoke_proof(
     file_payloads = {
         "benchmark/summary.json": next_benchmark_bytes,
         "orbitquant_manifest.json": next_manifest_bytes,
+        "README.md": next_readme_bytes,
         "SHA256SUMS": next_sha256sums_bytes,
     }
     original_payloads = {
         "benchmark/summary.json": benchmark_bytes,
         "orbitquant_manifest.json": manifest_bytes,
+        "README.md": readme_bytes,
         "SHA256SUMS": sha256sums_bytes,
     }
     changed_files = [
@@ -1801,7 +1850,10 @@ def cleanup_hf_artifact_reports(
     cleaned_checksums["benchmark/summary.json"] = _sha256_bytes(next_benchmark_bytes)
     cleaned_manifest = replace(manifest, checksums=cleaned_checksums)
     next_manifest_bytes = _json_bytes(cleaned_manifest.to_dict())
-    next_readme_bytes = render_model_card(cleaned_manifest).encode("utf-8")
+    next_readme_bytes = render_model_card(
+        cleaned_manifest,
+        benchmark_summary=json.loads(next_benchmark_bytes.decode("utf-8")),
+    ).encode("utf-8")
 
     sha_entries = {
         relative_path: digest

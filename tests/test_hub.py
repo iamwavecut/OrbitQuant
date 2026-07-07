@@ -13,7 +13,7 @@ from orbitquant.artifacts import (
     refresh_artifact_checksums,
     save_orbitquant_artifact,
 )
-from orbitquant.artifacts.checksums import read_sha256sums
+from orbitquant.artifacts.checksums import read_sha256sums, write_sha256sums
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
 from orbitquant.hub import (
@@ -652,8 +652,17 @@ def test_stage_compact_upload_artifact_writes_native_smoke_proof(tmp_path):
     stage_compact_upload_artifact(tmp_path, stage_dir, validate_tensors=False)
 
     staged_summary = json.loads((stage_dir / "benchmark" / "summary.json").read_text())
+    staged_readme = (stage_dir / "README.md").read_text(encoding="utf-8")
     assert staged_summary["raw_generation_records"] == "local-only"
     assert "latest" not in staged_summary["metrics"]["original"]
+    assert "## Native Validation Proof" in staged_readme
+    assert "| Comparison matrix | `assets/image_generation_comparison_matrix.webp` |" in (
+        staged_readme
+    )
+    assert "| Paired prompt/seed count | `1` |" in staged_readme
+    assert "| BF16 source nonempty outputs | `1` |" in staged_readme
+    assert "| OrbitQuant nonempty outputs | `1` |" in staged_readme
+    assert "original.metrics.jsonl" not in staged_readme
     assert staged_summary["native_smoke"] == {
         "proof_format": "orbitquant-native-smoke-v1",
         "comparison_asset_path": "assets/image_generation_comparison_matrix.webp",
@@ -1087,6 +1096,7 @@ def test_repair_hf_native_smoke_proof_recovers_from_compact_summary(
     assert result["changed_files"] == [
         "benchmark/summary.json",
         "orbitquant_manifest.json",
+        "README.md",
         "SHA256SUMS",
     ]
     commit_call = fake_api.create_commit_calls[0]
@@ -1120,11 +1130,70 @@ def test_repair_hf_native_smoke_proof_recovers_from_compact_summary(
         repaired_summary["native_smoke"]["splits"]["orbitquant"]["nonempty_output_count"]
         == 1
     )
+    repaired_readme = operation_by_path["README.md"].decode("utf-8")
+    assert "## Native Validation Proof" in repaired_readme
+    assert "| Comparison matrix | `assets/image_generation_comparison_matrix.webp` |" in (
+        repaired_readme
+    )
+    assert "| Paired prompt/seed count | `1` |" in repaired_readme
     repaired_manifest = json.loads(operation_by_path["orbitquant_manifest.json"])
     sha_entries = hub_module._parse_sha256sums_bytes(operation_by_path["SHA256SUMS"])
     assert repaired_manifest["checksums"]["benchmark/summary.json"] == sha_entries[
         "benchmark/summary.json"
     ]
+    assert "README.md" in sha_entries
+
+
+def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    summary_path = tmp_path / "benchmark" / "summary.json"
+    summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
+    refresh_artifact_checksums(tmp_path)
+    manifest = hub_module.OrbitQuantManifest.from_dict(
+        json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    )
+    (tmp_path / "README.md").write_text(hub_module.render_model_card(manifest), encoding="utf-8")
+    write_sha256sums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof(
+        repo_id=repo_id,
+        suite=suite,
+        revision="main",
+        api=fake_api,
+    )
+
+    assert result["existing_native_smoke_ready"] is True
+    assert result["changed_files"] == ["README.md", "SHA256SUMS"]
+    operation_by_path = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in fake_api.create_commit_calls[0]["operations"]
+    }
+    repaired_readme = operation_by_path["README.md"].decode("utf-8")
+    assert "## Native Validation Proof" in repaired_readme
+    assert "| Paired prompt/seed count | `1` |" in repaired_readme
 
 
 def test_repair_hf_native_smoke_proof_skips_when_video_frames_are_insufficient(

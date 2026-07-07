@@ -222,6 +222,9 @@ def save_orbitquant_artifact(
     (output_path / "orbitquant_manifest.json").write_text(
         json.dumps(manifest.to_dict(), indent=2) + "\n", encoding="utf-8"
     )
-    (output_path / "README.md").write_text(render_model_card(manifest), encoding="utf-8")
+    (output_path / "README.md").write_text(
+        render_model_card(manifest, benchmark_summary=benchmark_summary),
+        encoding="utf-8",
+    )
     write_sha256sums(output_path)
     return manifest

@@ -22,12 +22,19 @@ def _read_manifest(artifact_path: Path) -> OrbitQuantManifest:
     )
 
 
+def _read_benchmark_summary(artifact_path: Path) -> dict[str, Any]:
+    return json.loads(
+        (artifact_path / "benchmark" / "summary.json").read_text(encoding="utf-8")
+    )
+
+
 def refresh_artifact_checksums(artifact_dir: str | Path) -> dict[str, Any]:
     """Rebuild manifest and SHA256SUMS checksums from current artifact files."""
 
     artifact_path = Path(artifact_dir)
     validate_required_artifact_files(artifact_path)
     manifest = _read_manifest(artifact_path)
+    benchmark_summary = _read_benchmark_summary(artifact_path)
     checksums: dict[str, str] = {}
     for path in sorted(artifact_path.rglob("*")):
         if not path.is_file():
@@ -47,7 +54,7 @@ def refresh_artifact_checksums(artifact_dir: str | Path) -> dict[str, Any]:
         encoding="utf-8",
     )
     (artifact_path / "README.md").write_text(
-        render_model_card(updated_manifest),
+        render_model_card(updated_manifest, benchmark_summary=benchmark_summary),
         encoding="utf-8",
     )
     write_sha256sums_from_manifest(artifact_path, checksums)
