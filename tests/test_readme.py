@@ -23,3 +23,4 @@ def test_readme_documents_component_artifact_usage():
     assert 'quantization_device="cuda"' in readme
     assert "Small range smoke generations are not used as quality evidence" in readme
     assert "RunPod" not in readme
+    assert "REMOTE_STAGE" not in readme

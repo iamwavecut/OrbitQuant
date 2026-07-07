@@ -50,7 +50,7 @@ scripts/run_cuda_kernel_checks.sh
 
 The script creates a `--system-site-packages` venv, installs OrbitQuant without
 dependencies, installs only the lightweight test/runtime packages that are
-missing, and emits `REMOTE_STAGE` markers around each long step.
+missing, and runs the CUDA kernel validation gate.
 
 ## Load A Published Artifact
 

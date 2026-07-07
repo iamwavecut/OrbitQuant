@@ -6,7 +6,7 @@ from orbitquant.artifacts.manifest import OrbitQuantManifest
 def _comparison_assets(checksums: dict[str, str]) -> list[str]:
     assets = []
     for path in checksums:
-        if not (path.startswith("assets/") or "/assets/" in path):
+        if not path.startswith("assets/"):
             continue
         name = path.rsplit("/", maxsplit=1)[-1].lower()
         if (
@@ -33,6 +33,17 @@ def _comparison_asset_sort_key(path: str) -> tuple[int, str]:
 
 def _artifact_slug(model_id: str, bits: str) -> str:
     return f"{model_id.rsplit('/', maxsplit=1)[-1]}-OrbitQuant-{bits}"
+
+
+def _install_snippet() -> str:
+    return "\n".join(
+        [
+            "```bash",
+            "pip install git+https://github.com/iamwavecut/OrbitQuant.git "
+            "diffusers transformers accelerate huggingface_hub safetensors",
+            "```",
+        ]
+    )
 
 
 def _usage_snippet(source_model_id: str, bits: str) -> str:
@@ -271,8 +282,12 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             "",
             "## Usage",
             "",
-            "Install the package from this repository, then load the base pipeline "
-            "and patch its transformer component with this artifact:",
+            "Install OrbitQuant and the Hugging Face runtime dependencies:",
+            "",
+            _install_snippet(),
+            "",
+            "Load the base Diffusers pipeline, download this model repository as "
+            "an OrbitQuant artifact, then patch the transformer component:",
             "",
             _usage_snippet(data["source_model_id"], bits),
             "",

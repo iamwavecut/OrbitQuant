@@ -16,6 +16,7 @@ def _manifest_for_model(model_id: str, bits: tuple[int, int] = (4, 4)) -> OrbitQ
         quantized_modules=["transformer_blocks.0.attn.to_q"],
         skipped_modules=["text_encoder"],
         checksums={
+            "assets/image_generation_comparison_matrix.webp": "2" * 64,
             "assets/original_vs_orbitquant_seed0.webp": "0" * 64,
             (
                 "reports/native/sample-report/assets/"
@@ -66,17 +67,28 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     ) in card
 
 
-def test_model_card_embeds_report_comparison_matrix_before_single_sample_assets():
+def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    matrix = (
-        "reports/native/sample-report/assets/image_generation_comparison_matrix.webp"
-    )
+    assert "pip install git+https://github.com/iamwavecut/OrbitQuant.git" in card
+    assert "diffusers" in card
+    assert "transformers" in card
+    assert "accelerate" in card
+    assert "RunPod" not in card
+    assert "REMOTE_STAGE" not in card
+    assert "local report log" not in card
+
+
+def test_model_card_embeds_artifact_comparison_matrix_before_single_sample_assets():
+    card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
+
+    matrix = "assets/image_generation_comparison_matrix.webp"
     single_sample = "assets/original_vs_orbitquant_seed0.webp"
 
     assert f"![{matrix}]({matrix})" in card
     assert f"![{single_sample}]({single_sample})" in card
     assert card.index(matrix) < card.index(single_sample)
+    assert "reports/native" not in card
 
 
 def test_model_card_uses_flux2_native_code_example():
