@@ -63,6 +63,9 @@ def test_build_external_eval_script_runs_vbench_import_and_report(tmp_path):
 
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert f"mkdir -p {tmp_path / 'metrics'}" in script
+    assert "if ! command -v vbench >/dev/null 2>&1; then" in script
+    assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a6'} ]; then" in script
+    assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a4'} ]; then" in script
     assert script.count("vbench --input-dir") == 4
     assert script.count("orbitquant record-metrics") == 4
     assert "--metric-prefix vbench" in script

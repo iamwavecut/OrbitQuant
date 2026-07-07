@@ -81,6 +81,41 @@ def _import_command(
     )
 
 
+def _preflight_lines(plan: dict[str, Any]) -> list[str]:
+    metrics = sorted({job["metric"] for job in plan["jobs"]})
+    artifact_dirs = sorted({job["artifact_dir"] for job in plan["jobs"]})
+    lines = ["# Preflight"]
+    if "geneval" in metrics:
+        lines.extend(
+            [
+                "if ! command -v geneval >/dev/null 2>&1; then",
+                "  echo 'missing required GenEval CLI: geneval' >&2",
+                "  exit 127",
+                "fi",
+            ]
+        )
+    if "vbench" in metrics:
+        lines.extend(
+            [
+                "if ! command -v vbench >/dev/null 2>&1; then",
+                "  echo 'missing required VBench CLI: vbench' >&2",
+                "  exit 127",
+                "fi",
+            ]
+        )
+    for artifact_dir in artifact_dirs:
+        lines.extend(
+            [
+                f"if [ ! -d {_cmd([artifact_dir])} ]; then",
+                f"  echo 'missing artifact directory: {artifact_dir}' >&2",
+                "  exit 1",
+                "fi",
+            ]
+        )
+    lines.append("")
+    return lines
+
+
 def build_external_eval_plan(
     suites: list[NativeSuite] | None = None,
     *,
@@ -147,6 +182,7 @@ def build_external_eval_script(
         _cmd(["mkdir", "-p", Path(metrics_root)]),
         "",
     ]
+    lines.extend(_preflight_lines(plan))
     artifact_dirs: list[str] = []
     for job in plan["jobs"]:
         artifact_dir = str(job["artifact_dir"])

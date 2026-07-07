@@ -237,6 +237,8 @@ def test_cli_external_eval_script_prints_metric_runner_script(capsys, tmp_path):
 
     script = capsys.readouterr().out
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "if ! command -v vbench >/dev/null 2>&1; then" in script
+    assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a6'} ]; then" in script
     assert "vbench --input-dir" in script
     assert "orbitquant record-metrics" in script
     assert "--metric-prefix vbench" in script
