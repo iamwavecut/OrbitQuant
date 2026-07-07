@@ -15,6 +15,7 @@ from orbitquant.artifacts import (
     save_orbitquant_artifact,
     validate_orbitquant_artifact,
 )
+from orbitquant.benchmarks import benchmark_orbit_linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.external_plan import build_external_eval_plan, build_external_eval_script
@@ -216,6 +217,27 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser.add_argument("--revision")
     subparsers.add_parser("native-suites", help="list native eval suites")
     subparsers.add_parser("kernel-info", help="print activation kernel backend capabilities")
+    kernel_bench_parser = subparsers.add_parser(
+        "kernel-bench", help="benchmark OrbitQuantLinear kernel stages"
+    )
+    kernel_bench_parser.add_argument("--tokens", type=int, default=1024)
+    kernel_bench_parser.add_argument("--in-features", type=int, default=3072)
+    kernel_bench_parser.add_argument("--out-features", type=int, default=3072)
+    kernel_bench_parser.add_argument("--weight-bits", type=int, default=4)
+    kernel_bench_parser.add_argument("--activation-bits", type=int, default=4)
+    kernel_bench_parser.add_argument("--block-size", type=_parse_block_size, default="paper")
+    kernel_bench_parser.add_argument(
+        "--activation-kernel-backend",
+        default="auto",
+        choices=["auto", "cpu", "mps", "triton_cuda"],
+    )
+    kernel_bench_parser.add_argument("--device", default="auto")
+    kernel_bench_parser.add_argument(
+        "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
+    )
+    kernel_bench_parser.add_argument("--warmup", type=int, default=5)
+    kernel_bench_parser.add_argument("--iterations", type=int, default=20)
+    kernel_bench_parser.add_argument("--seed", type=int, default=0)
 
     native_plan_parser = subparsers.add_parser(
         "native-plan", help="print native quant/eval job matrix"
@@ -399,6 +421,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "kernel-info":
         print(json.dumps(backend_capabilities(), indent=2))
+        return 0
+    if args.command == "kernel-bench":
+        print(
+            json.dumps(
+                benchmark_orbit_linear(
+                    tokens=args.tokens,
+                    in_features=args.in_features,
+                    out_features=args.out_features,
+                    weight_bits=args.weight_bits,
+                    activation_bits=args.activation_bits,
+                    block_size=args.block_size,
+                    activation_kernel_backend=args.activation_kernel_backend,
+                    device=args.device,
+                    dtype=_torch_dtype(args.dtype),
+                    warmup=args.warmup,
+                    iterations=args.iterations,
+                    seed=args.seed,
+                ),
+                indent=2,
+            )
+        )
         return 0
     if args.command == "native-plan":
         suites = None

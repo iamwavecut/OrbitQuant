@@ -100,6 +100,41 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["triton_cuda"]["full_fusion"] is False
 
 
+def test_cli_kernel_bench_prints_stage_timings(capsys):
+    assert (
+        main(
+            [
+                "kernel-bench",
+                "--tokens",
+                "4",
+                "--in-features",
+                "16",
+                "--out-features",
+                "8",
+                "--block-size",
+                "8",
+                "--activation-kernel-backend",
+                "cpu",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+                "--warmup",
+                "0",
+                "--iterations",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["device"] == "cpu"
+    assert payload["full_fusion"] is False
+    assert payload["prewarm"]["total_modules"] == 1
+    assert payload["timings_ms"]["forward_prewarmed_ms"] >= 0.0
+
+
 def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys, tmp_path):
     assert (
         main(
