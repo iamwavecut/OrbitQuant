@@ -14,7 +14,8 @@ URL, or signed-off audit note.
 - [ ] Native artifact validation is complete for every advertised release
   artifact. At minimum this includes native-resolution BF16-vs-OrbitQuant
   comparison assets, load validation, finite-output checks, manifests, and
-  checksums.
+  checksums. Published compact artifacts must include a `native_smoke` proof
+  block in `benchmark/summary.json`; raw generation records remain local-only.
 - [ ] Release-grade metrics are complete before making paper reproduction or
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench

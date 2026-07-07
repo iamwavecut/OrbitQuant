@@ -8,7 +8,11 @@ import torch
 from huggingface_hub import CommitOperationAdd, CommitOperationDelete
 
 import orbitquant.hub as hub_module
-from orbitquant.artifacts import refresh_artifact_checksums, save_orbitquant_artifact
+from orbitquant.artifacts import (
+    record_artifact_metrics,
+    refresh_artifact_checksums,
+    save_orbitquant_artifact,
+)
 from orbitquant.artifacts.checksums import read_sha256sums
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
@@ -153,6 +157,54 @@ def _remote_file_map(repo_id, artifact_dir):
 
 def _remote_path(artifact_dir, filename):
     return artifact_dir / filename
+
+
+def _native_smoke_summary(suite, *, release_metrics=None):
+    native_settings = {
+        "suite": suite.name,
+        "height": suite.height,
+        "width": suite.width,
+        "frames": suite.frames,
+        "steps": suite.steps,
+        "guidance": suite.guidance,
+    }
+    generated_frames = 0 if suite.frames is None else suite.frames
+    metrics = {"generated_samples": 1}
+    if generated_frames:
+        metrics["generated_frames"] = generated_frames
+    for key, value in (release_metrics or {}).items():
+        metrics[key] = value
+    split_proof = {
+        "records": 1,
+        "generated_samples": 1,
+        "generated_frames": generated_frames,
+        "nonempty_output_count": 1,
+        "seeds": ["0"],
+        "prompt_ids": ["simple-object"],
+        "pair_keys": [[suite.name, "0", "simple-object"]],
+        "native_settings": [native_settings],
+    }
+    return json.dumps(
+        {
+            "published_summary": "compact",
+            "raw_generation_records": "local-only",
+            "metrics": {
+                "original": {"records": 1, "latest_metrics": metrics},
+                "orbitquant": {"records": 1, "latest_metrics": metrics},
+            },
+            "native_smoke": {
+                "proof_format": "orbitquant-native-smoke-v1",
+                "comparison_asset_path": "assets/image_generation_comparison_matrix.webp",
+                "paired_prompt_seed_count": 1,
+                "paired_prompt_seed_keys": [[suite.name, "0", "simple-object"]],
+                "splits": {
+                    "original": split_proof,
+                    "orbitquant": split_proof,
+                },
+            },
+        },
+        indent=2,
+    )
 
 
 def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path):
@@ -366,6 +418,98 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
         "assets/wan-native_seed0_W4A4_motion.mp4",
         "assets/wan-native_seed0_W4A4_motion.mp4.json",
         "assets/nested/debug_frame.png",
+    }
+
+
+def test_stage_compact_upload_artifact_writes_native_smoke_proof(tmp_path):
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    original_output = tmp_path / "assets" / "flux2-native_seed0_original_simple-object.png"
+    orbitquant_output = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
+    for path, payload in (
+        (matrix, b"matrix"),
+        (original_output, b"original image"),
+        (orbitquant_output, b"orbitquant image"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    for split, output, bit_setting in (
+        ("original", original_output, "original"),
+        ("orbitquant", orbitquant_output, "W4A4"),
+    ):
+        record_artifact_metrics(
+            tmp_path,
+            split=split,
+            metrics={"generated_samples": 1},
+            metadata={
+                "suite": "flux2-native",
+                "prompt": "A native prompt",
+                "prompt_record": {"id": "simple-object"},
+                "seed": 0,
+                "height": 1024,
+                "width": 1024,
+                "frames": None,
+                "steps": 4,
+                "guidance": 1.0,
+                "bit_setting": bit_setting,
+                "output_path": str(output),
+            },
+            validate_checksums_enabled=False,
+            refresh_checksums_enabled=False,
+        )
+    refresh_artifact_checksums(tmp_path)
+
+    stage_dir = tmp_path.parent / f"{tmp_path.name}-native-smoke-stage"
+    stage_compact_upload_artifact(tmp_path, stage_dir, validate_tensors=False)
+
+    staged_summary = json.loads((stage_dir / "benchmark" / "summary.json").read_text())
+    assert staged_summary["raw_generation_records"] == "local-only"
+    assert "latest" not in staged_summary["metrics"]["original"]
+    assert staged_summary["native_smoke"] == {
+        "proof_format": "orbitquant-native-smoke-v1",
+        "comparison_asset_path": "assets/image_generation_comparison_matrix.webp",
+        "paired_prompt_seed_count": 1,
+        "paired_prompt_seed_keys": [["flux2-native", "0", "simple-object"]],
+        "splits": {
+            "original": {
+                "records": 1,
+                "generated_samples": 1,
+                "generated_frames": 0,
+                "nonempty_output_count": 1,
+                "seeds": ["0"],
+                "prompt_ids": ["simple-object"],
+                "pair_keys": [["flux2-native", "0", "simple-object"]],
+                "native_settings": [
+                    {
+                        "suite": "flux2-native",
+                        "height": 1024,
+                        "width": 1024,
+                        "frames": None,
+                        "steps": 4,
+                        "guidance": 1.0,
+                    }
+                ],
+            },
+            "orbitquant": {
+                "records": 1,
+                "generated_samples": 1,
+                "generated_frames": 0,
+                "nonempty_output_count": 1,
+                "seeds": ["0"],
+                "prompt_ids": ["simple-object"],
+                "pair_keys": [["flux2-native", "0", "simple-object"]],
+                "native_settings": [
+                    {
+                        "suite": "flux2-native",
+                        "height": 1024,
+                        "width": 1024,
+                        "frames": None,
+                        "steps": 4,
+                        "guidance": 1.0,
+                    }
+                ],
+            },
+        },
     }
 
 
@@ -1021,14 +1165,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
     )
     summary_path = tmp_path / "summary.json"
-    summary_path.write_text(
-        """{
-          "metrics": {
-            "original": {"records": 1, "latest_metrics": {"generated_samples": 1}},
-            "orbitquant": {"records": 1, "latest_metrics": {"generated_samples": 1}}
-          }
-        }"""
-    )
+    summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
     file_map = {
         (repo_id, "orbitquant_manifest.json"): manifest_path,
         (repo_id, "SHA256SUMS"): sha256sums_path,
@@ -1066,6 +1203,82 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
         {"split": "original", "metric": "geneval_overall"},
         {"split": "orbitquant", "metric": "geneval_overall"},
     ]
+    assert row["native_smoke_proof_ready"] is True
+    assert row["native_smoke_missing_evidence"] == []
+
+
+def test_audit_hf_artifact_repos_requires_native_smoke_proof_block(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux1-schnell-native",
+        model_id="black-forest-labs/FLUX.1-schnell",
+        pipeline="FluxPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=0.0,
+        bit_settings=["W4A4"],
+        metric="geneval",
+    )
+    repo_id = "WaveCut/FLUX.1-schnell-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.1-schnell",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": ["block.modulation"],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        """{
+          "metrics": {
+            "original": {"records": 1, "latest_metrics": {"generated_samples": 1}},
+            "orbitquant": {"records": 1, "latest_metrics": {"generated_samples": 1}}
+          }
+        }"""
+    )
+    file_map = {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/summary.json"): summary_path,
+    }
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+
+    row = result["rows"][0]
+    assert result["artifact_ready_count"] == 1
+    assert result["native_smoke_ready_count"] == 0
+    assert result["release_eval_ready_count"] == 0
+    assert row["artifact_ready"] is True
+    assert row["native_smoke_ready"] is False
+    assert row["native_smoke_proof_ready"] is False
+    assert row["native_smoke_missing_evidence"] == ["native_smoke_missing"]
 
 
 def test_audit_hf_artifact_repos_flags_extra_comparison_matrix_assets(
@@ -1167,14 +1380,7 @@ def test_audit_hf_artifact_repos_rejects_lfs_checksum_mismatch(tmp_path, monkeyp
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
     )
     summary_path = tmp_path / "summary.json"
-    summary_path.write_text(
-        """{
-          "metrics": {
-            "original": {"records": 1, "latest_metrics": {"generated_samples": 1}},
-            "orbitquant": {"records": 1, "latest_metrics": {"generated_samples": 1}}
-          }
-        }"""
-    )
+    summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
     file_map = {
         (repo_id, "orbitquant_manifest.json"): manifest_path,
         (repo_id, "SHA256SUMS"): sha256sums_path,
@@ -1271,14 +1477,7 @@ def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
     )
     summary_path = tmp_path / "summary.json"
-    summary_path.write_text(
-        """{
-          "metrics": {
-            "original": {"records": 1, "latest_metrics": {"generated_samples": 1}},
-            "orbitquant": {"records": 1, "latest_metrics": {"generated_samples": 1}}
-          }
-        }"""
-    )
+    summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
     file_map = {
         (repo_id, "orbitquant_manifest.json"): manifest_path,
         (repo_id, "SHA256SUMS"): sha256sums_path,

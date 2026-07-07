@@ -10,6 +10,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
     assert "native-resolution BF16-vs-OrbitQuant\n  comparison assets" in release_gates
     assert "finite-output checks" in release_gates
+    assert "`native_smoke` proof\n  block in `benchmark/summary.json`" in release_gates
+    assert "raw generation records remain local-only" in release_gates
     assert "paper reproduction or\n  metric-table claims" in release_gates
     assert "GenEval\n  overall and per-task scores" in release_gates
     assert "all required VBench\n  dimensions" in release_gates

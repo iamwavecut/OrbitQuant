@@ -254,10 +254,12 @@ def _metrics_by_split(
     file_names: set[str],
     *,
     revision: str | None,
+    summary: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     payload: dict[str, dict[str, Any]] = {"original": {}, "orbitquant": {}}
     if "benchmark/summary.json" in file_names:
-        summary = _read_remote_json(repo_id, "benchmark/summary.json", revision=revision)
+        if summary is None:
+            summary = _read_remote_json(repo_id, "benchmark/summary.json", revision=revision)
         for split, split_payload in (summary.get("metrics") or {}).items():
             if split not in payload or not isinstance(split_payload, dict):
                 continue
@@ -325,6 +327,63 @@ def _missing_required_metrics(
 
 def _release_eval_applicable(suite_name: str) -> bool:
     return suite_name in _REQUIRED_METRICS_BY_SUITE
+
+
+def _native_smoke_expected_settings(suite: NativeSuite) -> dict[str, Any]:
+    return {
+        "suite": suite.name,
+        "height": suite.height,
+        "width": suite.width,
+        "frames": suite.frames,
+        "steps": suite.steps,
+        "guidance": suite.guidance,
+    }
+
+
+def _native_smoke_proof_status(
+    summary: dict[str, Any],
+    *,
+    suite: NativeSuite,
+    file_names: set[str],
+) -> dict[str, Any]:
+    proof = summary.get("native_smoke")
+    missing: list[str] = []
+    if not isinstance(proof, dict):
+        return {"ready": False, "missing": ["native_smoke_missing"], "proof": None}
+    if proof.get("proof_format") != "orbitquant-native-smoke-v1":
+        missing.append("native_smoke.proof_format")
+    comparison_asset_path = proof.get("comparison_asset_path")
+    if not isinstance(comparison_asset_path, str) or not _is_published_card_asset(
+        comparison_asset_path
+    ):
+        missing.append("native_smoke.comparison_asset_path")
+    elif comparison_asset_path not in file_names:
+        missing.append("native_smoke.comparison_asset_path_not_uploaded")
+    if int(proof.get("paired_prompt_seed_count") or 0) <= 0:
+        missing.append("native_smoke.paired_prompt_seed_count")
+
+    expected_settings = _native_smoke_expected_settings(suite)
+    splits = proof.get("splits")
+    if not isinstance(splits, dict):
+        missing.append("native_smoke.splits")
+    else:
+        for split in ("original", "orbitquant"):
+            split_payload = splits.get(split)
+            if not isinstance(split_payload, dict):
+                missing.append(f"native_smoke.{split}")
+                continue
+            generated_samples = int(split_payload.get("generated_samples") or 0)
+            if generated_samples <= 0:
+                missing.append(f"native_smoke.{split}.generated_samples")
+            if int(split_payload.get("nonempty_output_count") or 0) < generated_samples:
+                missing.append(f"native_smoke.{split}.nonempty_output_count")
+            if suite.frames is not None:
+                expected_frames = suite.frames * max(1, generated_samples)
+                if int(split_payload.get("generated_frames") or 0) < expected_frames:
+                    missing.append(f"native_smoke.{split}.generated_frames")
+            if split_payload.get("native_settings") != [expected_settings]:
+                missing.append(f"native_smoke.{split}.native_settings")
+    return {"ready": not missing, "missing": missing, "proof": proof}
 
 
 def _lfs_sha256_by_file(siblings_by_file: dict[str, Any]) -> dict[str, str]:
@@ -438,18 +497,144 @@ def _summary_latest_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-def _compact_benchmark_summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _read_local_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        records.append(json.loads(line))
+    return records
+
+
+def _prompt_id_from_metadata(metadata: dict[str, Any]) -> str:
+    prompt_record = metadata.get("prompt_record")
+    if isinstance(prompt_record, dict) and prompt_record.get("id") is not None:
+        return str(prompt_record["id"])
+    prompt = metadata.get("prompt")
+    if isinstance(prompt, str) and prompt:
+        return prompt[:80]
+    return "prompt"
+
+
+def _local_output_is_nonempty(artifact_path: Path, value: Any) -> bool:
+    if not value:
+        return False
+    output_path = Path(str(value))
+    if not output_path.is_absolute():
+        output_path = artifact_path / output_path
+    return output_path.is_file() and output_path.stat().st_size > 0
+
+
+def _native_settings_from_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "suite": metadata.get("suite"),
+        "height": metadata.get("height"),
+        "width": metadata.get("width"),
+        "frames": metadata.get("frames"),
+        "steps": metadata.get("steps"),
+        "guidance": metadata.get("guidance"),
+    }
+
+
+def _native_smoke_split_summary(
+    artifact_path: Path, records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    generated_samples = 0
+    generated_frames = 0
+    nonempty_outputs = 0
+    seeds = set()
+    prompt_ids = set()
+    pair_keys = set()
+    settings = set()
+    for record in records:
+        metrics = record.get("metrics") if isinstance(record, dict) else {}
+        metadata = record.get("metadata") if isinstance(record, dict) else {}
+        if not isinstance(metrics, dict) or not isinstance(metadata, dict):
+            continue
+        sample_count = int(metrics.get("generated_samples") or 0)
+        generated_samples += sample_count
+        generated_frames += int(metrics.get("generated_frames") or 0)
+        if _local_output_is_nonempty(artifact_path, metadata.get("output_path")):
+            nonempty_outputs += max(1, sample_count)
+        seed = metadata.get("seed")
+        if seed is not None:
+            seeds.add(str(seed))
+        prompt_id = _prompt_id_from_metadata(metadata)
+        prompt_ids.add(prompt_id)
+        pair_keys.add(
+            (
+                str(metadata.get("suite") or ""),
+                str(seed),
+                prompt_id,
+            )
+        )
+        settings.add(
+            json.dumps(
+                _native_settings_from_metadata(metadata),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    return {
+        "records": len(records),
+        "generated_samples": generated_samples,
+        "generated_frames": generated_frames,
+        "nonempty_output_count": nonempty_outputs,
+        "seeds": sorted(seeds),
+        "prompt_ids": sorted(prompt_ids),
+        "pair_keys": [list(item) for item in sorted(pair_keys)],
+        "native_settings": [json.loads(item) for item in sorted(settings)],
+    }
+
+
+def _compact_native_smoke_proof(
+    artifact_path: Path, *, comparison_asset_path: str | None
+) -> dict[str, Any] | None:
+    if comparison_asset_path is None:
+        return None
+    split_records = {
+        split: _read_local_jsonl(artifact_path / "benchmark" / f"{split}.metrics.jsonl")
+        for split in ("original", "orbitquant")
+    }
+    if not any(split_records.values()):
+        return None
+    splits = {
+        split: _native_smoke_split_summary(artifact_path, records)
+        for split, records in split_records.items()
+    }
+    original_pairs = {tuple(item) for item in splits["original"]["pair_keys"]}
+    orbitquant_pairs = {tuple(item) for item in splits["orbitquant"]["pair_keys"]}
+    paired_keys = sorted(original_pairs & orbitquant_pairs)
+    return {
+        "proof_format": "orbitquant-native-smoke-v1",
+        "comparison_asset_path": comparison_asset_path,
+        "paired_prompt_seed_count": len(paired_keys),
+        "paired_prompt_seed_keys": [list(item) for item in paired_keys],
+        "splits": splits,
+    }
+
+
+def _compact_benchmark_summary_payload(
+    payload: dict[str, Any],
+    *,
+    native_smoke: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     clean = {
         key: value
         for key, value in payload.items()
         if key
         not in {
             "metrics",
+            "native_smoke",
             "source_linear_device_counts",
             "quantized_buffer_device_counts",
         }
     }
     clean["metrics"] = _summary_latest_metrics(payload)
+    if native_smoke is not None:
+        clean["native_smoke"] = native_smoke
     clean["published_summary"] = "compact"
     clean["raw_generation_records"] = "local-only"
     return clean
@@ -458,6 +643,24 @@ def _compact_benchmark_summary_payload(payload: dict[str, Any]) -> dict[str, Any
 def _compact_benchmark_summary_bytes(source_path: Path) -> bytes:
     payload = json.loads(source_path.read_text(encoding="utf-8"))
     return _json_bytes(_compact_benchmark_summary_payload(payload))
+
+
+def _rewrite_compact_benchmark_summary(
+    artifact_path: Path,
+    output_path: Path,
+    *,
+    comparison_asset_path: str | None,
+) -> None:
+    source_path = artifact_path / "benchmark" / "summary.json"
+    target_path = output_path / "benchmark" / "summary.json"
+    native_smoke = _compact_native_smoke_proof(
+        artifact_path,
+        comparison_asset_path=comparison_asset_path,
+    )
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    target_path.write_bytes(
+        _json_bytes(_compact_benchmark_summary_payload(payload, native_smoke=native_smoke))
+    )
 
 
 def _compact_benchmark_summary_bytes_from_remote(payload: bytes) -> bytes:
@@ -659,6 +862,14 @@ def stage_compact_upload_artifact(
             _copy_first_report_comparison_asset(report_paths, output_path)
         )
 
+    published_card_asset = selected_card_asset
+    if published_card_asset is None and copied_report_assets:
+        published_card_asset = sorted(set(copied_report_assets))[0]
+    _rewrite_compact_benchmark_summary(
+        artifact_path,
+        output_path,
+        comparison_asset_path=published_card_asset,
+    )
     checksum_refresh = refresh_artifact_checksums(output_path)
     staged_validation = validate_orbitquant_artifact(
         output_path,
@@ -754,7 +965,17 @@ def audit_hf_artifact_repos(
                     )
                 except Exception as exc:
                     sha256sums_error = f"{type(exc).__name__}: {str(exc)}"
-            metrics = _metrics_by_split(repo_id, file_names, revision=revision)
+            benchmark_summary = {}
+            if "benchmark/summary.json" in file_names:
+                benchmark_summary = _read_remote_json(
+                    repo_id, "benchmark/summary.json", revision=revision
+                )
+            metrics = _metrics_by_split(
+                repo_id,
+                file_names,
+                revision=revision,
+                summary=benchmark_summary,
+            )
             missing_metrics = _missing_required_metrics(metrics, suite_name=suite.name)
             manifest_mismatches = _manifest_mismatches(
                 manifest,
@@ -768,6 +989,11 @@ def audit_hf_artifact_repos(
             )
             generated_splits = sorted(
                 split for split, values in metrics.items() if values.get("generated_samples")
+            )
+            native_smoke_proof = _native_smoke_proof_status(
+                benchmark_summary,
+                suite=suite,
+                file_names=file_names,
             )
             row.update(
                 {
@@ -798,6 +1024,8 @@ def audit_hf_artifact_repos(
                     "metrics_by_split": metrics,
                     "generated_splits": generated_splits,
                     "missing_required_metrics": missing_metrics,
+                    "native_smoke_proof_ready": native_smoke_proof["ready"],
+                    "native_smoke_missing_evidence": native_smoke_proof["missing"],
                 }
             )
             row["artifact_ready"] = (
@@ -811,8 +1039,7 @@ def audit_hf_artifact_repos(
             )
             row["native_smoke_ready"] = (
                 row["artifact_ready"]
-                and row["asset_count"] > 0
-                and set(generated_splits) == {"original", "orbitquant"}
+                and native_smoke_proof["ready"]
             )
             row["release_eval_ready"] = (
                 row["release_eval_applicable"]
