@@ -1527,6 +1527,54 @@ def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, m
     }
 
 
+def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monkeypatch):
+    seen = {}
+
+    def fake_repair_hf_artifact_metadata(**kwargs):
+        seen.update(kwargs)
+        return {
+            "repo_id": kwargs["repo_id"],
+            "dry_run": kwargs["dry_run"],
+            "changed_files": ["orbitquant_manifest.json"],
+        }
+
+    monkeypatch.setattr(
+        cli_main, "repair_hf_artifact_metadata", fake_repair_hf_artifact_metadata
+    )
+
+    assert (
+        main(
+            [
+                "repair-hf-artifact-metadata",
+                "--repo-id",
+                "WaveCut/example-orbitquant",
+                "--revision",
+                "main",
+                "--commit-message",
+                "repair metadata",
+                "--quantization-device",
+                "cuda",
+                "--weight-quantization-backend",
+                "triton_cuda",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["repo_id"] == "WaveCut/example-orbitquant"
+    assert output["dry_run"] is True
+    assert seen == {
+        "repo_id": "WaveCut/example-orbitquant",
+        "quantization_device": "cuda",
+        "weight_quantization_backend": "triton_cuda",
+        "revision": "main",
+        "commit_message": "repair metadata",
+        "dry_run": True,
+    }
+
+
 def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch):
     seen = {}
 

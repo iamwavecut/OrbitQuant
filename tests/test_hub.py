@@ -5,9 +5,15 @@ import torch
 
 import orbitquant.hub as hub_module
 from orbitquant.artifacts import save_orbitquant_artifact
+from orbitquant.artifacts.checksums import read_sha256sums
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
-from orbitquant.hub import audit_hf_artifact_repos, upload_orbitquant_artifact
+from orbitquant.hub import (
+    audit_hf_artifact_repos,
+    repair_hf_artifact_metadata,
+    repair_hf_artifact_metadata_matrix,
+    upload_orbitquant_artifact,
+)
 from orbitquant.modeling import quantize_linear_modules
 
 
@@ -65,6 +71,19 @@ class FakeAuditHfApi:
         )
 
 
+class FakeCommitHfApi:
+    def __init__(self):
+        self.create_commit_calls = []
+
+    def create_commit(self, **kwargs):
+        self.create_commit_calls.append(kwargs)
+        return SimpleNamespace(
+            oid="repair-sha",
+            commit_url=f"https://huggingface.co/{kwargs['repo_id']}/commit/repair-sha",
+            pr_url=None,
+        )
+
+
 def _write_artifact(tmp_path):
     model = TinyHubArtifactModel()
     config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
@@ -82,6 +101,17 @@ def _write_artifact(tmp_path):
 
 def _required_remote_files():
     return {name: 1 for name in hub_module._REQUIRED_ARTIFACT_FILES}
+
+
+def _remote_file_map(repo_id, artifact_dir):
+    return {
+        (repo_id, "orbitquant_manifest.json"): artifact_dir / "orbitquant_manifest.json",
+        (repo_id, "model_index.json"): artifact_dir / "model_index.json",
+        (repo_id, "benchmark/summary.json"): artifact_dir / "benchmark" / "summary.json",
+        (repo_id, "quantization_config.json"): artifact_dir / "quantization_config.json",
+        (repo_id, "README.md"): artifact_dir / "README.md",
+        (repo_id, "SHA256SUMS"): artifact_dir / "SHA256SUMS",
+    }
 
 
 def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path):
@@ -103,6 +133,122 @@ def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path
     assert fake_api.create_repo_calls == []
     assert fake_api.upload_folder_calls == []
     assert fake_api.model_info_calls == []
+
+
+def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
+    tmp_path,
+    monkeypatch,
+):
+    repo_id = "WaveCut/example-orbitquant"
+    _write_artifact(tmp_path)
+    old_checksums = read_sha256sums(tmp_path / "SHA256SUMS")
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCommitHfApi()
+
+    result = repair_hf_artifact_metadata(
+        repo_id=repo_id,
+        quantization_device="cuda",
+        weight_quantization_backend="triton_cuda",
+        dry_run=True,
+        api=fake_api,
+    )
+
+    assert result["dry_run"] is True
+    assert result["commit"] is None
+    assert "model.safetensors" in result["preserved_checksum_entries"]
+    assert old_checksums["model.safetensors"]
+    assert fake_api.create_commit_calls == []
+
+
+def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
+    tmp_path,
+    monkeypatch,
+):
+    repo_id = "WaveCut/example-orbitquant"
+    _write_artifact(tmp_path)
+    old_checksums = read_sha256sums(tmp_path / "SHA256SUMS")
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCommitHfApi()
+
+    result = repair_hf_artifact_metadata(
+        repo_id=repo_id,
+        quantization_device="cuda",
+        weight_quantization_backend="triton_cuda",
+        revision="main",
+        commit_message="repair metadata",
+        api=fake_api,
+    )
+
+    assert result["commit"]["commit_oid"] == "repair-sha"
+    assert len(fake_api.create_commit_calls) == 1
+    commit_call = fake_api.create_commit_calls[0]
+    assert commit_call["repo_id"] == repo_id
+    assert commit_call["repo_type"] == "model"
+    assert commit_call["revision"] == "main"
+    assert commit_call["commit_message"] == "repair metadata"
+    operation_paths = {operation.path_in_repo for operation in commit_call["operations"]}
+    assert operation_paths == {
+        "orbitquant_manifest.json",
+        "model_index.json",
+        "benchmark/summary.json",
+        "README.md",
+        "SHA256SUMS",
+    }
+    assert "model.safetensors" not in operation_paths
+    sha_operation = next(
+        operation
+        for operation in commit_call["operations"]
+        if operation.path_in_repo == "SHA256SUMS"
+    )
+    sha_entries = hub_module._parse_sha256sums_bytes(sha_operation.path_or_fileobj)
+    assert sha_entries["model.safetensors"] == old_checksums["model.safetensors"]
+    assert sha_entries["orbitquant_manifest.json"] != old_checksums["orbitquant_manifest.json"]
+
+
+def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCommitHfApi()
+
+    result = repair_hf_artifact_metadata_matrix(
+        suites=[suite],
+        quantization_device="cuda",
+        weight_quantization_backend="triton_cuda",
+        dry_run=True,
+        api=fake_api,
+    )
+
+    assert result["repo_count"] == 1
+    assert result["error_count"] == 0
+    assert result["rows"][0]["repo_id"] == repo_id
+    assert result["rows"][0]["suite"] == "flux2-native"
+    assert result["rows"][0]["bit_setting"] == "W4A4"
 
 
 def test_upload_orbitquant_artifact_creates_uploads_and_audits_model_repo(tmp_path):

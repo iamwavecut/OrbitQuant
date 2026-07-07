@@ -97,6 +97,21 @@ This refreshes `orbitquant_manifest.json`, `model_index.json`,
 `benchmark/summary.json`, `README.md`, and `SHA256SUMS`. Use it for schema or
 provenance fixes before re-running `upload-artifact`.
 
+Repair the same provenance fields directly in existing Hugging Face artifact
+repos without downloading or reuploading `model.safetensors`:
+
+```bash
+orbitquant repair-hf-artifact-metadata \
+  --namespace WaveCut \
+  --quantization-device cuda \
+  --weight-quantization-backend triton_cuda \
+  --dry-run
+```
+
+Pass `--repo-id WaveCut/...` to repair one repo, or omit it to repair the native
+suite matrix. The command creates one small metadata-only commit per changed repo
+and preserves existing checksum entries for large unchanged files.
+
 Prepare a native GPU run on an RTX PRO 6000 96GB pod:
 
 ```bash

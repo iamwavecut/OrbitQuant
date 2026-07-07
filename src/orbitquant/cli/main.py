@@ -38,6 +38,8 @@ from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import (
     audit_hf_artifact_repos,
     inspect_model_metadata,
+    repair_hf_artifact_metadata,
+    repair_hf_artifact_metadata_matrix,
     upload_orbitquant_artifact,
 )
 from orbitquant.kernels import backend_capabilities
@@ -346,6 +348,19 @@ def main(argv: list[str] | None = None) -> int:
     audit_hf_parser.add_argument("--revision")
     audit_hf_parser.add_argument("--output")
 
+    repair_hf_parser = subparsers.add_parser(
+        "repair-hf-artifact-metadata",
+        help="repair remote HF artifact metadata without reuploading large tensors",
+    )
+    repair_hf_parser.add_argument("--repo-id")
+    repair_hf_parser.add_argument("--namespace", default="WaveCut")
+    repair_hf_parser.add_argument("--suite", action="append")
+    repair_hf_parser.add_argument("--revision")
+    repair_hf_parser.add_argument("--commit-message")
+    repair_hf_parser.add_argument("--quantization-device", required=True)
+    repair_hf_parser.add_argument("--weight-quantization-backend", required=True)
+    repair_hf_parser.add_argument("--dry-run", action="store_true")
+
     validate_generation_parser = subparsers.add_parser(
         "validate-generation", help="validate a native generation output and metadata pair"
     )
@@ -652,6 +667,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.output is not None:
             Path(args.output).write_text(rendered + "\n", encoding="utf-8")
         print(rendered)
+        return 0
+    if args.command == "repair-hf-artifact-metadata":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+        if args.repo_id is not None and suites is not None:
+            raise ValueError("--repo-id cannot be combined with --suite")
+        if args.repo_id is not None:
+            payload = repair_hf_artifact_metadata(
+                repo_id=args.repo_id,
+                quantization_device=args.quantization_device,
+                weight_quantization_backend=args.weight_quantization_backend,
+                revision=args.revision,
+                commit_message=args.commit_message,
+                dry_run=args.dry_run,
+            )
+        else:
+            payload = repair_hf_artifact_metadata_matrix(
+                namespace=args.namespace,
+                suites=suites,
+                quantization_device=args.quantization_device,
+                weight_quantization_backend=args.weight_quantization_backend,
+                revision=args.revision,
+                commit_message=args.commit_message,
+                dry_run=args.dry_run,
+            )
+        print(json.dumps(payload, indent=2))
         return 0
     if args.command == "validate-generation":
         suite = get_native_suite(args.suite)
