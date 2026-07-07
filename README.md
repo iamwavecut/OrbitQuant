@@ -183,6 +183,13 @@ Current artifacts include:
   `not_run` for newly quantized artifacts.
 - `SHA256SUMS`: checksums for all artifact files.
 
+Lloyd-Max codebooks are data-agnostic and cached outside the current Python
+process after first generation. By default the cache is written under
+`$XDG_CACHE_HOME/orbitquant/codebooks` or `~/.cache/orbitquant/codebooks`.
+Set `ORBITQUANT_CODEBOOK_CACHE_DIR` to choose another cache directory, or
+`ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE=1` to force regeneration. This avoids
+repeating the CPU-only offline codebook solve for every new quantization run.
+
 `activation_kernel_backend` accepts `auto`, `cpu`, `mps`, and `triton_cuda`.
 The current `triton_cuda` path uses real Triton kernels for runtime activation
 norm calculation, RPBH/FWHT rotation, codebook lookup, norm rescale, packed
