@@ -66,10 +66,20 @@ class FakeAuditHfApi:
         )
         if repo_id not in self.siblings_by_repo:
             raise RuntimeError("missing repo")
-        siblings = [
-            SimpleNamespace(rfilename=name, size=size)
-            for name, size in self.siblings_by_repo[repo_id].items()
-        ]
+        siblings = []
+        for name, metadata in self.siblings_by_repo[repo_id].items():
+            if isinstance(metadata, dict):
+                lfs_sha256 = metadata.get("lfs_sha256")
+                lfs = (
+                    SimpleNamespace(sha256=lfs_sha256, size=metadata.get("size"))
+                    if lfs_sha256 is not None
+                    else None
+                )
+                siblings.append(
+                    SimpleNamespace(rfilename=name, size=metadata.get("size"), lfs=lfs)
+                )
+            else:
+                siblings.append(SimpleNamespace(rfilename=name, size=metadata, lfs=None))
         return SimpleNamespace(
             sha="remote-sha",
             private=True,
@@ -631,7 +641,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     siblings = _required_remote_files()
     siblings.update(
         {
-            "model.safetensors": 123,
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
             "assets/original.png": 10,
             "assets/orbitquant.png": 10,
         }
@@ -645,8 +655,15 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
           "activation_bits": 4,
           "target_policy": "flux",
           "quantized_modules": ["block.attn.to_q"],
-          "adaln_modules": ["block.modulation"]
+          "adaln_modules": ["block.modulation"],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
         }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
     )
     original_metrics_path = tmp_path / "original.metrics.jsonl"
     original_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
@@ -654,6 +671,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     orbitquant_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
     file_map = {
         (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
         (repo_id, "benchmark/original.metrics.jsonl"): original_metrics_path,
         (repo_id, "benchmark/orbitquant.metrics.jsonl"): orbitquant_metrics_path,
     }
@@ -680,10 +698,99 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
         "quantization_device_missing",
         "weight_quantization_backend_missing",
     ]
+    assert row["remote_checksum_mismatches"] == []
     assert row["missing_required_metrics"] == [
         {"split": "original", "metric": "geneval_overall"},
         {"split": "orbitquant", "metric": "geneval_overall"},
     ]
+
+
+def test_audit_hf_artifact_repos_rejects_lfs_checksum_mismatch(tmp_path, monkeypatch):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings["model.safetensors"] = {"size": 123, "lfs_sha256": "b" * 64}
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux2",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": [],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    original_metrics_path = tmp_path / "original.metrics.jsonl"
+    original_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
+    orbitquant_metrics_path = tmp_path / "orbitquant.metrics.jsonl"
+    orbitquant_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
+    file_map = {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/original.metrics.jsonl"): original_metrics_path,
+        (repo_id, "benchmark/orbitquant.metrics.jsonl"): orbitquant_metrics_path,
+    }
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+
+    row = result["rows"][0]
+    assert result["artifact_ready_count"] == 0
+    assert result["remote_checksum_mismatch_count"] == 2
+    assert row["artifact_ready"] is False
+    assert row["remote_checksum_mismatches"] == [
+        (
+            "manifest/LFS mismatch for model.safetensors: expected "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, got "
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ),
+        (
+            "SHA256SUMS/LFS mismatch for model.safetensors: expected "
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, got "
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ),
+    ]
+
+
+def test_render_hf_artifact_audit_markdown_reports_checksum_mismatch_count():
+    markdown = render_hf_artifact_audit_markdown(
+        {
+            "namespace": "WaveCut",
+            "repo_count": 1,
+            "existing_count": 1,
+            "artifact_ready_count": 0,
+            "native_smoke_ready_count": 0,
+            "release_eval_ready_count": 0,
+            "missing_required_metric_count": 0,
+            "manifest_warning_count": 0,
+            "remote_checksum_mismatch_count": 2,
+            "rows": [],
+        }
+    )
+
+    assert "- Remote checksum mismatches: 2" in markdown
 
 
 def test_audit_hf_artifact_repos_reports_missing_repo_without_downloading():

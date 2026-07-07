@@ -126,6 +126,17 @@ def _read_remote_bytes(repo_id: str, filename: str, *, revision: str | None = No
     return Path(path).read_bytes()
 
 
+def _parse_sha256sums_bytes(payload: bytes) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for line in payload.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        digest, _, relative_path = line.partition("  ")
+        if digest and relative_path:
+            entries[relative_path] = digest
+    return entries
+
+
 def _read_remote_jsonl(
     repo_id: str, filename: str, *, revision: str | None = None
 ) -> list[dict]:
@@ -195,6 +206,62 @@ def _missing_required_metrics(
             if metric not in metrics.get(split, {}):
                 missing.append({"split": split, "metric": metric})
     return missing
+
+
+def _lfs_sha256_by_file(siblings_by_file: dict[str, Any]) -> dict[str, str]:
+    checksums = {}
+    for filename, sibling in siblings_by_file.items():
+        lfs = getattr(sibling, "lfs", None)
+        sha256 = None
+        if isinstance(lfs, dict):
+            sha256 = lfs.get("sha256")
+        elif lfs is not None:
+            sha256 = getattr(lfs, "sha256", None)
+        if sha256:
+            checksums[filename] = sha256
+    return checksums
+
+
+def _remote_checksum_mismatches(
+    manifest: dict[str, Any],
+    sha256sums_entries: dict[str, str],
+    *,
+    lfs_sha256_by_file: dict[str, str],
+) -> list[str]:
+    if not manifest:
+        return []
+    manifest_checksums = manifest.get("checksums") or {}
+    if not manifest_checksums:
+        return ["manifest.checksums: missing"]
+    if not sha256sums_entries:
+        return ["SHA256SUMS: empty or missing"]
+
+    mismatches = []
+    for relative_path in sorted(set(manifest_checksums) - set(sha256sums_entries)):
+        mismatches.append(f"SHA256SUMS missing manifest entry for {relative_path}")
+    for relative_path in sorted(set(manifest_checksums) & set(sha256sums_entries)):
+        manifest_digest = manifest_checksums[relative_path]
+        sha256sums_digest = sha256sums_entries[relative_path]
+        if manifest_digest != sha256sums_digest:
+            mismatches.append(
+                f"manifest/SHA256SUMS mismatch for {relative_path}: "
+                f"expected {manifest_digest}, got {sha256sums_digest}"
+            )
+
+    for relative_path, lfs_digest in sorted(lfs_sha256_by_file.items()):
+        manifest_digest = manifest_checksums.get(relative_path)
+        if manifest_digest is not None and manifest_digest != lfs_digest:
+            mismatches.append(
+                f"manifest/LFS mismatch for {relative_path}: "
+                f"expected {manifest_digest}, got {lfs_digest}"
+            )
+        sha256sums_digest = sha256sums_entries.get(relative_path)
+        if sha256sums_digest is not None and sha256sums_digest != lfs_digest:
+            mismatches.append(
+                f"SHA256SUMS/LFS mismatch for {relative_path}: "
+                f"expected {sha256sums_digest}, got {lfs_digest}"
+            )
+    return mismatches
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
@@ -412,7 +479,11 @@ def audit_hf_artifact_repos(
                 continue
 
             siblings = list(info.siblings or [])
-            files = {sibling.rfilename: getattr(sibling, "size", None) for sibling in siblings}
+            siblings_by_file = {sibling.rfilename: sibling for sibling in siblings}
+            files = {
+                name: getattr(sibling, "size", None)
+                for name, sibling in siblings_by_file.items()
+            }
             file_names = set(files)
             required_missing = [
                 filename for filename in _REQUIRED_ARTIFACT_FILES if filename not in file_names
@@ -426,12 +497,26 @@ def audit_hf_artifact_repos(
                     )
                 except Exception as exc:
                     manifest_error = f"{type(exc).__name__}: {str(exc)}"
+            sha256sums_entries: dict[str, str] = {}
+            sha256sums_error = None
+            if "SHA256SUMS" in file_names:
+                try:
+                    sha256sums_entries = _parse_sha256sums_bytes(
+                        _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
+                    )
+                except Exception as exc:
+                    sha256sums_error = f"{type(exc).__name__}: {str(exc)}"
             metrics = _metrics_by_split(repo_id, file_names, revision=revision)
             missing_metrics = _missing_required_metrics(metrics, suite_name=suite.name)
             manifest_mismatches = _manifest_mismatches(
                 manifest,
                 suite=suite,
                 bit_setting=bit_setting,
+            )
+            remote_checksum_mismatches = _remote_checksum_mismatches(
+                manifest,
+                sha256sums_entries,
+                lfs_sha256_by_file=_lfs_sha256_by_file(siblings_by_file),
             )
             generated_splits = sorted(
                 split for split, values in metrics.items() if values.get("generated_samples")
@@ -453,6 +538,10 @@ def audit_hf_artifact_repos(
                     "manifest_error": manifest_error,
                     "manifest_mismatches": manifest_mismatches,
                     "manifest_warnings": _manifest_warnings(manifest),
+                    "sha256sums_error": sha256sums_error,
+                    "sha256sums_entry_count": len(sha256sums_entries),
+                    "remote_lfs_checksum_count": len(_lfs_sha256_by_file(siblings_by_file)),
+                    "remote_checksum_mismatches": remote_checksum_mismatches,
                     "quantized_modules": len(manifest.get("quantized_modules") or []),
                     "adaln_modules": len(manifest.get("adaln_modules") or []),
                     "metrics_by_split": metrics,
@@ -465,6 +554,8 @@ def audit_hf_artifact_repos(
                 and files.get("model.safetensors") is not None
                 and not manifest_error
                 and not manifest_mismatches
+                and not sha256sums_error
+                and not remote_checksum_mismatches
             )
             row["native_smoke_ready"] = (
                 row["artifact_ready"]
@@ -484,6 +575,10 @@ def audit_hf_artifact_repos(
             len(row.get("missing_required_metrics", [])) for row in rows
         ),
         "manifest_warning_count": sum(len(row.get("manifest_warnings", [])) for row in rows),
+        "remote_checksum_mismatch_count": sum(
+            len(row.get("remote_checksum_mismatches", [])) for row in rows
+        )
+        + sum(1 for row in rows if row.get("sha256sums_error")),
         "rows": rows,
     }
 
@@ -527,6 +622,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Release eval ready: {payload.get('release_eval_ready_count', 0)} / {repo_count}",
         f"- Missing required metrics: {payload.get('missing_required_metric_count', 0)}",
         f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
+        f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
         "",
         "## Artifact Matrix",
         "",
