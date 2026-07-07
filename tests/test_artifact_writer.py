@@ -13,6 +13,7 @@ from orbitquant.artifacts import (
     sha256_file,
     validate_orbitquant_artifact,
 )
+from orbitquant.artifacts.checksums import write_sha256sums_from_manifest
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import quantize_linear_modules
@@ -162,6 +163,8 @@ def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path
     assert "assets/.gitkeep" in result["required_files"]
     assert "model_index.json" in result["required_files"]
     assert result["checksum_validation"] == "checked"
+    assert result["sha256sums_validation"] == "checked"
+    assert result["sha256sums_entry_count"] > result["tensor_count"]
     assert result["tensor_validation"] == "checked"
 
 
@@ -187,7 +190,58 @@ def test_validate_orbitquant_artifact_can_skip_heavy_checksum_and_tensor_passes(
 
     assert result["valid"] is True
     assert result["checksum_validation"] == "skipped"
+    assert result["sha256sums_validation"] == "skipped"
     assert result["tensor_validation"] == "skipped"
+
+
+def test_validate_orbitquant_artifact_rejects_corrupted_readme_checksum(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    with (tmp_path / "README.md").open("a", encoding="utf-8") as handle:
+        handle.write("\ncorruption\n")
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "SHA256SUMS mismatch for README.md" in str(exc)
+    else:
+        raise AssertionError("validate_orbitquant_artifact accepted a corrupted README")
+
+
+def test_validate_orbitquant_artifact_rejects_corrupted_manifest_checksum(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["extra_ignored_field"] = "corruption"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "SHA256SUMS mismatch for orbitquant_manifest.json" in str(exc)
+    else:
+        raise AssertionError("validate_orbitquant_artifact accepted a corrupted manifest")
 
 
 def test_validate_orbitquant_artifact_rejects_model_index_manifest_mismatch(tmp_path):
@@ -211,6 +265,7 @@ def test_validate_orbitquant_artifact_rejects_model_index_manifest_mismatch(tmp_
     model_index_path.write_text(json.dumps(model_index, indent=2) + "\n")
     manifest["checksums"]["model_index.json"] = sha256_file(model_index_path)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest["checksums"])
 
     try:
         validate_orbitquant_artifact(tmp_path)
@@ -586,6 +641,30 @@ def test_load_orbitquant_artifact_rejects_checksum_mismatch(tmp_path):
         assert "checksum mismatch" in str(exc)
     else:
         raise AssertionError("load_orbitquant_artifact accepted a corrupted artifact")
+
+
+def test_load_orbitquant_artifact_rejects_sha256sums_mismatch(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    with (tmp_path / "README.md").open("a", encoding="utf-8") as handle:
+        handle.write("\ncorruption\n")
+
+    try:
+        load_orbitquant_artifact(TinyArtifactModel(), tmp_path)
+    except RuntimeError as exc:
+        assert "SHA256SUMS mismatch for README.md" in str(exc)
+    else:
+        raise AssertionError("load_orbitquant_artifact accepted a corrupted SHA256SUMS target")
 
 
 def test_load_orbitquant_artifact_can_skip_checksum_validation_for_trusted_local_runs(tmp_path):

@@ -6,7 +6,7 @@ from typing import Any
 
 from safetensors.torch import load_file
 
-from orbitquant.artifacts.checksums import validate_checksums
+from orbitquant.artifacts.checksums import validate_checksums, validate_sha256sums
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.config import OrbitQuantConfig
 
@@ -27,6 +27,8 @@ _REQUIRED_ARTIFACT_FILES = (
     "benchmark/orbitquant.metrics.csv",
     "assets/.gitkeep",
 )
+
+_SHA256SUMS_REQUIRED_EXTRA_ENTRIES = ("README.md", "orbitquant_manifest.json")
 
 
 def validate_required_artifact_files(artifact_path: Path) -> None:
@@ -96,6 +98,12 @@ def validate_orbitquant_artifact(
     )
     if validate_checksums_enabled:
         validate_checksums(artifact_path, manifest.checksums)
+        sha256sums_entries = validate_sha256sums(
+            artifact_path,
+            required_paths=tuple(manifest.checksums) + _SHA256SUMS_REQUIRED_EXTRA_ENTRIES,
+        )
+    else:
+        sha256sums_entries = {}
     _validate_model_index(model_index, config=config, manifest=manifest)
     expected_shapes = manifest.module_shapes
     if validate_tensors:
@@ -128,6 +136,8 @@ def validate_orbitquant_artifact(
         "tensor_count": len(expected_shapes),
         "tensor_validation": "checked" if validate_tensors else "skipped",
         "checksum_validation": "checked" if validate_checksums_enabled else "skipped",
+        "sha256sums_validation": "checked" if validate_checksums_enabled else "skipped",
+        "sha256sums_entry_count": len(sha256sums_entries),
         "quantized_module_count": len(manifest.quantized_modules),
         "adaln_module_count": len(manifest.adaln_modules),
         "skipped_module_count": len(manifest.skipped_modules),

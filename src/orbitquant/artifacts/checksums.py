@@ -25,7 +25,8 @@ def write_sha256sums(root: str | Path, output: str | Path | None = None) -> Path
     return output_path
 
 
-def _read_sha256sums(path: Path) -> dict[str, str]:
+def read_sha256sums(path: str | Path) -> dict[str, str]:
+    path = Path(path)
     if not path.is_file():
         return {}
     entries: dict[str, str] = {}
@@ -45,7 +46,7 @@ def write_sha256sums_from_manifest(
 ) -> Path:
     root_path = Path(root)
     output_path = root_path / "SHA256SUMS" if output is None else Path(output)
-    entries = _read_sha256sums(output_path)
+    entries = read_sha256sums(output_path)
     entries.update(checksums)
 
     manifest_path = root_path / "orbitquant_manifest.json"
@@ -80,3 +81,31 @@ def validate_checksums(root: str | Path, checksums: dict[str, str]) -> None:
                 f"artifact checksum mismatch for {relative_path}: "
                 f"expected {expected}, got {actual}"
             )
+
+
+def validate_sha256sums(
+    root: str | Path,
+    *,
+    required_paths: tuple[str, ...] = (),
+    sha256sums_path: str | Path | None = None,
+) -> dict[str, str]:
+    root_path = Path(root)
+    sums_path = root_path / "SHA256SUMS" if sha256sums_path is None else Path(sha256sums_path)
+    entries = read_sha256sums(sums_path)
+    if not entries:
+        raise RuntimeError("SHA256SUMS is empty or missing")
+    missing_entries = sorted(set(required_paths) - set(entries))
+    if missing_entries:
+        raise RuntimeError(f"SHA256SUMS missing entries: {missing_entries}")
+    for relative_path, expected in entries.items():
+        if relative_path == "SHA256SUMS":
+            raise RuntimeError("SHA256SUMS must not include itself")
+        path = root_path / relative_path
+        if not path.is_file():
+            raise RuntimeError(f"SHA256SUMS target missing: {relative_path}")
+        actual = sha256_file(path)
+        if actual != expected:
+            raise RuntimeError(
+                f"SHA256SUMS mismatch for {relative_path}: expected {expected}, got {actual}"
+            )
+    return entries
