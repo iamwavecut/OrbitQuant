@@ -368,6 +368,86 @@ def test_triton_weight_quant_pack_matches_reference_two_step_path(bits):
     assert torch.equal(actual.cpu(), expected.cpu())
 
 
+def test_triton_row_norms_match_reference_for_bfloat16_weight_input():
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import row_norms_with_triton
+
+    torch.manual_seed(125)
+    weight = torch.randn(11, 32, device="cuda", dtype=torch.bfloat16)
+    expected = weight.float().norm(dim=-1).clamp_min(1e-12)
+
+    actual = row_norms_with_triton(weight, eps=1e-12)
+
+    assert actual.is_cuda
+    assert actual.dtype == torch.float32
+    assert torch.allclose(actual, expected, atol=1e-4, rtol=1e-4)
+
+
+def test_triton_weight_quant_pack_accepts_bfloat16_without_reference_rotation_path(monkeypatch):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import (
+        quantize_weight_packed_with_triton,
+        row_norms_with_triton,
+    )
+
+    torch.manual_seed(126)
+    weight = torch.randn(9, 32, device="cuda", dtype=torch.bfloat16)
+    rotation = RPBHRotation(dim=32, seed=5, block_size=8)
+    codebook = get_codebook(dim=32, bits=4)
+    row_norms = row_norms_with_triton(weight, eps=1e-12)
+    rotated = rotation.apply_to_weight(weight.float())
+    expected_indices = codebook.quantize_indices(rotated / row_norms[:, None])
+    expected = pack_lowbit(expected_indices, bits=4)
+
+    def fail_rotation(*args, **kwargs):
+        raise AssertionError("triton_cuda weight quantization should not call PyTorch RPBH")
+
+    monkeypatch.setattr(RPBHRotation, "apply_to_weight", fail_rotation)
+
+    actual = quantize_weight_packed_with_triton(
+        weight,
+        row_norms,
+        rotation=rotation,
+        codebook=codebook,
+        bits=4,
+    )
+
+    assert actual.is_cuda
+    assert torch.equal(actual.cpu(), expected.cpu())
+
+
+def test_triton_weight_quantization_reuses_cuda_constant_tensors():
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import (
+        _weight_quantization_constants,
+        clear_triton_constant_cache,
+    )
+
+    clear_triton_constant_cache()
+    rotation = RPBHRotation(dim=32, seed=5, block_size=8)
+    codebook = get_codebook(dim=32, bits=4)
+
+    first = _weight_quantization_constants(
+        rotation=rotation,
+        codebook=codebook,
+        device=torch.device("cuda"),
+    )
+    second = _weight_quantization_constants(
+        rotation=rotation,
+        codebook=codebook,
+        device=torch.device("cuda"),
+    )
+
+    assert all(tensor.is_cuda for tensor in first)
+    assert [tensor.data_ptr() for tensor in first] == [tensor.data_ptr() for tensor in second]
+
+
 def test_triton_cuda_backend_matches_reference_without_full_reference_fallback(monkeypatch):
     if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
         pytest.skip("CUDA/Triton backend is not available")

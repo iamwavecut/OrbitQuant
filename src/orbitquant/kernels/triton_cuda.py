@@ -17,6 +17,71 @@ def _load_triton():
 
 triton, tl = _load_triton()
 
+_WEIGHT_QUANT_CONSTANT_CACHE: dict[tuple[object, ...], torch.Tensor] = {}
+
+
+def _normalize_cuda_device(device: torch.device | str) -> torch.device:
+    torch_device = torch.device(device)
+    if torch_device.type == "cuda" and torch_device.index is None:
+        return torch.device("cuda", torch.cuda.current_device())
+    return torch_device
+
+
+def clear_triton_constant_cache() -> None:
+    _WEIGHT_QUANT_CONSTANT_CACHE.clear()
+
+
+def _cached_cuda_tensor(
+    key: tuple[object, ...],
+    source: torch.Tensor,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    device = _normalize_cuda_device(device)
+    cached = _WEIGHT_QUANT_CONSTANT_CACHE.get(key)
+    if cached is not None and cached.device == device and cached.dtype == dtype:
+        return cached
+    tensor = source.to(device=device, dtype=dtype).contiguous()
+    _WEIGHT_QUANT_CONSTANT_CACHE[key] = tensor
+    return tensor
+
+
+def _weight_quantization_constants(
+    *,
+    rotation: RPBHRotation,
+    codebook: LloydMaxCodebook,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    device = _normalize_cuda_device(device)
+    device_key = str(device)
+    rotation_key = (int(rotation.dim), int(rotation.seed), int(rotation.block_size), device_key)
+    codebook_key = (
+        int(codebook.dim),
+        int(codebook.bits),
+        int(codebook.algorithm_version),
+        device_key,
+    )
+    permutation = _cached_cuda_tensor(
+        ("rotation_permutation", *rotation_key),
+        rotation.permutation,
+        device=device,
+        dtype=torch.int64,
+    )
+    signs = _cached_cuda_tensor(
+        ("rotation_signs", *rotation_key),
+        rotation.signs,
+        device=device,
+        dtype=torch.int8,
+    )
+    boundaries = _cached_cuda_tensor(
+        ("codebook_boundaries", *codebook_key),
+        codebook.boundaries,
+        device=device,
+        dtype=torch.float32,
+    )
+    return permutation, signs, boundaries
+
 
 @triton.jit
 def _row_norm_kernel(
@@ -824,6 +889,34 @@ def unpack_lowbit_with_triton(packed: torch.Tensor, *, bits: int, length: int) -
     return values
 
 
+def row_norms_with_triton(weight: torch.Tensor, *, eps: float) -> torch.Tensor:
+    if not weight.is_cuda:
+        raise RuntimeError("triton_cuda row norm requires CUDA tensors")
+    if weight.ndim != 2:
+        raise ValueError("weight must be a rank-2 tensor")
+    if not weight.is_floating_point():
+        raise TypeError("weight must be a floating point tensor")
+
+    triton, _ = _load_triton()
+    out_features, in_features = weight.shape
+    norms = torch.empty(out_features, device=weight.device, dtype=torch.float32)
+    if out_features == 0:
+        return norms
+
+    weight_contiguous = weight.contiguous()
+    norm_block_size = triton.next_power_of_2(in_features)
+    _row_norm_kernel[(out_features,)](
+        weight_contiguous,
+        norms,
+        rows=out_features,
+        dim=in_features,
+        eps=float(eps),
+        block_size=norm_block_size,
+        num_warps=8,
+    )
+    return norms
+
+
 def quantize_weight_indices_with_triton(
     weight: torch.Tensor,
     row_norms: torch.Tensor,
@@ -841,11 +934,13 @@ def quantize_weight_indices_with_triton(
     triton, _ = _load_triton()
     out_features, in_features = weight.shape
     total = out_features * in_features
-    weight_fp32 = weight.to(dtype=torch.float32).contiguous()
+    weight_contiguous = weight.contiguous()
     norms = row_norms.to(device=weight.device, dtype=torch.float32).contiguous()
-    permutation = rotation.permutation.to(device=weight.device, dtype=torch.int64).contiguous()
-    signs = rotation.signs.to(device=weight.device, dtype=torch.int8).contiguous()
-    boundaries = codebook.boundaries.to(device=weight.device, dtype=torch.float32).contiguous()
+    permutation, signs, boundaries = _weight_quantization_constants(
+        rotation=rotation,
+        codebook=codebook,
+        device=weight.device,
+    )
     work = torch.empty(total, device=weight.device, dtype=torch.float32)
     indices = torch.empty(total, device=weight.device, dtype=torch.uint8)
     if total == 0:
@@ -853,7 +948,7 @@ def quantize_weight_indices_with_triton(
 
     element_block_size = 256
     _permute_sign_weight_kernel[(triton.cdiv(total, element_block_size),)](
-        weight_fp32,
+        weight_contiguous,
         permutation,
         signs,
         work,
@@ -928,16 +1023,18 @@ def quantize_weight_packed_with_triton(
     if total == 0:
         return packed
 
-    weight_fp32 = weight.to(dtype=torch.float32).contiguous()
+    weight_contiguous = weight.contiguous()
     norms = row_norms.to(device=weight.device, dtype=torch.float32).contiguous()
-    permutation = rotation.permutation.to(device=weight.device, dtype=torch.int64).contiguous()
-    signs = rotation.signs.to(device=weight.device, dtype=torch.int8).contiguous()
-    boundaries = codebook.boundaries.to(device=weight.device, dtype=torch.float32).contiguous()
+    permutation, signs, boundaries = _weight_quantization_constants(
+        rotation=rotation,
+        codebook=codebook,
+        device=weight.device,
+    )
     work = torch.empty(total, device=weight.device, dtype=torch.float32)
 
     element_block_size = 256
     _permute_sign_weight_kernel[(triton.cdiv(total, element_block_size),)](
-        weight_fp32,
+        weight_contiguous,
         permutation,
         signs,
         work,

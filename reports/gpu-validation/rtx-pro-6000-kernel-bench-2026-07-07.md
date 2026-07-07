@@ -194,6 +194,94 @@ Current raw benchmark metadata:
 }
 ```
 
+## CUDA Weight Quant Hardening Follow-Up
+
+After the first `weight_rotation_fwht_quant_pack` checkpoint, the weight
+quantization path was hardened further because full-model quantization still
+showed too much CPU activity for a CUDA run.
+
+The follow-up working tree after `869670d` adds:
+
+- cached `RPBHRotation` objects keyed by `(dim, seed, block_size)`;
+- a Triton CUDA row-norm kernel for rank-2 weights;
+- direct BF16/FP16/FP32 weight input to the Triton quantize-pack kernel instead
+  of materializing a full FP32 copy before the kernel launch;
+- cached CUDA constant tensors for weight quantization permutation, signs, and
+  codebook boundaries.
+
+Local verification:
+
+```bash
+uv run pytest -q
+uv run ruff check .
+```
+
+Remote RTX PRO 6000 targeted verification:
+
+```bash
+PYTHONPATH=/workspace/OrbitQuant-head/src \
+  /workspace/OrbitQuant/.venv/bin/python -m pytest \
+  tests/test_kernels.py \
+  tests/test_orbit_linear.py \
+  tests/test_model_quantization.py \
+  -q
+```
+
+Result: targeted CUDA tests passed. MPS-only tests were skipped on the CUDA host.
+
+Post-hardening micro-benchmark on the same 3072x3072 BF16 shape:
+
+```json
+{
+  "selected_activation_kernel_backend": "triton_cuda",
+  "weight_quantization_backend": "triton_cuda",
+  "timings_ms": {
+    "weight_quantize_pack_cold_ms": 1155.5595703125,
+    "weight_quantize_pack_hot_ms": 0.23645439147949218,
+    "torch_linear_ms": 0.03475199937820435,
+    "activation_quant_ms": 0.15082240104675293,
+    "weight_dequant_cold_ms": 0.07378559708595275,
+    "weight_dequant_cached_ms": 0.0017791999503970145,
+    "forward_cold_ms": 0.2544640064239502,
+    "forward_prewarmed_ms": 0.16335999965667725
+  },
+  "quantization_buffers": {
+    "source_weight_device": "cuda:0",
+    "source_weight_is_cuda": true,
+    "packed_weight_indices_device": "cuda:0",
+    "row_norms_device": "cuda:0",
+    "packed_weight_indices_is_cuda": true,
+    "row_norms_is_cuda": true
+  },
+  "peak_memory_bytes": 111879680,
+  "full_fusion": false
+}
+```
+
+The larger cold time is first-use Triton JIT compilation, including the new
+row-norm kernel. The hot quantize-pack path is the relevant steady-state CUDA
+measurement and is now `0.236 ms` for this shape.
+
+To verify that a sustained hot loop is visible to NVIDIA telemetry, the same
+pod ran repeated hot `OrbitQuantLinear.from_linear(...)` calls while sampling
+`nvidia-smi dmon`:
+
+```text
+# gpu    pwr  gtemp  mtemp     sm    mem    enc    dec    jpg    ofa   mclk   pclk     fb   bar1   ccpm
+# Idx      W      C      C      %      %      %      %      %      %    MHz    MHz     MB     MB     MB
+    0    218     43      -     95      0      0      0      0      0  12481   2325    725    725      0
+    0    411     45      -     95      0      0      0      0      0  12481   2370    725    725      0
+    0    365     44      -     95      0      0      0      0      0  12481   2415    725    725      0
+    0    362     45      -     95      0      0      0      0      0  12481   2422    725    725      0
+    0    365     46      -     96      0      0      0      0      0  12481   2422    725    725      0
+    0    366     47      -     96      0      0      0      0      0  12481   2422    725    725      0
+HOT_LOOP_COUNT=39542
+```
+
+This explains why short single-layer quantization may not light up a web UI GPU
+badge: a single hot kernel sequence is sub-millisecond and easy for coarse UI
+sampling to miss. Sustained hot quantization is visible as 95-96% SM utilization.
+
 ## Remaining Kernel Work
 
 The current CUDA path is no longer a CPU fallback path for the quantization

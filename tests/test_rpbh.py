@@ -1,6 +1,6 @@
 import torch
 
-from orbitquant.rotations import RPBHRotation
+from orbitquant.rotations import RPBHRotation, clear_rotation_cache, get_rpbh_rotation
 
 
 def test_rpbh_preserves_norms_and_is_deterministic():
@@ -45,3 +45,14 @@ def test_rpbh_paper_block_size_uses_largest_power_of_two_divisor():
 
     assert rotation.block_size == 8
     assert rotation.num_blocks == 3
+
+
+def test_rpbh_rotation_cache_reuses_dimension_seed_block_instances():
+    clear_rotation_cache()
+
+    first = get_rpbh_rotation(dim=32, seed=17, block_size=8)
+    second = get_rpbh_rotation(dim=32, seed=17, block_size=8)
+    other_seed = get_rpbh_rotation(dim=32, seed=18, block_size=8)
+
+    assert first is second
+    assert first is not other_seed

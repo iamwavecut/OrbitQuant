@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass
+from functools import lru_cache
 
 import torch
 
@@ -107,3 +108,12 @@ class RPBHRotation:
         if weight.shape[-1] != self.dim:
             raise ValueError(f"expected in_features {self.dim}, got {weight.shape[-1]}")
         return self.apply_inverse_to_activations(weight)
+
+
+@lru_cache(maxsize=256)
+def get_rpbh_rotation(dim: int, seed: int = 0, block_size: int | str = "paper") -> RPBHRotation:
+    return RPBHRotation(dim=dim, seed=seed, block_size=block_size)
+
+
+def clear_rotation_cache() -> None:
+    get_rpbh_rotation.cache_clear()

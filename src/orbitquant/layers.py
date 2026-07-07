@@ -8,7 +8,7 @@ from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import quantize_activations_kernel
 from orbitquant.packing import pack_lowbit, unpack_lowbit
-from orbitquant.rotations import RPBHRotation
+from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
 
 
 def _packed_length(value_count: int, bits: int) -> int:
@@ -93,7 +93,7 @@ class OrbitQuantLinear(nn.Module):
         self.activation_kernel_backend = config.activation_kernel_backend
         self.module_name = module_name
         self.activation_eps = config.activation_eps
-        self.rotation = RPBHRotation(
+        self.rotation = get_rpbh_rotation(
             dim=in_features, seed=config.rotation_seed, block_size=config.block_size
         )
         self.weight_codebook = get_codebook(in_features, config.weight_bits)
@@ -147,13 +147,14 @@ class OrbitQuantLinear(nn.Module):
         config: OrbitQuantConfig,
         module_name: str,
     ) -> OrbitQuantLinear:
-        weight = layer.weight.detach().to(torch.float32)
+        source_weight = layer.weight.detach()
         bias = None if layer.bias is None else layer.bias.detach()
-        rotation = RPBHRotation(
+        rotation = get_rpbh_rotation(
             dim=layer.in_features, seed=config.rotation_seed, block_size=config.block_size
         )
 
         if config.runtime_mode == "debug_no_quant":
+            weight = source_weight.to(torch.float32)
             rotated_weight = rotation.apply_to_weight(weight)
             return cls(
                 in_features=layer.in_features,
@@ -166,10 +167,17 @@ class OrbitQuantLinear(nn.Module):
                 debug_weight=rotated_weight,
             )
 
-        row_norms = weight.norm(dim=-1).clamp_min(config.activation_eps)
+        if source_weight.is_cuda:
+            from orbitquant.kernels.triton_cuda import row_norms_with_triton
+
+            row_norms = row_norms_with_triton(source_weight, eps=config.activation_eps)
+            quantization_weight = source_weight
+        else:
+            quantization_weight = source_weight.to(torch.float32)
+            row_norms = quantization_weight.norm(dim=-1).clamp_min(config.activation_eps)
         codebook = get_codebook(layer.in_features, config.weight_bits)
         packed = _quantize_weight_pack(
-            weight,
+            quantization_weight,
             row_norms,
             rotation=rotation,
             codebook=codebook,
