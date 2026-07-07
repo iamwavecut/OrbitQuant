@@ -208,6 +208,10 @@ def _missing_required_metrics(
     return missing
 
 
+def _release_eval_applicable(suite_name: str) -> bool:
+    return suite_name in _REQUIRED_METRICS_BY_SUITE
+
+
 def _lfs_sha256_by_file(siblings_by_file: dict[str, Any]) -> dict[str, str]:
     checksums = {}
     for filename, sibling in siblings_by_file.items():
@@ -469,6 +473,7 @@ def audit_hf_artifact_repos(
                 "exists": False,
                 "artifact_ready": False,
                 "native_smoke_ready": False,
+                "release_eval_applicable": _release_eval_applicable(suite.name),
                 "release_eval_ready": False,
             }
             try:
@@ -562,14 +567,23 @@ def audit_hf_artifact_repos(
                 and row["asset_count"] > 0
                 and set(generated_splits) == {"original", "orbitquant"}
             )
-            row["release_eval_ready"] = row["native_smoke_ready"] and not missing_metrics
+            row["release_eval_ready"] = (
+                row["release_eval_applicable"]
+                and row["native_smoke_ready"]
+                and not missing_metrics
+            )
             rows.append(row)
+    release_eval_applicable_count = sum(
+        1 for row in rows if row.get("release_eval_applicable")
+    )
     return {
         "namespace": namespace,
         "repo_count": len(rows),
         "existing_count": sum(1 for row in rows if row["exists"]),
         "artifact_ready_count": sum(1 for row in rows if row["artifact_ready"]),
         "native_smoke_ready_count": sum(1 for row in rows if row["native_smoke_ready"]),
+        "release_eval_applicable_count": release_eval_applicable_count,
+        "release_eval_not_applicable_count": len(rows) - release_eval_applicable_count,
         "release_eval_ready_count": sum(1 for row in rows if row["release_eval_ready"]),
         "missing_required_metric_count": sum(
             len(row.get("missing_required_metrics", [])) for row in rows
@@ -585,6 +599,12 @@ def audit_hf_artifact_repos(
 
 def _markdown_status(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _markdown_release_eval_status(row: dict[str, Any]) -> str:
+    if not row.get("release_eval_applicable", True):
+        return "n/a"
+    return _markdown_status(bool(row.get("release_eval_ready")))
 
 
 def _short_sha(value: Any) -> str:
@@ -612,6 +632,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
     """Render a compact human-readable HF artifact audit report."""
 
     repo_count = payload.get("repo_count", 0)
+    release_eval_applicable_count = payload.get("release_eval_applicable_count", repo_count)
     lines = [
         "# OrbitQuant HF Artifact Audit",
         "",
@@ -619,7 +640,11 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Repositories: {payload.get('existing_count', 0)} / {repo_count} existing",
         f"- Artifact ready: {payload.get('artifact_ready_count', 0)} / {repo_count}",
         f"- Native smoke ready: {payload.get('native_smoke_ready_count', 0)} / {repo_count}",
-        f"- Release eval ready: {payload.get('release_eval_ready_count', 0)} / {repo_count}",
+        f"- Release eval applicable: {release_eval_applicable_count} / {repo_count}",
+        (
+            f"- Release eval ready: {payload.get('release_eval_ready_count', 0)} / "
+            f"{release_eval_applicable_count}"
+        ),
         f"- Missing required metrics: {payload.get('missing_required_metric_count', 0)}",
         f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
         f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
@@ -649,7 +674,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
                     _markdown_status(bool(row.get("private"))),
                     _markdown_status(bool(row.get("artifact_ready"))),
                     _markdown_status(bool(row.get("native_smoke_ready"))),
-                    _markdown_status(bool(row.get("release_eval_ready"))),
+                    _markdown_release_eval_status(row),
                     _short_sha(row.get("sha")),
                     missing_metrics,
                 ]
@@ -660,7 +685,9 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
     blocking_rows = [
         row
         for row in payload.get("rows", [])
-        if row.get("native_smoke_ready") and not row.get("release_eval_ready")
+        if row.get("release_eval_applicable", True)
+        and row.get("native_smoke_ready")
+        and not row.get("release_eval_ready")
     ]
     if blocking_rows:
         lines.extend(["", "## Release Eval Gaps", ""])

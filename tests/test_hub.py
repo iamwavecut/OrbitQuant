@@ -687,12 +687,15 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     assert result["existing_count"] == 1
     assert result["artifact_ready_count"] == 1
     assert result["native_smoke_ready_count"] == 1
+    assert result["release_eval_applicable_count"] == 1
+    assert result["release_eval_not_applicable_count"] == 0
     assert result["release_eval_ready_count"] == 0
     assert result["missing_required_metric_count"] == 2
     row = result["rows"][0]
     assert row["repo_id"] == repo_id
     assert row["artifact_ready"] is True
     assert row["native_smoke_ready"] is True
+    assert row["release_eval_applicable"] is True
     assert row["release_eval_ready"] is False
     assert row["manifest_warnings"] == [
         "quantization_device_missing",
@@ -759,6 +762,8 @@ def test_audit_hf_artifact_repos_rejects_lfs_checksum_mismatch(tmp_path, monkeyp
     row = result["rows"][0]
     assert result["artifact_ready_count"] == 0
     assert result["remote_checksum_mismatch_count"] == 2
+    assert result["release_eval_applicable_count"] == 0
+    assert row["release_eval_applicable"] is False
     assert row["artifact_ready"] is False
     assert row["remote_checksum_mismatches"] == [
         (
@@ -782,6 +787,8 @@ def test_render_hf_artifact_audit_markdown_reports_checksum_mismatch_count():
             "existing_count": 1,
             "artifact_ready_count": 0,
             "native_smoke_ready_count": 0,
+            "release_eval_applicable_count": 1,
+            "release_eval_not_applicable_count": 0,
             "release_eval_ready_count": 0,
             "missing_required_metric_count": 0,
             "manifest_warning_count": 0,
@@ -791,6 +798,77 @@ def test_render_hf_artifact_audit_markdown_reports_checksum_mismatch_count():
     )
 
     assert "- Remote checksum mismatches: 2" in markdown
+
+
+def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(
+    tmp_path, monkeypatch
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+        metric="visual+optional-geneval",
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/original.png": 10,
+            "assets/orbitquant.png": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux2",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": [],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    original_metrics_path = tmp_path / "original.metrics.jsonl"
+    original_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
+    orbitquant_metrics_path = tmp_path / "orbitquant.metrics.jsonl"
+    orbitquant_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
+    file_map = {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/original.metrics.jsonl"): original_metrics_path,
+        (repo_id, "benchmark/orbitquant.metrics.jsonl"): orbitquant_metrics_path,
+    }
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+
+    row = result["rows"][0]
+    assert result["artifact_ready_count"] == 1
+    assert result["native_smoke_ready_count"] == 1
+    assert result["release_eval_applicable_count"] == 0
+    assert result["release_eval_not_applicable_count"] == 1
+    assert result["release_eval_ready_count"] == 0
+    assert row["release_eval_applicable"] is False
+    assert row["release_eval_ready"] is False
+    assert row["missing_required_metrics"] == []
 
 
 def test_audit_hf_artifact_repos_reports_missing_repo_without_downloading():
@@ -821,7 +899,9 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
         "existing_count": 2,
         "artifact_ready_count": 2,
         "native_smoke_ready_count": 2,
-        "release_eval_ready_count": 1,
+        "release_eval_applicable_count": 1,
+        "release_eval_not_applicable_count": 1,
+        "release_eval_ready_count": 0,
         "missing_required_metric_count": 2,
         "manifest_warning_count": 0,
         "rows": [
@@ -832,7 +912,8 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
                 "private": True,
                 "artifact_ready": True,
                 "native_smoke_ready": True,
-                "release_eval_ready": True,
+                "release_eval_applicable": False,
+                "release_eval_ready": False,
                 "sha": "abcdef1234567890",
                 "missing_required_metrics": [],
             },
@@ -843,6 +924,7 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
                 "private": True,
                 "artifact_ready": True,
                 "native_smoke_ready": True,
+                "release_eval_applicable": True,
                 "release_eval_ready": False,
                 "sha": "123456abcdef7890",
                 "missing_required_metrics": [
@@ -856,10 +938,11 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     markdown = render_hf_artifact_audit_markdown(payload)
 
     assert "# OrbitQuant HF Artifact Audit" in markdown
-    assert "- Release eval ready: 1 / 2" in markdown
+    assert "- Release eval applicable: 1 / 2" in markdown
+    assert "- Release eval ready: 0 / 1" in markdown
     assert (
         "| flux2-native | W4A4 | `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` | "
-        "yes | yes | yes | yes | abcdef123456 |  |"
+        "yes | yes | yes | n/a | abcdef123456 |  |"
     ) in markdown
     assert (
         "| flux1-schnell-native | W4A4 | `WaveCut/FLUX.1-schnell-OrbitQuant-W4A4` | "
