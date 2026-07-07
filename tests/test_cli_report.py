@@ -55,4 +55,4 @@ def test_cli_report_writes_native_eval_report(capsys, tmp_path):
     output = json.loads(capsys.readouterr().out)
     assert output["report_path"].endswith("orbitquant-native-eval-20260706.md")
     assert output["artifact_count"] == 1
-    assert output["missing_required_metric_count"] == 1
+    assert output["missing_required_metric_count"] == 13

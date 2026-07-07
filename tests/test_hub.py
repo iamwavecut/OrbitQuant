@@ -207,6 +207,14 @@ def _native_smoke_summary(suite, *, release_metrics=None):
     )
 
 
+def _expected_missing_geneval_metrics():
+    return [
+        {"split": split, "metric": metric}
+        for metric in hub_module._GENEVAL_REQUIRED_METRICS
+        for split in ("original", "orbitquant")
+    ]
+
+
 def test_upload_orbitquant_artifact_dry_run_validates_without_hub_calls(tmp_path):
     _write_artifact(tmp_path)
     fake_api = FakeHfApi()
@@ -1187,7 +1195,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     assert result["release_eval_not_applicable_count"] == 0
     assert result["release_eval_ready_count"] == 0
     assert result["forbidden_file_count"] == 0
-    assert result["missing_required_metric_count"] == 2
+    assert result["missing_required_metric_count"] == len(_expected_missing_geneval_metrics())
     row = result["rows"][0]
     assert row["repo_id"] == repo_id
     assert row["artifact_ready"] is True
@@ -1199,10 +1207,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
         "weight_quantization_backend_missing",
     ]
     assert row["remote_checksum_mismatches"] == []
-    assert row["missing_required_metrics"] == [
-        {"split": "original", "metric": "geneval_overall"},
-        {"split": "orbitquant", "metric": "geneval_overall"},
-    ]
+    assert row["missing_required_metrics"] == _expected_missing_geneval_metrics()
     assert row["native_smoke_proof_ready"] is True
     assert row["native_smoke_missing_evidence"] == []
 
@@ -1279,6 +1284,80 @@ def test_audit_hf_artifact_repos_requires_native_smoke_proof_block(
     assert row["native_smoke_ready"] is False
     assert row["native_smoke_proof_ready"] is False
     assert row["native_smoke_missing_evidence"] == ["native_smoke_missing"]
+
+
+def test_audit_hf_artifact_repos_requires_geneval_per_task_metrics(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="z-image-native",
+        model_id="Tongyi-MAI/Z-Image-Turbo",
+        pipeline="ZImagePipeline",
+        width=1024,
+        height=1024,
+        steps=10,
+        guidance=0.0,
+        bit_settings=["W4A4"],
+        metric="geneval",
+    )
+    repo_id = "WaveCut/Z-Image-Turbo-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "Tongyi-MAI/Z-Image-Turbo",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "z_image",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": ["block.modulation"],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        _native_smoke_summary(suite, release_metrics={"geneval_overall": 0.71}),
+        encoding="utf-8",
+    )
+    file_map = {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/summary.json"): summary_path,
+    }
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+
+    row = result["rows"][0]
+    assert result["artifact_ready_count"] == 1
+    assert result["native_smoke_ready_count"] == 1
+    assert result["release_eval_ready_count"] == 0
+    assert result["missing_required_metric_count"] == 12
+    assert row["release_eval_ready"] is False
+    assert row["missing_required_metrics"] == [
+        {"split": split, "metric": metric}
+        for metric in hub_module._GENEVAL_REQUIRED_METRICS
+        if metric != "geneval_overall"
+        for split in ("original", "orbitquant")
+    ]
 
 
 def test_audit_hf_artifact_repos_flags_extra_comparison_matrix_assets(

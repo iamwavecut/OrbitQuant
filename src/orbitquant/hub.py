@@ -55,9 +55,18 @@ _REQUIRED_ARTIFACT_FILES = (
     "prompts.json",
     "benchmark/summary.json",
 )
+_GENEVAL_REQUIRED_METRICS = (
+    "geneval_overall",
+    "geneval_per_task_single_object",
+    "geneval_per_task_two_object",
+    "geneval_per_task_counting",
+    "geneval_per_task_colors",
+    "geneval_per_task_position",
+    "geneval_per_task_color_attr",
+)
 _REQUIRED_METRICS_BY_SUITE = {
-    "flux1-schnell-native": ("geneval_overall",),
-    "z-image-native": ("geneval_overall",),
+    "flux1-schnell-native": _GENEVAL_REQUIRED_METRICS,
+    "z-image-native": _GENEVAL_REQUIRED_METRICS,
     "wan-native": (
         "vbench_imaging_quality",
         "vbench_aesthetic_quality",
