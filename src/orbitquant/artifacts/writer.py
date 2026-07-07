@@ -13,6 +13,16 @@ from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.prompts import default_prompt_payload
 from orbitquant.layers import OrbitQuantLinear
+from orbitquant.policies import resolve_target_policy
+
+
+def _metadata_config(model: torch.nn.Module, config: OrbitQuantConfig) -> OrbitQuantConfig:
+    resolved_policy = resolve_target_policy(model, config)
+    if resolved_policy == config.target_policy:
+        return config
+    values = config.to_dict()
+    values["target_policy"] = resolved_policy
+    return OrbitQuantConfig.from_dict(values)
 
 
 def _module_shapes(model: torch.nn.Module) -> dict[str, list[int]]:
@@ -102,6 +112,7 @@ def save_orbitquant_artifact(
     summary: Any,
     component: str = "transformer",
 ) -> OrbitQuantManifest:
+    config = _metadata_config(model, config)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 

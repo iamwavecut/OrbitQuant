@@ -4,6 +4,7 @@ import torch
 from PIL import Image
 from safetensors.torch import load_file, save_file
 
+from orbitquant.adaln import RTNInt4Linear
 from orbitquant.artifacts import (
     create_artifact_image_comparisons,
     load_orbitquant_artifact,
@@ -51,6 +52,22 @@ class TinySharedCodebookArtifactModel(torch.nn.Module):
                 )
             ]
         )
+
+
+class FluxTransformer2DArtifactModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "norm1": torch.nn.ModuleDict({"linear": torch.nn.Linear(8, 16)}),
+                        "attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)}),
+                    }
+                )
+            ]
+        )
+        self.proj_out = torch.nn.Linear(8, 8)
 
 
 def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(tmp_path):
@@ -155,6 +172,47 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").read_text() == "metric,value\n"
     assert any(name.endswith(".centroids") for name in codebook_tensors)
     assert any(name.endswith(".permutation") for name in rotation_tensors)
+
+
+def test_auto_policy_artifact_records_resolved_policy_and_loads_prequantized_flux_modules(
+    tmp_path,
+):
+    torch.manual_seed(0)
+    source = FluxTransformer2DArtifactModel()
+    config = OrbitQuantConfig(block_size=4, target_policy="auto")
+    summary = quantize_linear_modules(source, config)
+
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="black-forest-labs/FLUX.1-schnell",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    quantization_config = json.loads((tmp_path / "quantization_config.json").read_text())
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    model_index = json.loads((tmp_path / "model_index.json").read_text())
+    prompts = json.loads((tmp_path / "prompts.json").read_text())
+    benchmark_summary = json.loads((tmp_path / "benchmark" / "summary.json").read_text())
+
+    assert quantization_config["target_policy"] == "flux"
+    assert manifest["target_policy"] == "flux"
+    assert model_index["target_policy"] == "flux"
+    assert prompts["target_policy"] == "flux"
+    assert benchmark_summary["target_policy"] == "flux"
+    assert manifest["adaln_modules"] == ["transformer_blocks.0.norm1.linear"]
+    assert manifest["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
+
+    restored = FluxTransformer2DArtifactModel()
+    loaded_manifest = load_orbitquant_artifact(restored, tmp_path)
+
+    assert loaded_manifest.target_policy == "flux"
+    assert isinstance(restored.transformer_blocks[0]["norm1"]["linear"], RTNInt4Linear)
+    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(restored.proj_out, torch.nn.Linear)
 
 
 def test_saved_artifact_contains_no_activation_calibration_state_and_deduplicates_basis(
