@@ -34,7 +34,7 @@ from orbitquant.eval.native_runner import (
 from orbitquant.eval.native_settings import get_native_suite
 from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
 from orbitquant.eval.report import generate_native_eval_report
-from orbitquant.hub import inspect_model_metadata
+from orbitquant.hub import inspect_model_metadata, upload_orbitquant_artifact
 from orbitquant.kernels import backend_capabilities
 from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
 from orbitquant.pipeline import load_quantized_pipeline_component
@@ -311,6 +311,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     validate_parser.add_argument("--artifact", required=True)
 
+    upload_parser = subparsers.add_parser(
+        "upload-artifact", help="validate and upload an OrbitQuant artifact to HF Hub"
+    )
+    upload_parser.add_argument("--artifact", required=True)
+    upload_parser.add_argument("--repo-id", required=True)
+    upload_parser.add_argument("--revision")
+    upload_parser.add_argument("--commit-message")
+    upload_parser.add_argument("--public", action="store_true")
+    upload_parser.add_argument("--no-create-repo", action="store_true")
+    upload_parser.add_argument("--replace-repo-files", action="store_true")
+    upload_parser.add_argument("--skip-tensor-validation", action="store_true")
+    upload_parser.add_argument("--dry-run", action="store_true")
+
     validate_generation_parser = subparsers.add_parser(
         "validate-generation", help="validate a native generation output and metadata pair"
     )
@@ -572,6 +585,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate-artifact":
         print(json.dumps(validate_orbitquant_artifact(args.artifact)))
+        return 0
+    if args.command == "upload-artifact":
+        print(
+            json.dumps(
+                upload_orbitquant_artifact(
+                    args.artifact,
+                    repo_id=args.repo_id,
+                    private=not args.public,
+                    create_repo=not args.no_create_repo,
+                    revision=args.revision,
+                    commit_message=args.commit_message,
+                    replace_repo_files=args.replace_repo_files,
+                    validate_tensors=not args.skip_tensor_validation,
+                    dry_run=args.dry_run,
+                ),
+                indent=2,
+            )
+        )
         return 0
     if args.command == "validate-generation":
         suite = get_native_suite(args.suite)

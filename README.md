@@ -53,6 +53,21 @@ Validate an artifact before publishing or moving it:
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
 
+Upload a validated artifact to a private Hugging Face model repo:
+
+```bash
+orbitquant upload-artifact \
+  --artifact ./artifacts/flux2-klein-w4a4 \
+  --repo-id WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4 \
+  --replace-repo-files
+```
+
+`upload-artifact` validates required files, checksums, `SHA256SUMS`, and tensor
+shapes before upload. It creates private model repos by default; use `--public`
+only after the artifact and native eval report are ready for release. For very
+large artifacts that were already deep-validated locally, `--skip-tensor-validation`
+keeps checksum validation but avoids loading all safetensors before upload.
+
 Prepare a native GPU run on an RTX PRO 6000 96GB pod:
 
 ```bash

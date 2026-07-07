@@ -1415,3 +1415,60 @@ def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path
     assert output["source_model_id"] == "example/model"
     assert output["tensor_count"] > 0
     assert output["quantized_module_count"] == 1
+
+
+def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_upload_artifact(artifact, **kwargs):
+        seen["artifact"] = artifact
+        seen["kwargs"] = kwargs
+        return {
+            "artifact_dir": artifact,
+            "repo_id": kwargs["repo_id"],
+            "private": kwargs["private"],
+            "dry_run": kwargs["dry_run"],
+            "validation": {"valid": True},
+        }
+
+    monkeypatch.setattr(cli_main, "upload_orbitquant_artifact", fake_upload_artifact)
+
+    assert (
+        main(
+            [
+                "upload-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--repo-id",
+                "WaveCut/example-orbitquant",
+                "--revision",
+                "main",
+                "--commit-message",
+                "upload artifact",
+                "--public",
+                "--no-create-repo",
+                "--replace-repo-files",
+                "--skip-tensor-validation",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["repo_id"] == "WaveCut/example-orbitquant"
+    assert output["private"] is False
+    assert output["dry_run"] is True
+    assert seen == {
+        "artifact": str(tmp_path),
+        "kwargs": {
+            "repo_id": "WaveCut/example-orbitquant",
+            "private": False,
+            "create_repo": False,
+            "revision": "main",
+            "commit_message": "upload artifact",
+            "replace_repo_files": True,
+            "validate_tensors": False,
+            "dry_run": True,
+        },
+    }
