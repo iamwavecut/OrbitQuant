@@ -8,8 +8,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
-
 from orbitquant.artifacts import validate_orbitquant_artifact
 from orbitquant.eval.native_settings import list_native_suites
 
@@ -269,7 +267,7 @@ def _text_lines(value: str, *, max_chars: int = 26) -> list[str]:
 
 
 def _draw_multiline_text(
-    draw: ImageDraw.ImageDraw,
+    draw: Any,
     xy: tuple[int, int],
     text: str,
     *,
@@ -282,7 +280,9 @@ def _draw_multiline_text(
         y += 13
 
 
-def _thumbnail(path: Path, *, size: tuple[int, int]) -> Image.Image:
+def _thumbnail(path: Path, *, size: tuple[int, int]) -> Any:
+    from PIL import Image
+
     image = Image.open(path).convert("RGB")
     image.thumbnail(size, Image.Resampling.LANCZOS)
     tile = Image.new("RGB", size, "white")
@@ -301,6 +301,8 @@ def _write_comparison_matrix(
 ) -> Path | None:
     if not items:
         return None
+    from PIL import Image, ImageDraw
+
     path.parent.mkdir(parents=True, exist_ok=True)
     row_keys = sorted({item["row_key"] for item in items})[:_MAX_COMPARISON_MATRIX_ROWS]
     col_keys = sorted({item["col_key"] for item in items})
