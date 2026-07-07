@@ -205,7 +205,7 @@ orbitquant validate-artifact \
 
 ## Published Artifact Settings
 
-The current target matrix follows the agreed native settings:
+Published artifacts use these native target settings:
 
 | Suite | Source model | Pipeline class | Native setting | Bit settings |
 | --- | --- | --- | --- | --- |
@@ -288,8 +288,8 @@ Each artifact is intentionally inspectable without executing code:
 - `orbitquant_codebooks.safetensors`: Lloyd-Max centroids and boundaries.
 - `orbitquant_rotations.safetensors`: deterministic RPBH rotation metadata.
 - `benchmark/summary.json`: compact validation and imported-metric summary.
-- Local working artifacts may also contain raw `benchmark/*.jsonl` and
-  `benchmark/*.csv` records; compact published artifacts omit those raw files.
+- Generated artifacts may include raw `benchmark/*.jsonl` and `benchmark/*.csv`
+  records; compact published artifacts omit those raw files.
 - `assets/`: final comparison matrices embedded by the model card.
 - `SHA256SUMS`: checksums for artifact files.
 
@@ -316,7 +316,8 @@ Run `orbitquant kernel-info` to inspect the active backend and
 gate on a GPU host. Use `scripts/run_mps_kernel_checks.sh` for the equivalent
 short MPS/Metal gate on Apple Silicon. The default runtime remains
 `dequant_bf16`; packed-weight matmul is available as an explicit CUDA/Triton
-runtime mode while broader activation-plus-matmul fusion remains future work.
+runtime mode while broader activation-plus-matmul fusion is outside the current
+release claim boundary.
 See [docs/kernel-audit.md](docs/kernel-audit.md) for the release claim
 boundary.
 

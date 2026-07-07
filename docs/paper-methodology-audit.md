@@ -56,21 +56,20 @@ Status legend:
 | Runtime activations compute per-token norm, normalize with epsilon guard, apply RPBH, nearest-centroid quantize, and rescale by the raw token norm with the paper clamp `ε = 1e-10` by default. | Pass | `src/orbitquant/config.py`, `src/orbitquant/functional.py`, `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `tests/test_config.py`, `tests/test_orbit_linear.py`, `tests/test_kernels.py` | Arbitrary leading dimensions are preserved; the final feature dimension is the rotation dimension. Tests cover per-token positive scale equivariance, batch independence from unrelated outlier tokens, exact zero-token preservation, and a manual CPU paper-equation golden path. `activation_eps` remains configurable for debugging or compatibility, but new default configs use the paper clamp and manifests record the actual value. |
 | The only input-dependent runtime scalar is the per-token norm. | Pass | `src/orbitquant/functional.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Codebook, rotation, centroids, boundaries, signs, and permutation are fixed after construction; persistent layer state is limited to packed weight indices, row norms, and optional bias. |
 | AdaLN modulation projections use INT4 weight-only RTN with group size 64 and BF16 activations. | Pass | `src/orbitquant/adaln.py`, `src/orbitquant/config.py`, `src/orbitquant/artifacts/manifest.py`, `tests/test_adaln_rtn.py` | AdaLN wrappers do not call OrbitQuant activation rotation. Default `adaln_group_size` is 64, and artifacts record the actual group size so non-default artifacts are labeled. |
-| Transformer-block linear projections are quantized through OrbitQuant. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; local inventory summary below | Current Diffusers transformer configs are covered for FLUX.1, FLUX.2, Z-Image, and Wan. Artifact manifests still need per-artifact cross-checks before final publication. |
-| Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; local inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
-| Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Full metric runs are not required for development, but are required before metric-table or paper-reproduction claims. |
+| Transformer-block linear projections are quantized through OrbitQuant. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Current Diffusers transformer configs are covered for FLUX.1, FLUX.2, Z-Image, and Wan. Artifact manifests still need per-artifact cross-checks before final publication. |
+| Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
+| Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Native artifact-readiness evidence is separate from release-grade metric tables. Full metric runs are required before metric-table or paper-reproduction claims. |
 | FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py`, `docs/release-gates.md` | It is treated as an additional target using paper-style native settings. |
 | Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py` | CUDA/Triton covers several quant/dequant stages and optional packed matmul. Default runtime remains BF16 PyTorch matmul after dequantization. |
-| Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `docs/release-gates.md` | Full GenEval/VBench is optional during development. Missing metrics block only paper metric/reproduction claims. |
+| Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `docs/release-gates.md` | Missing metrics block only paper metric/reproduction claims. |
 
 ## Model Policy Evidence
 
 Current policy coverage is pattern-based and intentionally scoped to Diffusers
-transformer components. Full config-derived inventories were generated locally
-under ignored `reports/native/module-inventories/` on 2026-07-07 using
-`orbitquant inspect-policy --suite ... --load-mode config --dtype bfloat16
---output ...`; raw inventories are kept out of Git because they are audit
-artifacts, not package source.
+transformer components. Inventory summaries are derived from config-based
+`orbitquant inspect-policy --suite ... --load-mode config --dtype bfloat16`
+outputs. Raw inventory JSON is audit evidence, not package or model artifact
+content.
 
 | Model family | Quantized patterns | AdaLN/INT4 patterns | Default skips | Evidence |
 | --- | --- | --- | --- | --- |
@@ -106,7 +105,7 @@ Required before final publication:
 | ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
 | XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
 
-Known kernel follow-up:
+## Pending Evidence For Acceleration Claims
 
 - `runtime_mode="triton_packed_matmul"` is CUDA-only and now fails before
   activation quantization when the input tensor is non-CUDA. It remains an
@@ -114,9 +113,9 @@ Known kernel follow-up:
 
 ## Native Eval And Claim Policy
 
-The current development path does not require a full GenEval or VBench run.
-Those runs are expensive and only prove metric-table claims. The required
-artifact-readiness evidence is:
+Native artifact readiness is separate from full GenEval or VBench scoring.
+Those runs prove metric-table claims. The required artifact-readiness evidence
+is:
 
 - Native-resolution BF16-vs-OrbitQuant comparison matrix.
 - Same prompt and seed for BF16 and OrbitQuant.
@@ -133,17 +132,16 @@ the paper's GenEval or VBench numbers.
 | --- | --- | --- |
 | Default runtime uses dequantized BF16 matmul. | Accepted limitation | The paper's latency/memory analysis also evaluates fake quantization with BF16 matmul. Do not claim realized native low-bit tensor-core speedup for this default path. |
 | Optional `triton_packed_matmul` exists but is not the default. | Accepted experimental path | It materially advances the kernel objective, but needs more full-model CUDA benchmarking before broad acceleration claims. |
-| Full config-derived inventories are local ignored audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON remains under ignored `reports/` to avoid turning the repository into an artifact store. |
-| Release-grade GenEval/VBench metrics are not mandatory during development. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
+| Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
+| Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
 
 ## Next Audit Actions
 
 1. Cross-check each published artifact manifest against the matching inventory
    summary before public release.
-2. Run the targeted native comparison pack for each published artifact when
-   refreshing cards, without promoting full GenEval/VBench to a development
-   blocker.
+2. Run or verify targeted native comparison evidence for each published
+   artifact before refreshing cards.
 3. Run full GenEval/VBench only before paper-reproduction or metric-table
    claims.
 4. Complete backend-specific release notes for CUDA, CPU, MPS/Metal, ROCm, and

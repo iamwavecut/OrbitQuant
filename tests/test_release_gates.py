@@ -5,6 +5,7 @@ def test_release_gates_document_final_acceptance_checklist():
     release_gates = Path("docs/release-gates.md").read_text(encoding="utf-8")
 
     assert "final acceptance gate" in release_gates
+    assert "verification output" in release_gates
     assert "arXiv 2607.02461" in release_gates
     assert "paper-aligned subset" in release_gates
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
@@ -21,6 +22,7 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "status instead of paper-reproduction metric claims" in release_gates
     assert "Full-model module classification inventories" in release_gates
+    assert "Raw inventory JSON may\n  remain unpublished" in release_gates
     assert "CUDA/Triton partial optimized" in release_gates
     assert "Metal/MPS partial optimized" in release_gates
     assert "CPU\n  reference-only" in release_gates
@@ -44,6 +46,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "python -m twine check dist/*" in release_gates
     assert "python -m twine upload\n  dist/*" in release_gates
     assert "PyPI token or browser\n  action" in release_gates
+    assert "command transcript" not in release_gates
+    assert "local under ignored" not in release_gates
     assert "chronology" not in release_gates.lower()
 
 
@@ -59,3 +63,22 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "full activation-plus-matmul fusion" in kernel_audit
     assert "`claim_status` values" in kernel_audit
     assert "not a\nHugging Face Kernels Hub `kernel-builder` package" in kernel_audit
+
+
+def test_paper_methodology_audit_uses_claim_boundary_language():
+    audit = Path("docs/paper-methodology-audit.md").read_text(encoding="utf-8")
+
+    assert "Native artifact readiness is separate from full GenEval or VBench scoring" in (
+        audit
+    )
+    assert "Pending Evidence For Acceleration Claims" in audit
+    assert "Raw inventory JSON is audit evidence" in audit
+    assert "not a development log" in audit
+    for forbidden in (
+        "Full GenEval/VBench is optional during development",
+        "The current development path",
+        "Known kernel follow-up",
+        "development blocker",
+        "local ignored audit artifacts",
+    ):
+        assert forbidden not in audit

@@ -19,6 +19,7 @@ def test_readme_documents_component_artifact_usage():
     assert "original_vs_orbitquant" not in readme
     assert "contact sheet" not in readme.lower()
     assert "Pipeline class" in readme
+    assert "Published artifacts use these native target settings" in readme
     assert "Flux2KleinPipeline" in readme
     assert "FluxPipeline" in readme
     assert "ZImagePipeline" in readme
@@ -30,6 +31,8 @@ def test_readme_documents_component_artifact_usage():
     assert "These diffusion artifacts are not standalone `transformers.AutoModel` repos" in readme
     assert 'quantization_device="cuda"' in readme
     assert "not accepted as published quality evidence" in readme
+    assert "Generated artifacts may include raw `benchmark/*.jsonl`" in readme
+    assert "outside the current\nrelease claim boundary" in readme
     assert "## Release Metrics" in readme
     assert "Full GenEval and VBench runs are release evidence" in readme
     assert "Compact artifact readiness is tracked\nseparately" in readme
@@ -48,3 +51,6 @@ def test_readme_documents_component_artifact_usage():
     assert "stage_log START/END" not in readme
     assert "RunPod" not in readme
     assert "REMOTE_STAGE" not in readme
+    assert "agreed native settings" not in readme
+    assert "Local working artifacts" not in readme
+    assert "future work" not in readme

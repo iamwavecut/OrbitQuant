@@ -1,7 +1,7 @@
 # OrbitQuant Release Gates
 
 Use this checklist as the final acceptance gate before announcing or cutting a
-release. Each item must have a dated artifact, command transcript, published
+release. Each item must have a dated artifact, verification output, published
 URL, or signed-off audit note.
 
 - [ ] Final paper conformance audit is complete against arXiv 2607.02461, with
@@ -23,8 +23,8 @@ URL, or signed-off audit note.
   claims; compact artifacts without those metrics must present native comparison
   status instead of paper-reproduction metric claims.
 - [ ] Full-model module classification inventories are captured for FLUX.2
-  Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON can stay
-  local under ignored `reports/`, but each published artifact manifest must be
+  Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
+  remain unpublished, but each published artifact manifest must be
   cross-checked against the captured summary for quantized, AdaLN INT4, and
   skipped modules.
 - [ ] Kernel audit and benchmarks match the advertised backend claim boundary:

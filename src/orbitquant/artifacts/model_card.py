@@ -277,7 +277,7 @@ def _validation_status_section(source_model_id: str) -> list[str]:
         "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": "VBench",
     }.get(source_model_id)
     release_line = (
-        f"- Release-grade {release_metric} metrics: not included in this artifact yet."
+        f"- Release-grade {release_metric} metrics: not included in this artifact."
         if release_metric
         else "- Release-grade paper metrics: not applicable to this extra target."
     )
@@ -287,9 +287,7 @@ def _validation_status_section(source_model_id: str) -> list[str]:
         "- Native BF16-vs-OrbitQuant comparison: included when the visual matrix "
         "below is present.",
         release_line,
-        "- The model card reports artifact-level validation status only; raw "
-        "generation media and runner logs are kept outside the published model "
-        "repository.",
+        "- The model card reports artifact-level validation status only.",
         "",
     ]
 
@@ -327,8 +325,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
                 "## Visual Comparison",
                 "",
                 "Validation status: comparison asset missing. This artifact does "
-                "not include a generation comparison matrix or promoted comparison "
-                "asset yet.",
+                "not include a generation comparison matrix.",
                 "",
             ]
         )

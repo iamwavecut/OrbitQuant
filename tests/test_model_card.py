@@ -68,7 +68,7 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     assert "- Quantized transformer modules: `1`" in card
     assert "## Native Settings" in card
     assert "## Validation Status" in card
-    assert "Release-grade GenEval metrics: not included in this artifact yet." in card
+    assert "Release-grade GenEval metrics: not included in this artifact." in card
     assert "## Visual Comparison" in card
     assert (
         "![assets/image_generation_comparison_matrix.webp]"
@@ -88,6 +88,7 @@ def test_model_card_contains_install_command_not_workflow_log_language():
         "terminal.log",
         "run.jsonl",
         "stage_log",
+        "runner logs",
         "RunPod",
         "REMOTE_STAGE",
     ):
@@ -162,6 +163,7 @@ def test_model_card_ignores_contact_sheets_for_published_artifacts():
     )
 
     assert "Validation status: comparison asset missing" in card
+    assert "This artifact does not include a generation comparison matrix." in card
     assert f"![{contact_sheet}]({contact_sheet})" not in card
     assert f"![{single_sample}]({single_sample})" not in card
 
@@ -186,6 +188,7 @@ def test_model_card_marks_missing_promoted_comparison_assets_without_logs():
         "terminal.log",
         "run.jsonl",
         "stage_log",
+        "runner logs",
         "RunPod",
         "REMOTE_STAGE",
     ):
@@ -221,7 +224,7 @@ def test_model_card_uses_flux1_schnell_native_code_example():
     assert "| Inference steps | `4` |" in card
     assert "| Guidance scale | `0.0` |" in card
     assert "| Scope | paper image target |" in card
-    assert "Release-grade GenEval metrics: not included in this artifact yet." in card
+    assert "Release-grade GenEval metrics: not included in this artifact." in card
 
 
 def test_model_card_uses_z_image_native_code_example():
@@ -237,7 +240,7 @@ def test_model_card_uses_z_image_native_code_example():
     assert "| Inference steps | `10` |" in card
     assert "| Guidance scale | `0.0` |" in card
     assert "| Scope | paper image target |" in card
-    assert "Release-grade GenEval metrics: not included in this artifact yet." in card
+    assert "Release-grade GenEval metrics: not included in this artifact." in card
 
 
 def test_model_card_uses_wan_native_code_example():
@@ -258,4 +261,4 @@ def test_model_card_uses_wan_native_code_example():
     assert "| Frames | `81` |" in card
     assert "| Export FPS | `16` |" in card
     assert "| Scope | paper video target |" in card
-    assert "Release-grade VBench metrics: not included in this artifact yet." in card
+    assert "Release-grade VBench metrics: not included in this artifact." in card
