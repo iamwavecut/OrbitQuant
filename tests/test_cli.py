@@ -172,7 +172,9 @@ def test_cli_quantize_bench_prints_full_model_staging_timings(capsys):
     assert payload["source_device"] == "cpu"
     assert payload["quantization_device"] == "cpu"
     assert payload["staging_mode"] == "component"
+    assert payload["synchronize_per_module"] is False
     assert payload["summary"]["quantization_staging_mode"] == "component"
+    assert payload["summary"]["synchronize_per_module"] is False
     assert payload["summary"]["source_linear_device_counts"]["cpu"] == 7
     assert payload["summary"]["device_transfer_seconds"] >= 0.0
     assert payload["summary"]["quantized_modules"]
@@ -1466,6 +1468,7 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
     output = json.loads(capsys.readouterr().out)
     assert output["artifact_dir"] == str(tmp_path)
     assert output["quantization_staging_mode"] == "streaming"
+    assert output["synchronize_per_module"] is False
     assert output["device_transfer_seconds"] >= 0.0
     assert output["module_device_transfer_count"] >= 0
     assert output["source_linear_device_counts"]

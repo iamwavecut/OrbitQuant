@@ -302,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         default="component",
         choices=["streaming", "component"],
     )
+    quantize_bench_parser.add_argument("--synchronize-per-module", action="store_true")
     quantize_bench_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
     )
@@ -414,6 +415,15 @@ def main(argv: list[str] | None = None) -> int:
             "streaming moves each target module to the quantization device just before "
             "replacement; component moves the full component first, which is preferred "
             "for large CUDA GPUs when VRAM allows it"
+        ),
+    )
+    quantize_parser.add_argument(
+        "--synchronize-per-module",
+        action="store_true",
+        help=(
+            "synchronize the accelerator after each module replacement for debugging "
+            "timings; the default only synchronizes at the end to avoid CPU wait "
+            "between CUDA kernel launches"
         ),
     )
     quantize_parser.add_argument(
@@ -623,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
                     source_device=args.source_device,
                     quantization_device=args.quantization_device,
                     staging_mode=args.staging_mode,
+                    synchronize_per_module=args.synchronize_per_module,
                     dtype=_torch_dtype(args.dtype),
                     seed=args.seed,
                 ),
@@ -763,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             quantization_device=device,
             staging_mode=args.staging_mode,
+            synchronize_per_module=args.synchronize_per_module,
         )
         quantize_elapsed_seconds = time.perf_counter() - quantize_started_at
         metadata_started_at = time.perf_counter()
@@ -791,6 +803,7 @@ def main(argv: list[str] | None = None) -> int:
                     "quantization_device": summary.quantization_device,
                     "weight_quantization_backend": summary.weight_quantization_backend,
                     "quantization_staging_mode": summary.quantization_staging_mode,
+                    "synchronize_per_module": summary.synchronize_per_module,
                     "load_elapsed_seconds": load_elapsed_seconds,
                     "quantization_elapsed_seconds": summary.elapsed_seconds,
                     "quantization_command_elapsed_seconds": quantize_elapsed_seconds,

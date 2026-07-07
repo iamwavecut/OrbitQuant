@@ -37,6 +37,7 @@ def test_quantize_linear_modules_replaces_orbit_and_adaln_targets_only():
     assert summary.quantization_device == ("cuda" if torch.cuda.is_available() else "cpu")
     assert summary.weight_quantization_backend in {"torch_reference", "triton_cuda"}
     assert summary.quantization_staging_mode == "streaming"
+    assert summary.synchronize_per_module is False
     assert summary.elapsed_seconds >= 0.0
     assert summary.orbitquant_seconds >= 0.0
     assert summary.adaln_seconds >= 0.0
@@ -124,6 +125,7 @@ def test_quantize_linear_modules_component_staging_moves_model_once():
     )
 
     assert summary.quantization_staging_mode == "component"
+    assert summary.synchronize_per_module is False
     assert summary.source_linear_device_counts == {"cpu": 3}
     assert summary.module_device_transfer_count == 0
     assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
@@ -139,6 +141,21 @@ def test_quantize_linear_modules_rejects_unknown_staging_mode():
         assert "staging_mode" in str(exc)
     else:
         raise AssertionError("unknown quantization staging mode was accepted")
+
+
+def test_quantize_linear_modules_records_debug_synchronize_per_module():
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+
+    summary = quantize_linear_modules(
+        model,
+        config,
+        quantization_device="cpu",
+        synchronize_per_module=True,
+    )
+
+    assert summary.synchronize_per_module is True
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
 
 
 def test_prewarm_quantized_linear_modules_materializes_weight_caches():

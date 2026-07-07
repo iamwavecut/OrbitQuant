@@ -158,6 +158,7 @@ def save_orbitquant_artifact(
         "quantization_staging_mode": getattr(
             summary, "quantization_staging_mode", "unknown"
         ),
+        "synchronize_per_module": getattr(summary, "synchronize_per_module", False),
         "quantization_elapsed_seconds": getattr(summary, "elapsed_seconds", 0.0),
         "orbitquant_seconds": getattr(summary, "orbitquant_seconds", 0.0),
         "adaln_seconds": getattr(summary, "adaln_seconds", 0.0),

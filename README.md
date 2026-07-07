@@ -295,6 +295,10 @@ component first, then runs the replacement loop; this is the preferred path for
 large CUDA GPUs when VRAM is sufficient because it keeps the source weights
 device-resident during OrbitQuant/AdaLN kernel work and makes transfer time
 explicit in the artifact summary.
+By default, CUDA quantization synchronizes once at the end of the replacement
+loop. Use `--synchronize-per-module` only when debugging per-layer timings; it
+adds CPU waits between kernel launches and can make provider GPU sampling look
+misleadingly idle.
 
 Current artifacts include:
 
@@ -382,6 +386,9 @@ weight-index and low-bit packing work stays on CUDA.
 `quantize-bench` reports `device_transfer_seconds` separately from
 `orbitquant_seconds` and `adaln_seconds`; use it to distinguish host-to-device
 staging and safetensors/checksum work from the actual CUDA quantization kernels.
+The default benchmark mode mirrors production quantization and avoids per-module
+CUDA synchronizations. Add `--synchronize-per-module` only when a per-layer debug
+breakdown is more important than end-to-end launch behavior.
 The `weight_dequant_optimized` field records whether packed weight
 dequantization avoids the CPU unpack path for that backend. The
 `weight_pack_optimized` field records whether artifact creation can pack low-bit

@@ -121,6 +121,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert benchmark_summary["quantization_device"] == summary.quantization_device
     assert benchmark_summary["weight_quantization_backend"] == summary.weight_quantization_backend
     assert benchmark_summary["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert benchmark_summary["synchronize_per_module"] == summary.synchronize_per_module
     assert benchmark_summary["device_transfer_seconds"] >= 0.0
     assert benchmark_summary["module_device_transfer_count"] >= 0
     assert benchmark_summary["source_linear_device_counts"]

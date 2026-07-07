@@ -29,6 +29,7 @@ class QuantizationSummary:
     quantization_device: str = "auto"
     weight_quantization_backend: str = "torch_reference"
     quantization_staging_mode: str = "streaming"
+    synchronize_per_module: bool = False
     elapsed_seconds: float = 0.0
     orbitquant_seconds: float = 0.0
     adaln_seconds: float = 0.0
@@ -141,12 +142,15 @@ def _move_module_to_device(
     module: torch.nn.Module,
     target_device: torch.device,
     summary: QuantizationSummary,
+    *,
+    synchronize: bool,
 ) -> None:
     if _first_recursive_tensor_device(module) == target_device:
         return
     transfer_started_at = time.perf_counter()
     module.to(device=target_device)
-    _synchronize_if_needed(target_device)
+    if synchronize:
+        _synchronize_if_needed(target_device)
     summary.device_transfer_seconds += time.perf_counter() - transfer_started_at
     summary.module_device_transfer_count += 1
 
@@ -157,6 +161,7 @@ def quantize_linear_modules(
     *,
     quantization_device: str | torch.device | None = "auto",
     staging_mode: str = "streaming",
+    synchronize_per_module: bool = False,
 ) -> QuantizationSummary:
     if staging_mode not in {"streaming", "component"}:
         raise ValueError("staging_mode must be 'streaming' or 'component'")
@@ -167,6 +172,7 @@ def quantize_linear_modules(
         quantization_device="preserve" if target_device is None else str(target_device),
         weight_quantization_backend=_weight_quantization_backend(target_device),
         quantization_staging_mode=staging_mode,
+        synchronize_per_module=synchronize_per_module,
     )
     started_at = time.perf_counter()
 
@@ -176,7 +182,9 @@ def quantize_linear_modules(
             _record_source_linear_device(summary, module)
 
     if target_device is not None and staging_mode == "component":
-        _move_module_to_device(model, target_device, summary)
+        _move_module_to_device(
+            model, target_device, summary, synchronize=synchronize_per_module
+        )
 
     for name, decision in decisions.items():
         module = model.get_submodule(name)
@@ -184,10 +192,13 @@ def quantize_linear_modules(
             continue
         if decision.action == "orbitquant":
             if target_device is not None and staging_mode == "streaming":
-                _move_module_to_device(module, target_device, summary)
+                _move_module_to_device(
+                    module, target_device, summary, synchronize=synchronize_per_module
+                )
             module_started_at = time.perf_counter()
             replacement = OrbitQuantLinear.from_linear(module, config=config, module_name=name)
-            _synchronize_if_needed(_first_tensor_device(replacement))
+            if synchronize_per_module:
+                _synchronize_if_needed(_first_tensor_device(replacement))
             summary.orbitquant_seconds += time.perf_counter() - module_started_at
             _record_orbitquant_buffers(summary, replacement)
             parent, child_name = _parent_and_child(model, name)
@@ -195,10 +206,13 @@ def quantize_linear_modules(
             summary.quantized_modules.append(name)
         elif decision.action == "adaln_int4_rtn":
             if target_device is not None and staging_mode == "streaming":
-                _move_module_to_device(module, target_device, summary)
+                _move_module_to_device(
+                    module, target_device, summary, synchronize=synchronize_per_module
+                )
             module_started_at = time.perf_counter()
             replacement = RTNInt4Linear.from_linear(module, config=config, module_name=name)
-            _synchronize_if_needed(_first_tensor_device(replacement))
+            if synchronize_per_module:
+                _synchronize_if_needed(_first_tensor_device(replacement))
             summary.adaln_seconds += time.perf_counter() - module_started_at
             _record_adaln_buffers(summary, replacement)
             parent, child_name = _parent_and_child(model, name)

@@ -46,6 +46,7 @@ def quantize_pipeline(
     component: str = "transformer",
     quantization_device: str | torch.device | None = "auto",
     staging_mode: str = "streaming",
+    synchronize_per_module: bool = False,
 ) -> QuantizationSummary:
     target = _get_pipeline_component(pipeline, component)
     return quantize_linear_modules(
@@ -53,6 +54,7 @@ def quantize_pipeline(
         config,
         quantization_device=quantization_device,
         staging_mode=staging_mode,
+        synchronize_per_module=synchronize_per_module,
     )
 
 

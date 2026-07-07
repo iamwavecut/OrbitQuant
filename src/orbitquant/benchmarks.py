@@ -361,6 +361,7 @@ def benchmark_model_quantization(
     source_device: str | torch.device = "cpu",
     quantization_device: str | torch.device = "auto",
     staging_mode: str = "component",
+    synchronize_per_module: bool = False,
     dtype: torch.dtype = torch.bfloat16,
     seed: int = 0,
 ) -> dict[str, Any]:
@@ -410,6 +411,7 @@ def benchmark_model_quantization(
         config,
         quantization_device=target,
         staging_mode=staging_mode,
+        synchronize_per_module=synchronize_per_module,
     )
     _synchronize(target)
     wall_seconds = time.perf_counter() - started_at
@@ -426,6 +428,7 @@ def benchmark_model_quantization(
         "activation_bits": activation_bits,
         "block_size": block_size,
         "staging_mode": staging_mode,
+        "synchronize_per_module": synchronize_per_module,
         "wall_seconds": wall_seconds,
         "summary": summary.__dict__,
         "peak_memory_bytes": _peak_memory_bytes(target),
