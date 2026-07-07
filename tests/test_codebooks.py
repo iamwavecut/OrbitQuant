@@ -5,6 +5,19 @@ import orbitquant.codebooks.lloyd_max as lloyd_max_module
 from orbitquant.codebooks import clear_codebook_cache, codebook_cache_path, get_codebook
 
 
+def test_coordinate_density_matches_unit_sphere_marginal_shape():
+    grid = torch.tensor([-1.0, -0.5, 0.0, 0.75, 1.0], dtype=torch.float64)
+
+    density = lloyd_max_module._coordinate_density(grid, dim=7)
+
+    expected_shape = (1 - grid.square()).clamp_min(0).square()
+    expected_shape[grid.abs() >= 1] = 0
+    assert torch.allclose(density, expected_shape)
+    assert density[2] > density[1] > density[3] > density[0]
+    assert density[0] == 0
+    assert density[-1] == 0
+
+
 def test_lloyd_max_codebook_is_symmetric_and_sorted():
     codebook = get_codebook(dim=32, bits=4)
 

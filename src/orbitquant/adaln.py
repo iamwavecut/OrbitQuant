@@ -168,6 +168,7 @@ class RTNInt4Linear(nn.Module):
         return dequantized
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        weight = self._dequantize_weight(device=x.device, dtype=x.dtype)
-        bias = None if self.bias is None else self.bias.to(device=x.device, dtype=x.dtype)
-        return F.linear(x, weight, bias)
+        activation = x.to(torch.bfloat16)
+        weight = self._dequantize_weight(device=x.device, dtype=torch.bfloat16)
+        bias = None if self.bias is None else self.bias.to(device=x.device, dtype=torch.bfloat16)
+        return F.linear(activation, weight, bias)
