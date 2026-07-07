@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 IMAGE_VISUAL_PROMPTS = [
@@ -96,6 +98,46 @@ VIDEO_VISUAL_PROMPTS = [
     },
 ]
 
+GENEVAL_SMOKE_METADATA = [
+    {
+        "tag": "single_object",
+        "include": [{"class": "bicycle", "count": 1}],
+        "prompt": "a photo of a bicycle",
+    },
+    {
+        "tag": "two_object",
+        "include": [{"class": "chair", "count": 1}, {"class": "backpack", "count": 1}],
+        "prompt": "a photo of a chair and a backpack",
+    },
+    {
+        "tag": "counting",
+        "include": [{"class": "cup", "count": 2}],
+        "exclude": [{"class": "cup", "count": 3}],
+        "prompt": "a photo of two cups",
+    },
+    {
+        "tag": "colors",
+        "include": [{"class": "bus", "count": 1, "color": "red"}],
+        "prompt": "a photo of a red bus",
+    },
+    {
+        "tag": "position",
+        "include": [
+            {"class": "couch", "count": 1},
+            {"class": "cat", "count": 1, "position": ["left of", 0]},
+        ],
+        "prompt": "a photo of a cat left of a couch",
+    },
+    {
+        "tag": "color_attr",
+        "include": [
+            {"class": "bottle", "count": 1, "color": "green"},
+            {"class": "banana", "count": 1, "color": "yellow"},
+        ],
+        "prompt": "a photo of a green bottle and a yellow banana",
+    },
+]
+
 IMAGE_PROMPTS = [item["prompt"] for item in IMAGE_VISUAL_PROMPTS]
 VIDEO_PROMPTS = [item["prompt"] for item in VIDEO_VISUAL_PROMPTS]
 
@@ -115,6 +157,84 @@ def default_prompt_payload(target_policy: str) -> dict[str, Any]:
         "target_policy": target_policy,
         "prompts": deepcopy(IMAGE_VISUAL_PROMPTS),
     }
+
+
+def _geneval_prompt_record(record: dict[str, Any], index: int) -> dict[str, Any]:
+    tag = record.get("tag")
+    prompt = record.get("prompt")
+    include = record.get("include")
+    if not isinstance(tag, str) or not tag:
+        raise ValueError(f"GenEval metadata line {index + 1} is missing string tag")
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError(f"GenEval metadata line {index + 1} is missing string prompt")
+    if not isinstance(include, list) or not include:
+        raise ValueError(f"GenEval metadata line {index + 1} is missing include list")
+    geneval = {
+        "tag": tag,
+        "prompt": prompt,
+        "include": deepcopy(include),
+    }
+    if "exclude" in record:
+        exclude = record["exclude"]
+        if not isinstance(exclude, list):
+            raise ValueError(f"GenEval metadata line {index + 1} has non-list exclude")
+        geneval["exclude"] = deepcopy(exclude)
+    return {
+        "id": f"geneval-{index:05d}-{tag.replace('_', '-')}",
+        "category": tag,
+        "prompt": prompt,
+        "geneval": geneval,
+    }
+
+
+def geneval_prompt_payload(
+    records: list[dict[str, Any]],
+    *,
+    target_policy: str,
+    prompt_pack: str = "geneval_metadata_jsonl",
+) -> dict[str, Any]:
+    if not records:
+        raise ValueError("GenEval prompt metadata is empty")
+    return {
+        "prompt_pack": prompt_pack,
+        "media_type": "image",
+        "target_policy": target_policy,
+        "prompts": [
+            _geneval_prompt_record(record, index) for index, record in enumerate(records)
+        ],
+    }
+
+
+def geneval_smoke_prompt_payload(target_policy: str) -> dict[str, Any]:
+    return geneval_prompt_payload(
+        deepcopy(GENEVAL_SMOKE_METADATA),
+        target_policy=target_policy,
+        prompt_pack="geneval_smoke_v1",
+    )
+
+
+def load_geneval_prompt_payload(
+    metadata_jsonl: str | Path,
+    *,
+    target_policy: str,
+) -> dict[str, Any]:
+    path = Path(metadata_jsonl)
+    records = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"GenEval metadata line {line_number} is not valid JSON"
+                ) from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"GenEval metadata line {line_number} is not an object")
+            records.append(record)
+    return geneval_prompt_payload(records, target_policy=target_policy)
 
 
 def select_prompt_record(

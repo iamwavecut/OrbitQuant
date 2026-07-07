@@ -1000,6 +1000,110 @@ def test_cli_generate_pack_dry_run_lists_prompt_seed_jobs(capsys, tmp_path):
     assert output["output"] == str(tmp_path / "assets")
 
 
+def test_cli_generate_pack_dry_run_accepts_geneval_smoke_prompt_pack(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux1-schnell-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-pack",
+                "geneval-smoke",
+                "--prompt-limit",
+                "2",
+                "--seeds",
+                "0",
+                "--device",
+                "cpu",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["prompt_pack"] == "geneval_smoke_v1"
+    assert output["job_count"] == 2
+    assert output["jobs"][0]["prompt_record"]["id"].startswith("geneval-00000-")
+    assert output["jobs"][0]["prompt_record"]["geneval"]["tag"] == "single_object"
+
+
+def test_cli_generate_pack_dry_run_accepts_geneval_metadata_jsonl(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    metadata_jsonl = tmp_path / "evaluation_metadata.jsonl"
+    metadata_jsonl.write_text(
+        json.dumps(
+            {
+                "tag": "single_object",
+                "include": [{"class": "bench", "count": 1}],
+                "prompt": "a photo of a bench",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "z-image-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-metadata-jsonl",
+                str(metadata_jsonl),
+                "--seeds",
+                "4",
+                "--device",
+                "cpu",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["prompt_pack"] == "geneval_metadata_jsonl"
+    assert output["job_count"] == 1
+    assert output["jobs"][0]["seed"] == 4
+    assert output["jobs"][0]["prompt_record"]["geneval"]["include"] == [
+        {"class": "bench", "count": 1}
+    ]
+
+
 def test_cli_generate_pack_runs_jobs_once_per_prompt_seed_and_records_artifacts(
     monkeypatch,
     capsys,

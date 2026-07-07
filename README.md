@@ -177,6 +177,27 @@ JSON metrics into the artifact. GenEval export requires prompt records with
 GenEval metadata (`tag`, `include`, and optional `exclude`); the visual prompt
 pack fails loudly instead of pretending to be a GenEval suite.
 
+Generate GenEval-compatible native samples with the upstream GenEval metadata
+JSONL before running the external script:
+
+```bash
+curl -L \
+  https://raw.githubusercontent.com/djghosh13/geneval/main/prompts/evaluation_metadata.jsonl \
+  -o ./metrics/native/geneval-evaluation_metadata.jsonl
+
+orbitquant generate-pack \
+  --suite flux1-schnell-native \
+  --artifact ./artifacts/native/flux1-schnell-native-w4a4 \
+  --prompt-metadata-jsonl ./metrics/native/geneval-evaluation_metadata.jsonl \
+  --seeds 0 \
+  --device cuda \
+  --dtype bfloat16 \
+  --resume-existing
+```
+
+For a quick schema-only dry run, use `--prompt-pack geneval-smoke`; do not use
+that smoke pack for release metrics.
+
 For VBench, the generated script runs `orbitquant export-vbench`, then
 `vbench evaluate --mode custom_input`, then `orbitquant summarize-vbench-results`.
 The custom-input path covers the VBench dimensions supported by upstream for

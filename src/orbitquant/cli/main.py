@@ -38,7 +38,13 @@ from orbitquant.eval.native_runner import (
     validate_native_generation_output,
 )
 from orbitquant.eval.native_settings import get_native_suite
-from orbitquant.eval.prompts import build_prompt_seed_jobs, select_prompt_record
+from orbitquant.eval.prompts import (
+    build_prompt_seed_jobs,
+    default_prompt_payload,
+    geneval_smoke_prompt_payload,
+    load_geneval_prompt_payload,
+    select_prompt_record,
+)
 from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import (
     audit_hf_artifact_repos,
@@ -127,6 +133,34 @@ def _parse_seed_list(value: str) -> list[int]:
     if not seeds:
         raise argparse.ArgumentTypeError("at least one seed is required")
     return seeds
+
+
+def _load_generate_pack_prompt_payload(
+    *,
+    artifact_path: Path,
+    suite: Any,
+    prompt_pack: str,
+    prompt_metadata_jsonl: str | None,
+) -> dict[str, Any]:
+    target_policy = target_policy_for_suite(suite)
+    if prompt_metadata_jsonl is not None:
+        if prompt_pack != "artifact":
+            raise ValueError("--prompt-metadata-jsonl cannot be combined with --prompt-pack")
+        if suite.frames is not None:
+            raise ValueError("GenEval prompt metadata is only valid for image suites")
+        return load_geneval_prompt_payload(
+            prompt_metadata_jsonl,
+            target_policy=target_policy,
+        )
+    if prompt_pack == "artifact":
+        return json.loads((artifact_path / "prompts.json").read_text(encoding="utf-8"))
+    if prompt_pack == "visual":
+        return default_prompt_payload(target_policy)
+    if prompt_pack == "geneval-smoke":
+        if suite.frames is not None:
+            raise ValueError("GenEval prompt packs are only valid for image suites")
+        return geneval_smoke_prompt_payload(target_policy)
+    raise ValueError(f"unknown prompt pack {prompt_pack!r}")
 
 
 def _metadata_path_for_output(output_path: Path) -> Path:
@@ -473,6 +507,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     generate_pack_parser.add_argument("--prompt-id", action="append")
     generate_pack_parser.add_argument("--prompt-limit", type=int)
+    generate_pack_parser.add_argument(
+        "--prompt-pack",
+        default="artifact",
+        choices=["artifact", "visual", "geneval-smoke"],
+        help="prompt payload source for generate-pack",
+    )
+    generate_pack_parser.add_argument(
+        "--prompt-metadata-jsonl",
+        help="GenEval evaluation_metadata.jsonl file to use instead of artifact prompts",
+    )
     generate_pack_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
     generate_pack_parser.add_argument("--device", default="cuda")
     generate_pack_parser.add_argument(
@@ -848,7 +892,12 @@ def main(argv: list[str] | None = None) -> int:
         bit_setting = artifact_bit_setting if args.split == "orbitquant" else "original"
         quantization_config = artifact_config if args.split == "orbitquant" else None
         output_dir = artifact_path / "assets" if args.output is None else Path(args.output)
-        prompt_payload = json.loads((artifact_path / "prompts.json").read_text(encoding="utf-8"))
+        prompt_payload = _load_generate_pack_prompt_payload(
+            artifact_path=artifact_path,
+            suite=suite,
+            prompt_pack=args.prompt_pack,
+            prompt_metadata_jsonl=args.prompt_metadata_jsonl,
+        )
         jobs = build_prompt_seed_jobs(
             prompt_payload,
             seeds=args.seeds,
@@ -897,6 +946,7 @@ def main(argv: list[str] | None = None) -> int:
                         "output": str(output_dir),
                         "bit_setting": bit_setting,
                         "split": args.split,
+                        "prompt_pack": prompt_payload.get("prompt_pack"),
                         "job_count": len(jobs),
                         "run_count": len(pending_jobs),
                         "skipped_count": len(skipped_outputs),
@@ -913,6 +963,7 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(
                     {
                         "artifact": str(artifact_path),
+                        "prompt_pack": prompt_payload.get("prompt_pack"),
                         "job_count": len(jobs),
                         "run_count": 0,
                         "skipped_count": len(skipped_outputs),
@@ -998,6 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "artifact": str(artifact_path),
+                    "prompt_pack": prompt_payload.get("prompt_pack"),
                     "job_count": len(jobs),
                     "run_count": len(outputs),
                     "skipped_count": len(skipped_outputs),
