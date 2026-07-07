@@ -99,6 +99,8 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["cpu"]["available"] is True
     assert capabilities["cpu"]["claim_status"] == "reference_only"
     assert capabilities["cpu"]["optimized"] is False
+    assert capabilities["cpu"]["implemented_stage"] is None
+    assert capabilities["cpu"]["optimized_stage"] is None
     assert capabilities["cpu"]["weight_dequant_optimized"] is False
     assert capabilities["cpu"]["weight_pack_optimized"] is False
     assert capabilities["cpu"]["lowbit_unpack_optimized"] is False
@@ -106,9 +108,15 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["cpu"]["adaln_quant_optimized"] is False
     assert capabilities["cpu"]["adaln_dequant_optimized"] is False
     assert capabilities["cpu"]["implementation"] == "torch_reference"
+    assert capabilities["cpu"]["hf_kernel_builder_compliant"] is False
     assert capabilities["mps"]["available"] is True
     assert capabilities["mps"]["claim_status"] == "reference_only"
     assert capabilities["mps"]["optimized"] is False
+    assert (
+        capabilities["mps"]["implemented_stage"]
+        == "codebook_lookup_rescale,packed_weight_dequant"
+    )
+    assert capabilities["mps"]["optimized_stage"] is None
     assert capabilities["mps"]["weight_dequant_optimized"] is False
     assert capabilities["mps"]["weight_pack_optimized"] is False
     assert capabilities["mps"]["lowbit_unpack_optimized"] is False
@@ -116,14 +124,18 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["mps"]["adaln_quant_optimized"] is False
     assert capabilities["mps"]["adaln_dequant_optimized"] is False
     assert capabilities["mps"]["implementation"] == "torch_reference_mps"
+    assert capabilities["mps"]["upstream_native_mps_op"] is False
+    assert capabilities["mps"]["hf_kernel_builder_compliant"] is False
     assert capabilities["triton_cuda"]["available"] is True
     assert capabilities["triton_cuda"]["claim_status"] == "partial_optimized"
     assert capabilities["triton_cuda"]["optimized"] is True
-    assert capabilities["triton_cuda"]["optimized_stage"] == (
+    expected_triton_stage = (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
         "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
+    assert capabilities["triton_cuda"]["implemented_stage"] == expected_triton_stage
+    assert capabilities["triton_cuda"]["optimized_stage"] == expected_triton_stage
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is True
     assert capabilities["triton_cuda"]["weight_pack_optimized"] is True
     assert capabilities["triton_cuda"]["lowbit_unpack_optimized"] is True
@@ -131,6 +143,9 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is True
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is True
     assert capabilities["triton_cuda"]["full_fusion"] is False
+    assert capabilities["triton_cuda"]["implementation"] == "python_triton_orbitquant_pipeline"
+    assert capabilities["triton_cuda"]["package_format"] == "python_triton"
+    assert capabilities["triton_cuda"]["hf_kernel_builder_compliant"] is False
 
 
 def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
@@ -143,8 +158,15 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["available"] is True
     assert capabilities["mps"]["claim_status"] == "partial_optimized"
     assert capabilities["mps"]["optimized"] is True
-    assert capabilities["mps"]["implementation"] == "metal_codebook_rescale"
+    assert capabilities["mps"]["implementation"] == "torch_mps_compile_shader_codebook_rescale"
+    assert capabilities["mps"]["package_format"] == "torch.mps.compile_shader"
     assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
+    assert (
+        capabilities["mps"]["implemented_stage"]
+        == "codebook_lookup_rescale,packed_weight_dequant"
+    )
+    assert capabilities["mps"]["upstream_native_mps_op"] is False
+    assert capabilities["mps"]["hf_kernel_builder_compliant"] is False
     assert capabilities["mps"]["weight_dequant_optimized"] is True
     assert capabilities["mps"]["weight_pack_optimized"] is False
     assert capabilities["mps"]["lowbit_unpack_optimized"] is False
@@ -155,12 +177,19 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["triton_cuda"]["available"] is False
     assert capabilities["triton_cuda"]["claim_status"] == "unavailable"
     assert capabilities["triton_cuda"]["optimized"] is False
+    assert capabilities["triton_cuda"]["implemented_stage"] == (
+        "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
+        "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
+        "adaln_rtn_quant_pack,adaln_rtn_dequant"
+    )
+    assert capabilities["triton_cuda"]["optimized_stage"] is None
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is False
     assert capabilities["triton_cuda"]["weight_pack_optimized"] is False
     assert capabilities["triton_cuda"]["lowbit_unpack_optimized"] is False
     assert capabilities["triton_cuda"]["weight_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is False
+    assert capabilities["triton_cuda"]["hf_kernel_builder_compliant"] is False
 
 
 def test_backend_selection_accepts_injected_availability_for_gpu_paths():
@@ -171,6 +200,33 @@ def test_backend_selection_accepts_injected_availability_for_gpu_paths():
         == "triton_cuda"
     )
     assert select_backend(torch.device("mps"), requested="auto", backends=backends) == "cpu"
+
+
+def test_triton_availability_requires_importable_triton_modules(monkeypatch):
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "triton" or name.startswith("triton."):
+            raise RuntimeError("broken triton import")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    assert dispatch_module._triton_available() is False
+    assert available_backends()["triton_cuda"] is False
+
+
+def test_mps_shader_source_declares_only_current_custom_shader_boundary():
+    import orbitquant.kernels.mps as mps_module
+
+    source = mps_module._MPS_CODEBOOK_RESCALE_SOURCE
+
+    assert "orbitquant_codebook_rescale" in source
+    assert "orbitquant_dequantize_packed_weight" in source
+    assert "Fast Walsh" not in source
+    assert "RPBH" not in source
+    assert "linear" not in source.lower()
 
 
 def test_triton_cuda_dispatch_uses_backend_function_with_reference_equivalent_output(monkeypatch):

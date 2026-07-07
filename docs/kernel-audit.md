@@ -16,7 +16,9 @@ for the current artifact format and runtime modes.
 ## Verification Gates
 
 - `orbitquant kernel-info` prints machine-readable backend capabilities and
-  `claim_status` values.
+  `claim_status` values. `implemented_stage` describes code present in the
+  package; `optimized_stage` is populated only when that backend is active in
+  the current environment.
 - `scripts/run_cuda_kernel_checks.sh` is the CUDA/Triton correctness and
   benchmark gate for GPU hosts.
 - `scripts/run_mps_kernel_checks.sh` is the MPS/Metal correctness and smoke
@@ -30,4 +32,9 @@ for the current artifact format and runtime modes.
 The current CUDA path is implemented with Python Triton kernels. It is not a
 Hugging Face Kernels Hub `kernel-builder` package and must not be described as
 ABI3 kernel-builder compliant until that packaging path exists and passes the
-kernel-builder checks.
+kernel-builder checks. `orbitquant kernel-info` therefore reports
+`hf_kernel_builder_compliant=false` for the current CUDA path.
+
+The current MPS path uses `torch.mps.compile_shader` for local Metal shaders.
+It is not an upstream PyTorch native MPS operator implementation, so
+`orbitquant kernel-info` reports `upstream_native_mps_op=false`.

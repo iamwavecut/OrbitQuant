@@ -40,15 +40,20 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
                 "available": True,
                 "claim_status": "reference_only",
                 "optimized": False,
+                "implemented_stage": None,
+                "optimized_stage": None,
                 "weight_dequant_optimized": False,
                 "weight_pack_optimized": False,
                 "weight_quant_optimized": False,
                 "adaln_quant_optimized": False,
                 "adaln_dequant_optimized": False,
+                "hf_kernel_builder_compliant": False,
             },
             "mps": {
                 "claim_status": "partial_optimized",
-                "implementation": "metal_codebook_rescale",
+                "implementation": "torch_mps_compile_shader_codebook_rescale",
+                "package_format": "torch.mps.compile_shader",
+                "implemented_stage": "codebook_lookup_rescale,packed_weight_dequant",
                 "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant",
                 "weight_dequant_optimized": True,
                 "weight_pack_optimized": False,
@@ -56,21 +61,32 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
                 "adaln_quant_optimized": False,
                 "adaln_dequant_optimized": False,
                 "full_fusion": False,
+                "upstream_native_mps_op": False,
+                "hf_kernel_builder_compliant": False,
             },
             "triton_cuda": {
                 "claim_status": "partial_optimized",
+                "implemented_stage": (
+                    "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
+                    "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
+                    "weight_rotation_fwht_quant_pack,"
+                    "adaln_rtn_quant_pack,adaln_rtn_dequant"
+                ),
                 "optimized_stage": (
                     "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
                     "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
                     "weight_rotation_fwht_quant_pack,"
                     "adaln_rtn_quant_pack,adaln_rtn_dequant"
                 ),
+                "implementation": "python_triton_orbitquant_pipeline",
+                "package_format": "python_triton",
                 "weight_dequant_optimized": True,
                 "weight_pack_optimized": True,
                 "weight_quant_optimized": True,
                 "adaln_quant_optimized": True,
                 "adaln_dequant_optimized": True,
                 "full_fusion": False,
+                "hf_kernel_builder_compliant": False,
             },
         },
     )
@@ -86,8 +102,10 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["cpu"]["weight_quant_optimized"] is False
     assert payload["cpu"]["adaln_quant_optimized"] is False
     assert payload["cpu"]["adaln_dequant_optimized"] is False
-    assert payload["mps"]["implementation"] == "metal_codebook_rescale"
+    assert payload["mps"]["implementation"] == "torch_mps_compile_shader_codebook_rescale"
+    assert payload["mps"]["package_format"] == "torch.mps.compile_shader"
     assert payload["mps"]["claim_status"] == "partial_optimized"
+    assert payload["mps"]["implemented_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
     assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
     assert payload["mps"]["weight_dequant_optimized"] is True
     assert payload["mps"]["weight_pack_optimized"] is False
@@ -95,12 +113,18 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["mps"]["adaln_quant_optimized"] is False
     assert payload["mps"]["adaln_dequant_optimized"] is False
     assert payload["mps"]["full_fusion"] is False
-    assert payload["triton_cuda"]["optimized_stage"] == (
+    assert payload["mps"]["upstream_native_mps_op"] is False
+    assert payload["mps"]["hf_kernel_builder_compliant"] is False
+    expected_triton_stage = (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
         "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
         "weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
+    assert payload["triton_cuda"]["implemented_stage"] == expected_triton_stage
+    assert payload["triton_cuda"]["optimized_stage"] == expected_triton_stage
+    assert payload["triton_cuda"]["implementation"] == "python_triton_orbitquant_pipeline"
+    assert payload["triton_cuda"]["package_format"] == "python_triton"
     assert payload["triton_cuda"]["claim_status"] == "partial_optimized"
     assert payload["triton_cuda"]["weight_dequant_optimized"] is True
     assert payload["triton_cuda"]["weight_pack_optimized"] is True
@@ -108,6 +132,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["triton_cuda"]["adaln_quant_optimized"] is True
     assert payload["triton_cuda"]["adaln_dequant_optimized"] is True
     assert payload["triton_cuda"]["full_fusion"] is False
+    assert payload["triton_cuda"]["hf_kernel_builder_compliant"] is False
 
 
 def test_cli_kernel_bench_prints_stage_timings(capsys):

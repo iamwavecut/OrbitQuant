@@ -311,13 +311,15 @@ separately. Kernel support is backend-specific:
   packed-weight matmul via `runtime_mode="triton_packed_matmul"`.
 - ROCm and XPU are not implemented backends in this repository.
 
-Run `orbitquant kernel-info` to inspect the active backend and
-`scripts/run_cuda_kernel_checks.sh` to run the CUDA kernel test and benchmark
-gate on a GPU host. Use `scripts/run_mps_kernel_checks.sh` for the equivalent
-short MPS/Metal gate on Apple Silicon. The default runtime remains
-`dequant_bf16`; packed-weight matmul is available as an explicit CUDA/Triton
-runtime mode while broader activation-plus-matmul fusion is outside the current
-release claim boundary.
+Run `orbitquant kernel-info` to inspect backend capabilities. In that output,
+`implemented_stage` is the code present in the package, while `optimized_stage`
+is populated only when the backend is active in the current environment.
+`scripts/run_cuda_kernel_checks.sh` runs the CUDA kernel test and benchmark gate
+on a GPU host. Use `scripts/run_mps_kernel_checks.sh` for the equivalent short
+MPS/Metal gate on Apple Silicon. The default runtime remains `dequant_bf16`;
+packed-weight matmul is available as an explicit CUDA/Triton runtime mode while
+broader activation-plus-matmul fusion is outside the current release claim
+boundary.
 See [docs/kernel-audit.md](docs/kernel-audit.md) for the release claim
 boundary.
 

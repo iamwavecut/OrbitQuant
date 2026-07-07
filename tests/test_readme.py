@@ -32,7 +32,7 @@ def test_readme_documents_component_artifact_usage():
     assert 'quantization_device="cuda"' in readme
     assert "not accepted as published quality evidence" in readme
     assert "Generated artifacts may include raw `benchmark/*.jsonl`" in readme
-    assert "outside the current\nrelease claim boundary" in readme
+    assert "outside the current release claim boundary" in " ".join(readme.split())
     assert "## Release Metrics" in readme
     assert "Full GenEval and VBench runs are release evidence" in readme
     assert "Compact artifact readiness is tracked\nseparately" in readme

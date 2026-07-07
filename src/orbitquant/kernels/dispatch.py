@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
-
 import torch
 
 from orbitquant.codebooks import LloydMaxCodebook
@@ -11,9 +9,21 @@ from orbitquant.rotations import RPBHRotation
 BackendAvailability = dict[str, bool]
 BackendCapabilities = dict[str, dict[str, object]]
 
+_MPS_IMPLEMENTED_STAGE = "codebook_lookup_rescale,packed_weight_dequant"
+_TRITON_CUDA_IMPLEMENTED_STAGE = (
+    "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
+    "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
+    "adaln_rtn_quant_pack,adaln_rtn_dequant"
+)
+
 
 def _triton_available() -> bool:
-    return importlib.util.find_spec("triton") is not None
+    try:
+        import triton  # noqa: F401
+        import triton.language as tl  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def _mps_metal_available() -> bool:
@@ -41,6 +51,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "claim_status": "reference_only",
             "optimized": False,
             "full_fusion": False,
+            "implemented_stage": None,
             "optimized_stage": None,
             "weight_dequant_optimized": False,
             "weight_pack_optimized": False,
@@ -50,6 +61,8 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "adaln_dequant_optimized": False,
             "device_types": ["cpu"],
             "implementation": "torch_reference",
+            "package_format": "torch_reference",
+            "hf_kernel_builder_compliant": False,
             "notes": "Correctness baseline using the reference PyTorch path.",
         },
         "mps": {
@@ -57,9 +70,8 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "claim_status": "partial_optimized" if mps_optimized else "reference_only",
             "optimized": mps_optimized,
             "full_fusion": False,
-            "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant"
-            if mps_optimized
-            else None,
+            "implemented_stage": _MPS_IMPLEMENTED_STAGE,
+            "optimized_stage": _MPS_IMPLEMENTED_STAGE if mps_optimized else None,
             "weight_dequant_optimized": mps_optimized,
             "weight_pack_optimized": False,
             "lowbit_unpack_optimized": False,
@@ -67,7 +79,14 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "adaln_quant_optimized": False,
             "adaln_dequant_optimized": False,
             "device_types": ["mps"],
-            "implementation": "metal_codebook_rescale" if mps_optimized else "torch_reference_mps",
+            "implementation": (
+                "torch_mps_compile_shader_codebook_rescale"
+                if mps_optimized
+                else "torch_reference_mps"
+            ),
+            "package_format": "torch.mps.compile_shader" if mps_optimized else "torch_reference",
+            "upstream_native_mps_op": False,
+            "hf_kernel_builder_compliant": False,
             "notes": (
                 "Norm and RPBH rotation still run in PyTorch; a Metal shader "
                 "handles codebook lookup, norm rescale, and packed weight dequant."
@@ -83,11 +102,10 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "claim_status": "partial_optimized" if available["triton_cuda"] else "unavailable",
             "optimized": bool(available["triton_cuda"]),
             "full_fusion": False,
-            "optimized_stage": (
-                "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
-                "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
-                "adaln_rtn_quant_pack,adaln_rtn_dequant"
-            ),
+            "implemented_stage": _TRITON_CUDA_IMPLEMENTED_STAGE,
+            "optimized_stage": _TRITON_CUDA_IMPLEMENTED_STAGE
+            if available["triton_cuda"]
+            else None,
             "weight_dequant_optimized": bool(available["triton_cuda"]),
             "weight_pack_optimized": bool(available["triton_cuda"]),
             "lowbit_unpack_optimized": bool(available["triton_cuda"]),
@@ -95,7 +113,9 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "adaln_quant_optimized": bool(available["triton_cuda"]),
             "adaln_dequant_optimized": bool(available["triton_cuda"]),
             "device_types": ["cuda"],
-            "implementation": "triton_codebook_rescale",
+            "implementation": "python_triton_orbitquant_pipeline",
+            "package_format": "python_triton",
+            "hf_kernel_builder_compliant": False,
             "notes": (
                 "Triton handles runtime activation norm, RPBH/FWHT rotation, codebook "
                 "lookup/rescale, packed weight dequant, opt-in packed weight matmul, "
