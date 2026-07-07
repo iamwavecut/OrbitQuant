@@ -57,7 +57,7 @@ PY
 stage env-done
 
 stage kernel-tests-start
-pytest tests/test_kernels.py tests/test_adaln_rtn.py -q
+pytest tests/test_kernels.py tests/test_adaln_rtn.py tests/test_orbit_linear.py -q
 stage kernel-tests-done
 
 stage kernel-info-start

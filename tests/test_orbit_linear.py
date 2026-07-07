@@ -1,3 +1,4 @@
+import copy
 import sys
 from types import SimpleNamespace
 
@@ -177,6 +178,40 @@ def test_orbit_linear_mps_weight_dequant_uses_kernel_without_cpu_unpack(monkeypa
     assert torch.allclose(actual.cpu(), expected)
 
 
+def test_orbit_linear_mps_forward_matches_reference_without_cpu_unpack(monkeypatch):
+    if not dispatch_module._mps_metal_available():
+        pytest.skip("MPS Metal shader backend is not available")
+
+    torch.manual_seed(6)
+    source = torch.nn.Linear(16, 7)
+    x = torch.randn(2, 5, 16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        activation_kernel_backend="cpu",
+    )
+    reference = OrbitQuantLinear.from_linear(
+        source, config=config, module_name="block.ff.linear"
+    )
+    actual_layer = copy.deepcopy(reference).to("mps")
+    actual_layer.activation_kernel_backend = "mps"
+
+    expected = reference(x)
+
+    def fail_unpack(*args, **kwargs):
+        raise AssertionError("MPS forward should not call CPU unpack_lowbit")
+
+    monkeypatch.setattr(layers_module, "unpack_lowbit", fail_unpack)
+
+    actual = actual_layer(x.to("mps"))
+
+    assert actual.device.type == "mps"
+    assert actual.shape == expected.shape
+    assert torch.allclose(actual.cpu(), expected, atol=1e-4, rtol=1e-4)
+
+
 def test_orbit_linear_cuda_weight_dequant_dispatches_to_triton_without_cpu_unpack(
     monkeypatch,
 ):
@@ -317,3 +352,38 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
             "num_warps": 8,
         }
     ]
+
+
+@pytest.mark.parametrize("use_bias", [True, False])
+def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias):
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(7 + int(use_bias))
+    source = torch.nn.Linear(32, 9, bias=use_bias, device="cuda", dtype=torch.bfloat16)
+    x = torch.randn(2, 5, 32, device="cuda", dtype=torch.bfloat16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        activation_kernel_backend="triton_cuda",
+        runtime_mode="dequant_bf16",
+        packed_matmul_block_m=16,
+        packed_matmul_block_n=16,
+        packed_matmul_block_k=32,
+        packed_matmul_num_warps=4,
+    )
+    reference = OrbitQuantLinear.from_linear(
+        source, config=config, module_name="block.ff.linear"
+    )
+    packed = copy.deepcopy(reference)
+    packed.runtime_mode = "triton_packed_matmul"
+
+    expected = reference(x)
+    actual = packed(x)
+
+    assert actual.is_cuda
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    assert torch.allclose(actual.float(), expected.float(), atol=2e-2, rtol=2e-2)
