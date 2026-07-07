@@ -19,7 +19,8 @@ URL, or signed-off audit note.
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench
   dimensions. Missing release metrics block only those metric/reproduction
-  claims, not ordinary compact artifact development.
+  claims, not ordinary compact artifact development, artifact cleanup, kernel
+  work, or model-card refreshes.
 - [ ] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON can stay
   local under ignored `reports/`, but each published artifact manifest must be

@@ -196,8 +196,14 @@ as quality evidence.
 
 ## Release Metrics
 
-Release-grade metrics are imported from the upstream metric runners. For image
-paper targets, first fetch the published artifacts into the native local layout:
+Full GenEval and VBench runs are not required for ordinary development,
+artifact cleanup, kernel work, or model-card refreshes. They are expensive
+release evidence and should be run only before publishing paper reproduction,
+metric-table, or leaderboard-style claims.
+
+When preparing those claims, release-grade metrics are imported from the
+upstream metric runners. For image paper targets, first fetch the published
+artifacts into the native local layout:
 
 ```bash
 orbitquant fetch-hf-artifacts \

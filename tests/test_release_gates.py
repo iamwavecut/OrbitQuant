@@ -14,6 +14,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "GenEval\n  overall and per-task scores" in release_gates
     assert "all required VBench\n  dimensions" in release_gates
     assert "Missing release metrics block only those metric/reproduction\n  claims" in release_gates
+    assert "not ordinary compact artifact development, artifact cleanup, kernel" in release_gates
+    assert "work, or model-card refreshes" in release_gates
     assert "Full-model module classification inventories" in release_gates
     assert "CUDA/Triton, CPU, Metal/MPS, ROCm, and XPU" in release_gates
     assert (
