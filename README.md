@@ -144,7 +144,12 @@ pipe = DiffusionPipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
 )
 config = OrbitQuantConfig(weight_bits=4, activation_bits=4, target_policy="flux2")
-summary = quantize_pipeline(pipe, config, component="transformer")
+summary = quantize_pipeline(
+    pipe,
+    config,
+    component="transformer",
+    quantization_device="cuda",
+)
 save_quantized_pipeline_component(
     pipe,
     "./artifacts/flux2-klein-w4a4",
@@ -164,8 +169,16 @@ load_quantized_pipeline_component(
     restored_pipe,
     "./artifacts/flux2-klein-w4a4",
     component="transformer",
+    device="cuda",
 )
 ```
+
+`quantization_device` controls where full-precision weights are rotated,
+codebook-indexed, and low-bit packed during artifact creation. It is deliberately
+not serialized into `OrbitQuantConfig`; artifacts record the quantization method,
+bits, policy, runtime mode, and kernel backend, while the device belongs to the
+current machine/run. Passing `quantization_device="cuda"` or `"mps"` fails loudly
+if that accelerator is unavailable.
 
 Current artifacts include:
 

@@ -45,6 +45,7 @@ class OrbitQuantWeightQuantize(ConversionOps):
 
         _, values = next(iter(input_dict.items()))
         weight = values[0] if isinstance(values, list) else values
+        weight = self.hf_quantizer.move_tensor_for_quantization(weight)
         proxy = SimpleNamespace(
             in_features=module.in_features,
             out_features=module.out_features,

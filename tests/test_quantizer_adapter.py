@@ -132,6 +132,67 @@ def test_on_the_fly_quantizer_quantizes_after_weight_loading_only():
     assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
 
 
+def test_on_the_fly_quantizer_passes_quantization_device_to_post_load_quantization(
+    monkeypatch,
+):
+    model = TinyQuantizerTransformer()
+    quantizer = OrbitQuantizer(
+        OrbitQuantConfig(block_size=8),
+        pre_quantized=False,
+        quantization_device="cpu",
+    )
+    seen_devices = []
+
+    def fake_quantize_linear_modules(model_arg, config_arg, *, quantization_device=None):
+        seen_devices.append(quantization_device)
+
+    monkeypatch.setattr(
+        "orbitquant.quantizer.quantize_linear_modules",
+        fake_quantize_linear_modules,
+    )
+
+    quantizer._process_model_after_weight_loading(model)
+
+    assert seen_devices == [torch.device("cpu")]
+
+
+def test_transformers_streaming_conversion_moves_weight_to_quantization_device(monkeypatch):
+    pytest.importorskip("transformers")
+    from orbitquant.transformers_ops import OrbitQuantWeightQuantize
+
+    model = TinyQuantizerTransformer()
+    quantizer = OrbitQuantizer(
+        OrbitQuantConfig(block_size=8),
+        pre_quantized=False,
+        quantization_device="cpu",
+    )
+    quantizer._process_model_before_weight_loading(model, checkpoint_files=["dummy.safetensors"])
+    seen_weights = []
+
+    def fake_move_tensor_for_quantization(tensor):
+        seen_weights.append(tensor)
+        return tensor
+
+    monkeypatch.setattr(
+        quantizer,
+        "move_tensor_for_quantization",
+        fake_move_tensor_for_quantization,
+    )
+    op = OrbitQuantWeightQuantize(quantizer)
+
+    results = op.convert(
+        {"transformer_blocks.0.attn.to_q.weight": torch.randn(16, 16)},
+        full_layer_name="transformer_blocks.0.attn.to_q.packed_weight_indices",
+        model=model,
+    )
+
+    assert seen_weights
+    assert set(results) == {
+        "transformer_blocks.0.attn.to_q.packed_weight_indices",
+        "transformer_blocks.0.attn.to_q.row_norms",
+    }
+
+
 def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():
     torch.manual_seed(0)
     config = OrbitQuantConfig(block_size=8)

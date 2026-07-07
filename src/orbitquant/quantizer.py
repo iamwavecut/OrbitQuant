@@ -8,6 +8,7 @@ from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import (
+    _quantization_device,
     dequantize_quantized_linear_modules,
     prepare_prequantized_linear_modules,
     quantize_linear_modules,
@@ -72,6 +73,14 @@ def _move_like_loaded_tensor(
     return value.to(device=target_device, dtype=dtype)
 
 
+def _normalise_quantization_device(value: Any) -> torch.device | None:
+    if value is None or value == "disk":
+        return None
+    if isinstance(value, int):
+        value = f"cuda:{value}"
+    return _quantization_device(value)
+
+
 def _merge_unique(existing: list[str], extra: list[str]) -> list[str]:
     merged = list(existing)
     for item in extra:
@@ -123,6 +132,9 @@ class OrbitQuantizer(*_hf_base_classes()):
     ) -> None:
         if isinstance(quantization_config, dict):
             quantization_config = OrbitQuantConfig.from_dict(quantization_config)
+        quantization_device = _normalise_quantization_device(
+            kwargs.pop("quantization_device", None)
+        )
         modules_to_not_convert = list(kwargs.get("modules_to_not_convert") or [])
         modules_dtype_dict = {
             dtype_name: list(module_names)
@@ -144,6 +156,21 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_streaming_quantization = False
         self._transformers_orbit_module_names: list[str] = []
         self._transformers_adaln_module_names: list[str] = []
+        self.quantization_device = quantization_device
+
+    def _quantization_device_from_kwargs(self, kwargs: dict[str, Any]) -> torch.device | None:
+        explicit_device = _normalise_quantization_device(kwargs.get("quantization_device"))
+        if explicit_device is not None:
+            return explicit_device
+        target_device = _normalise_quantization_device(kwargs.get("target_device"))
+        if target_device is not None:
+            return target_device
+        return self.quantization_device
+
+    def move_tensor_for_quantization(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.quantization_device is None:
+            return tensor
+        return tensor.to(device=self.quantization_device)
 
     def is_serializable(self, *args: Any, **kwargs: Any) -> bool:
         return True
@@ -304,7 +331,11 @@ class OrbitQuantizer(*_hf_base_classes()):
 
     def _process_model_after_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
         if not self.pre_quantized and not self._transformers_streaming_quantization:
-            quantize_linear_modules(model, self.quantization_config)
+            quantize_linear_modules(
+                model,
+                self.quantization_config,
+                quantization_device=self._quantization_device_from_kwargs(kwargs),
+            )
         if self._transformers_streaming_quantization and hasattr(model, "_weight_conversions"):
             delattr(model, "_weight_conversions")
         return model
