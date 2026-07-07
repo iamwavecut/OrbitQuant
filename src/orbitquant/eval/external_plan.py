@@ -240,6 +240,14 @@ def _preflight_lines(plan: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _stage_lines(label: str, command: str) -> list[str]:
+    return [
+        _cmd(["stage_log", "START", label]),
+        command,
+        _cmd(["stage_log", "END", label]),
+    ]
+
+
 def build_external_eval_plan(
     suites: list[NativeSuite] | None = None,
     *,
@@ -318,31 +326,56 @@ def build_external_eval_script(
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        _cmd(["mkdir", "-p", Path(metrics_root)]),
+        "stage_log() {",
+        "  printf '==== %s %s %s ====\\n' \"$1\" \"$(date -Is)\" \"$2\"",
+        "}",
         "",
     ]
+    lines.extend(_stage_lines("setup metrics root", _cmd(["mkdir", "-p", Path(metrics_root)])))
+    lines.append("")
+    lines.append(_cmd(["stage_log", "START", "preflight"]))
     lines.extend(_preflight_lines(plan))
+    lines.append(_cmd(["stage_log", "END", "preflight"]))
+    lines.append("")
     artifact_dirs: list[str] = []
     for job in plan["jobs"]:
         artifact_dir = str(job["artifact_dir"])
         if artifact_dir not in artifact_dirs:
             artifact_dirs.append(artifact_dir)
+        label_prefix = f"{job['suite']} {job['bit_setting']} {job['split']}"
         lines.extend(
             [
                 f"# {job['suite']} {job['bit_setting']} {job['split']} {job['metric']}",
                 _cmd(["mkdir", "-p", Path(str(job["metrics_json"])).parent]),
                 _cmd(["mkdir", "-p", Path(str(job["export_dir"])).parent]),
-                str(job["export_command"]),
-                str(job["eval_command"]),
-                str(job["summarize_command"]),
-                str(job["import_command"]),
-                "",
             ]
         )
+        lines.extend(
+            _stage_lines(f"{label_prefix} export {job['metric']}", str(job["export_command"]))
+        )
+        lines.extend(
+            _stage_lines(f"{label_prefix} evaluate {job['metric']}", str(job["eval_command"]))
+        )
+        lines.extend(
+            _stage_lines(
+                f"{label_prefix} summarize {job['metric']}",
+                str(job["summarize_command"]),
+            )
+        )
+        lines.extend(
+            _stage_lines(f"{label_prefix} import {job['metric']}", str(job["import_command"]))
+        )
+        lines.append("")
     if artifact_dirs:
         report_command = ["orbitquant", "report"]
         for artifact_dir in artifact_dirs:
             report_command.extend(["--artifact", artifact_dir])
         report_command.extend(["--output", str(report_output_dir)])
-        lines.extend(["# Native report", _cmd(report_command), ""])
+        lines.extend(
+            [
+                "# Native report",
+                *_stage_lines("native eval report", _cmd(report_command)),
+                "",
+            ]
+        )
     return "\n".join(lines)

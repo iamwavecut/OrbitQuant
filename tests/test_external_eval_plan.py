@@ -67,6 +67,11 @@ def test_build_external_eval_script_runs_vbench_import_and_report(tmp_path):
     )
 
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "stage_log() {" in script
+    assert "stage_log START 'setup metrics root'" in script
+    assert "stage_log START preflight" in script
+    assert "stage_log START 'wan-native W4A6 orbitquant evaluate vbench'" in script
+    assert "stage_log END 'native eval report'" in script
     assert f"mkdir -p {tmp_path / 'metrics'}" in script
     assert "if ! command -v vbench >/dev/null 2>&1; then" in script
     assert f"if [ ! -d {tmp_path / 'artifacts' / 'wan-native-w4a6'} ]; then" in script

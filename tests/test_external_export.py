@@ -11,6 +11,7 @@ from orbitquant.eval.external_metrics import (
     summarize_geneval_results,
     summarize_vbench_results,
 )
+from orbitquant.eval.metrics import load_metric_json
 from orbitquant.modeling import quantize_linear_modules
 
 
@@ -203,8 +204,24 @@ def test_external_metric_summarizers_write_numeric_json(tmp_path):
         json.dumps({"subject_consistency": {"score": 0.75}}),
         encoding="utf-8",
     )
+    (vbench_dir / "dynamic_degree.json").write_text(
+        json.dumps({"score": 0.5}),
+        encoding="utf-8",
+    )
+    (vbench_dir / "table.json").write_text(
+        json.dumps({"dimension": "background_consistency", "score": 0.625}),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "vbench-summary.json"
     vbench_summary = summarize_vbench_results(
         vbench_dir,
-        tmp_path / "vbench-summary.json",
+        summary_path,
     )
+    imported_metrics = load_metric_json(summary_path, metric_prefix="vbench")
     assert vbench_summary["metrics"]["results_subject_consistency_score"] == 0.75
+    assert vbench_summary["subject_consistency"] == 0.75
+    assert vbench_summary["dynamic_degree"] == 0.5
+    assert vbench_summary["background_consistency"] == 0.625
+    assert imported_metrics["vbench_subject_consistency"] == 0.75
+    assert imported_metrics["vbench_dynamic_degree"] == 0.5
+    assert imported_metrics["vbench_background_consistency"] == 0.625
