@@ -59,6 +59,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["cpu"]["optimized"] is False
     assert capabilities["cpu"]["weight_dequant_optimized"] is False
     assert capabilities["cpu"]["weight_pack_optimized"] is False
+    assert capabilities["cpu"]["lowbit_unpack_optimized"] is False
     assert capabilities["cpu"]["weight_quant_optimized"] is False
     assert capabilities["cpu"]["adaln_quant_optimized"] is False
     assert capabilities["cpu"]["adaln_dequant_optimized"] is False
@@ -67,6 +68,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["mps"]["optimized"] is False
     assert capabilities["mps"]["weight_dequant_optimized"] is False
     assert capabilities["mps"]["weight_pack_optimized"] is False
+    assert capabilities["mps"]["lowbit_unpack_optimized"] is False
     assert capabilities["mps"]["weight_quant_optimized"] is False
     assert capabilities["mps"]["adaln_quant_optimized"] is False
     assert capabilities["mps"]["adaln_dequant_optimized"] is False
@@ -75,11 +77,12 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["triton_cuda"]["optimized"] is True
     assert capabilities["triton_cuda"]["optimized_stage"] == (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
-        "lowbit_pack,weight_rotation_fwht_quant,"
+        "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is True
     assert capabilities["triton_cuda"]["weight_pack_optimized"] is True
+    assert capabilities["triton_cuda"]["lowbit_unpack_optimized"] is True
     assert capabilities["triton_cuda"]["weight_quant_optimized"] is True
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is True
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is True
@@ -99,6 +102,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale"
     assert capabilities["mps"]["weight_dequant_optimized"] is True
     assert capabilities["mps"]["weight_pack_optimized"] is False
+    assert capabilities["mps"]["lowbit_unpack_optimized"] is False
     assert capabilities["mps"]["weight_quant_optimized"] is False
     assert capabilities["mps"]["adaln_quant_optimized"] is False
     assert capabilities["mps"]["adaln_dequant_optimized"] is False
@@ -107,6 +111,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["triton_cuda"]["optimized"] is False
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is False
     assert capabilities["triton_cuda"]["weight_pack_optimized"] is False
+    assert capabilities["triton_cuda"]["lowbit_unpack_optimized"] is False
     assert capabilities["triton_cuda"]["weight_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is False
@@ -275,7 +280,7 @@ def test_triton_weight_dequant_kernel_matches_reference_for_supported_bits(bits)
 
 
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])
-def test_triton_lowbit_pack_keeps_packed_tensor_on_cuda_and_matches_reference(bits):
+def test_triton_lowbit_pack_unpack_stays_on_cuda_and_matches_reference(bits):
     if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
         pytest.skip("CUDA/Triton backend is not available")
 
@@ -286,8 +291,23 @@ def test_triton_lowbit_pack_keeps_packed_tensor_on_cuda_and_matches_reference(bi
     unpacked = unpack_lowbit(packed, bits=bits, length=values_cpu.numel())
 
     assert packed.is_cuda
+    assert unpacked.is_cuda
     assert torch.equal(packed.cpu(), expected)
-    assert torch.equal(unpacked, values_cpu)
+    assert torch.equal(unpacked.cpu(), values_cpu)
+
+
+def test_triton_lowbit_pack_can_skip_redundant_range_validation():
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    values = torch.tensor([0, 1, 2, 3], device="cuda", dtype=torch.uint8)
+
+    packed = pack_lowbit(values, bits=2, validate=False)
+    unpacked = unpack_lowbit(packed, bits=2, length=values.numel())
+
+    assert packed.is_cuda
+    assert unpacked.is_cuda
+    assert torch.equal(unpacked.cpu(), values.cpu())
 
 
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])

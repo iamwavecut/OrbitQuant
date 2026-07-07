@@ -5,10 +5,10 @@ import torch
 _CHUNK_VALUES = 4_000_000
 
 
-def _pack_lowbit_cpu(values: torch.Tensor, bits: int) -> torch.Tensor:
+def _pack_lowbit_cpu(values: torch.Tensor, bits: int, *, validate: bool) -> torch.Tensor:
     max_value = (1 << bits) - 1
     values_cpu_raw = values.detach().to(device="cpu").flatten()
-    if values_cpu_raw.numel() and (
+    if validate and values_cpu_raw.numel() and (
         int(values_cpu_raw.min()) < 0 or int(values_cpu_raw.max()) > max_value
     ):
         raise ValueError(f"all values must fit in {bits} bits")
@@ -30,18 +30,18 @@ def _pack_lowbit_cpu(values: torch.Tensor, bits: int) -> torch.Tensor:
     return packed.to(dtype=torch.uint8)
 
 
-def pack_lowbit(values: torch.Tensor, bits: int) -> torch.Tensor:
+def pack_lowbit(values: torch.Tensor, bits: int, *, validate: bool = True) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
     if values.is_cuda:
         try:
             from orbitquant.kernels.triton_cuda import pack_lowbit_with_triton
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError("CUDA low-bit pack requires the Triton CUDA backend") from exc
         else:
-            return pack_lowbit_with_triton(values, bits=bits)
+            return pack_lowbit_with_triton(values, bits=bits, validate=validate)
 
-    return _pack_lowbit_cpu(values, bits)
+    return _pack_lowbit_cpu(values, bits, validate=validate)
 
 
 def unpack_lowbit(packed: torch.Tensor, bits: int, length: int) -> torch.Tensor:
@@ -49,6 +49,13 @@ def unpack_lowbit(packed: torch.Tensor, bits: int, length: int) -> torch.Tensor:
         raise ValueError("bits must be in [1, 8]")
     if length < 0:
         raise ValueError("length must be non-negative")
+    if packed.is_cuda:
+        try:
+            from orbitquant.kernels.triton_cuda import unpack_lowbit_with_triton
+        except Exception as exc:
+            raise RuntimeError("CUDA low-bit unpack requires the Triton CUDA backend") from exc
+        else:
+            return unpack_lowbit_with_triton(packed, bits=bits, length=length)
 
     packed_cpu = packed.detach().to(device="cpu", dtype=torch.uint8).flatten()
     values = torch.zeros(length, dtype=torch.uint8)

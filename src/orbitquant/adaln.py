@@ -29,7 +29,7 @@ def _quantize_adaln_weight_reference(
     scales = grouped.abs().amax(dim=-1).clamp_min(1e-12) / 7.0
     quantized_signed = torch.round(grouped / scales[..., None]).clamp(-8, 7).to(torch.int16)
     quantized_unsigned = (quantized_signed + 8).to(torch.uint8)
-    packed = pack_lowbit(quantized_unsigned.flatten(), bits=4)
+    packed = pack_lowbit(quantized_unsigned.flatten(), bits=4, validate=False)
     return packed, scales
 
 

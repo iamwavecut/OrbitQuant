@@ -33,3 +33,12 @@ def test_lowbit_unpack_rejects_values_that_do_not_fit_bits():
         assert "fit in 2 bits" in str(exc)
     else:
         raise AssertionError("pack_lowbit accepted an out-of-range value")
+
+
+def test_lowbit_pack_validation_can_be_skipped_for_trusted_indices():
+    values = torch.tensor([0, 1, 2, 3], dtype=torch.uint8)
+
+    packed = pack_lowbit(values, bits=2, validate=False)
+    unpacked = unpack_lowbit(packed, bits=2, length=values.numel())
+
+    assert torch.equal(unpacked, values)

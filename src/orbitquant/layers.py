@@ -126,7 +126,7 @@ class OrbitQuantLinear(nn.Module):
             rotation=rotation,
             codebook=codebook,
         )
-        packed = pack_lowbit(weight_indices, bits=config.weight_bits)
+        packed = pack_lowbit(weight_indices, bits=config.weight_bits, validate=False)
 
         return cls(
             in_features=layer.in_features,

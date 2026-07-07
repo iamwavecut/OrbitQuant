@@ -43,6 +43,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized_stage": None,
             "weight_dequant_optimized": False,
             "weight_pack_optimized": False,
+            "lowbit_unpack_optimized": False,
             "weight_quant_optimized": False,
             "adaln_quant_optimized": False,
             "adaln_dequant_optimized": False,
@@ -57,6 +58,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized_stage": "codebook_lookup_rescale" if mps_optimized else None,
             "weight_dequant_optimized": mps_optimized,
             "weight_pack_optimized": False,
+            "lowbit_unpack_optimized": False,
             "weight_quant_optimized": False,
             "adaln_quant_optimized": False,
             "adaln_dequant_optimized": False,
@@ -78,11 +80,12 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "full_fusion": False,
             "optimized_stage": (
                 "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
-                "lowbit_pack,weight_rotation_fwht_quant,"
+                "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant,"
                 "adaln_rtn_quant_pack,adaln_rtn_dequant"
             ),
             "weight_dequant_optimized": bool(available["triton_cuda"]),
             "weight_pack_optimized": bool(available["triton_cuda"]),
+            "lowbit_unpack_optimized": bool(available["triton_cuda"]),
             "weight_quant_optimized": bool(available["triton_cuda"]),
             "adaln_quant_optimized": bool(available["triton_cuda"]),
             "adaln_dequant_optimized": bool(available["triton_cuda"]),

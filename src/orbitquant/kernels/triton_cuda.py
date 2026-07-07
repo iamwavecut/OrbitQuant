@@ -237,6 +237,29 @@ def _pack_lowbit_kernel(
 
 
 @triton.jit
+def _unpack_lowbit_kernel(
+    packed_ptr,
+    values_ptr,
+    length: tl.constexpr,
+    bits: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = offsets < length
+    bit_starts = offsets * bits
+    byte_indices = bit_starts // 8
+    bit_offsets = bit_starts % 8
+    low = tl.load(packed_ptr + byte_indices, mask=mask, other=0).to(tl.uint32)
+    needs_high = bit_offsets + bits > 8
+    high = tl.load(packed_ptr + byte_indices + 1, mask=mask & needs_high, other=0).to(
+        tl.uint32
+    )
+    raw = low | (high << 8)
+    values = (raw >> bit_offsets) & ((1 << bits) - 1)
+    tl.store(values_ptr + offsets, values.to(tl.uint8), mask=mask)
+
+
+@triton.jit
 def _permute_sign_weight_kernel(
     weight_ptr,
     permutation_ptr,
@@ -700,14 +723,18 @@ def dequantize_packed_weight_with_triton(
     return output.reshape(out_features, in_features)
 
 
-def pack_lowbit_with_triton(values: torch.Tensor, *, bits: int) -> torch.Tensor:
+def pack_lowbit_with_triton(
+    values: torch.Tensor, *, bits: int, validate: bool = True
+) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
     if not values.is_cuda:
         raise RuntimeError("triton_cuda pack requires CUDA tensors")
     max_value = (1 << bits) - 1
     flat_raw = values.detach().flatten()
-    if flat_raw.numel() and (int(flat_raw.min()) < 0 or int(flat_raw.max()) > max_value):
+    if validate and flat_raw.numel() and bool(
+        torch.any((flat_raw < 0) | (flat_raw > max_value)).item()
+    ):
         raise ValueError(f"all values must fit in {bits} bits")
     flat = flat_raw.to(dtype=torch.uint8).contiguous()
     packed_length = (flat.numel() * bits + 7) // 8
@@ -727,6 +754,32 @@ def pack_lowbit_with_triton(values: torch.Tensor, *, bits: int) -> torch.Tensor:
         block_size=block_size,
     )
     return packed
+
+
+def unpack_lowbit_with_triton(packed: torch.Tensor, *, bits: int, length: int) -> torch.Tensor:
+    if bits <= 0 or bits > 8:
+        raise ValueError("bits must be in [1, 8]")
+    if length < 0:
+        raise ValueError("length must be non-negative")
+    if not packed.is_cuda:
+        raise RuntimeError("triton_cuda unpack requires CUDA tensors")
+
+    triton, _ = _load_triton()
+    packed_contiguous = packed.detach().to(dtype=torch.uint8).contiguous().flatten()
+    values = torch.empty(length, device=packed.device, dtype=torch.uint8)
+    if length == 0:
+        return values
+
+    block_size = 256
+    grid = (triton.cdiv(length, block_size),)
+    _unpack_lowbit_kernel[grid](
+        packed_contiguous,
+        values,
+        length=length,
+        bits=bits,
+        block_size=block_size,
+    )
+    return values
 
 
 def quantize_weight_indices_with_triton(
