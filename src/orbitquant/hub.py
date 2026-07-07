@@ -303,6 +303,7 @@ def _manifest_warnings(manifest: dict[str, Any]) -> list[str]:
 
 
 _METADATA_COMPLETENESS_FIELDS = (
+    "activation_eps",
     "quantization_device",
     "weight_quantization_backend",
     "quantization_staging_mode",
@@ -1227,8 +1228,8 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
             "GenEval or VBench result."
         ),
         (
-            "- Metadata complete means quantization device, weight quantization "
-            "backend, and staging mode are recorded."
+            "- Metadata complete means activation norm clamp, quantization device, "
+            "weight quantization backend, and staging mode are recorded."
         ),
         (
             "- Release eval ready is the only readiness flag for paper metric "

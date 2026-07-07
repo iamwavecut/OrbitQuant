@@ -162,23 +162,20 @@ def _remote_path(artifact_dir, filename):
 def _write_remote_model_index(
     path,
     *,
+    activation_eps=None,
     quantization_device="unknown",
     weight_quantization_backend="unknown",
     quantization_staging_mode="unknown",
 ):
-    path.write_text(
-        json.dumps(
-            {
-                "_class_name": "OrbitQuantArtifact",
-                "quantization_device": quantization_device,
-                "weight_quantization_backend": weight_quantization_backend,
-                "quantization_staging_mode": quantization_staging_mode,
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    payload = {
+        "_class_name": "OrbitQuantArtifact",
+        "quantization_device": quantization_device,
+        "weight_quantization_backend": weight_quantization_backend,
+        "quantization_staging_mode": quantization_staging_mode,
+    }
+    if activation_eps is not None:
+        payload["activation_eps"] = activation_eps
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _audit_file_map(repo_id, *, manifest_path, sha256sums_path, summary_path, model_index_path):
@@ -194,6 +191,7 @@ def _native_smoke_summary(
     suite,
     *,
     release_metrics=None,
+    activation_eps=None,
     quantization_device="unknown",
     weight_quantization_backend="unknown",
     quantization_staging_mode="unknown",
@@ -222,30 +220,30 @@ def _native_smoke_summary(
         "pair_keys": [[suite.name, "0", "simple-object"]],
         "native_settings": [native_settings],
     }
-    return json.dumps(
-        {
-            "published_summary": "compact",
-            "raw_generation_records": "local-only",
-            "quantization_device": quantization_device,
-            "weight_quantization_backend": weight_quantization_backend,
-            "quantization_staging_mode": quantization_staging_mode,
-            "metrics": {
-                "original": {"records": 1, "latest_metrics": metrics},
-                "orbitquant": {"records": 1, "latest_metrics": metrics},
-            },
-            "native_smoke": {
-                "proof_format": "orbitquant-native-smoke-v1",
-                "comparison_asset_path": "assets/image_generation_comparison_matrix.webp",
-                "paired_prompt_seed_count": 1,
-                "paired_prompt_seed_keys": [[suite.name, "0", "simple-object"]],
-                "splits": {
-                    "original": split_proof,
-                    "orbitquant": split_proof,
-                },
+    payload = {
+        "published_summary": "compact",
+        "raw_generation_records": "local-only",
+        "quantization_device": quantization_device,
+        "weight_quantization_backend": weight_quantization_backend,
+        "quantization_staging_mode": quantization_staging_mode,
+        "metrics": {
+            "original": {"records": 1, "latest_metrics": metrics},
+            "orbitquant": {"records": 1, "latest_metrics": metrics},
+        },
+        "native_smoke": {
+            "proof_format": "orbitquant-native-smoke-v1",
+            "comparison_asset_path": "assets/image_generation_comparison_matrix.webp",
+            "paired_prompt_seed_count": 1,
+            "paired_prompt_seed_keys": [[suite.name, "0", "simple-object"]],
+            "splits": {
+                "original": split_proof,
+                "orbitquant": split_proof,
             },
         },
-        indent=2,
-    )
+    }
+    if activation_eps is not None:
+        payload["activation_eps"] = activation_eps
+    return json.dumps(payload, indent=2)
 
 
 def _expected_missing_geneval_metrics():
@@ -658,6 +656,7 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
         b'"quantization_staging_mode": "component"'
         in manifest_operation.path_or_fileobj
     )
+    assert b'"activation_eps": 1e-10' in manifest_operation.path_or_fileobj
 
 
 def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder(
@@ -1253,12 +1252,15 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     ]
     assert row["metadata_complete_ready"] is False
     assert row["metadata_missing"] == [
+        "manifest.activation_eps_missing",
         "manifest.quantization_device_missing",
         "manifest.weight_quantization_backend_missing",
         "manifest.quantization_staging_mode_missing",
+        "model_index.activation_eps_missing",
         "model_index.quantization_device_missing",
         "model_index.weight_quantization_backend_missing",
         "model_index.quantization_staging_mode_missing",
+        "benchmark_summary.activation_eps_missing",
         "benchmark_summary.quantization_device_missing",
         "benchmark_summary.weight_quantization_backend_missing",
         "benchmark_summary.quantization_staging_mode_missing",
@@ -1299,6 +1301,7 @@ def test_audit_hf_artifact_repos_marks_complete_metadata_when_provenance_matches
           "weight_bits": 4,
           "activation_bits": 4,
           "target_policy": "flux2",
+          "activation_eps": 1e-10,
           "quantization_device": "cuda",
           "weight_quantization_backend": "triton_cuda",
           "quantization_staging_mode": "component",
@@ -1316,6 +1319,7 @@ def test_audit_hf_artifact_repos_marks_complete_metadata_when_provenance_matches
     model_index_path = tmp_path / "model_index.json"
     _write_remote_model_index(
         model_index_path,
+        activation_eps=1e-10,
         quantization_device="cuda",
         weight_quantization_backend="triton_cuda",
         quantization_staging_mode="component",
@@ -1324,6 +1328,7 @@ def test_audit_hf_artifact_repos_marks_complete_metadata_when_provenance_matches
     summary_path.write_text(
         _native_smoke_summary(
             suite,
+            activation_eps=1e-10,
             quantization_device="cuda",
             weight_quantization_backend="triton_cuda",
             quantization_staging_mode="component",
@@ -1894,7 +1899,7 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     assert "## Readiness Semantics" in markdown
     assert "no forbidden raw files" in markdown
     assert "it is not a GenEval or VBench result" in markdown
-    assert "Metadata complete means quantization device" in markdown
+    assert "Metadata complete means activation norm clamp" in markdown
     assert "paper metric or reproduction claims" in markdown
     assert "Missing required metrics" not in markdown
     assert (
