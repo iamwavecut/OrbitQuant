@@ -95,6 +95,20 @@ Required before final publication:
 - Treat access failures for gated models as model-access blockers only, not as
   method blockers.
 
+## Native Setting Provenance
+
+Paper-aligned generation settings are encoded in
+`src/orbitquant/eval/native_settings.py`. These settings define native
+artifact-readiness runs and the input generation scripts for later external
+metrics; they do not by themselves claim GenEval or VBench scores.
+
+| Target | Paper source | Encoded suite | Encoded setting | Claim boundary |
+| --- | --- | --- | --- | --- |
+| FLUX.1-schnell | Appendix B.1 generation settings; Section 5.1 and supplementary low-bit settings | `flux1-schnell-native` | 1024x1024, 4 steps, guidance 0.0, W4A4/W3A3/W2A4/W2A3 | Paper target; GenEval metrics required before reproduction-score claims. |
+| Z-Image-Turbo | Appendix B.1 generation settings; Section 5.1 and supplementary low-bit settings | `z-image-native` | 1024x1024, 10 steps, guidance 0.0, W4A4/W3A3/W2A4/W2A3 | Paper target; GenEval metrics required before reproduction-score claims. |
+| Wan 2.1-1.3B | Appendix B.1 generation settings; Section 5.1 video bit settings | `wan-native` | 832x480, 81 frames, 50 steps, guidance 5.0, W4A6/W4A4 | Paper target; VBench metrics required before reproduction-score claims. |
+| FLUX.2 Klein | User-requested extra target, outside the paper model list | `flux2-native` | 1024x1024, 4 steps, guidance 1.0, W4A4/W3A3/W2A4/W2A3 | Extra target using the same native-validation discipline; not a paper reproduction target. |
+
 ## Kernel And Runtime Evidence
 
 | Backend | Status | Evidence | Claim boundary |
