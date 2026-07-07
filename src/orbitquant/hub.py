@@ -1659,6 +1659,75 @@ def repair_hf_native_smoke_proof(
         result["commit"] = _commit_info_payload(commit_info)
         return result
 
+    if (
+        isinstance(benchmark_summary.get("native_smoke"), dict)
+        and "native_smoke.raw_paired_native_smoke_evidence" in current_status["missing"]
+    ):
+        next_benchmark_summary = dict(benchmark_summary)
+        next_benchmark_summary.pop("native_smoke", None)
+        next_benchmark_bytes = _json_bytes(next_benchmark_summary)
+        next_manifest = replace(
+            manifest,
+            checksums={
+                **manifest.checksums,
+                "benchmark/summary.json": _sha256_bytes(next_benchmark_bytes),
+            },
+        )
+        next_manifest_bytes = _json_bytes(next_manifest.to_dict())
+        next_readme_bytes = render_model_card(
+            next_manifest,
+            benchmark_summary=next_benchmark_summary,
+        ).encode("utf-8")
+        sha_entries = _parse_sha256sums_bytes(sha256sums_bytes)
+        sha_entries.update(
+            {
+                "benchmark/summary.json": _sha256_bytes(next_benchmark_bytes),
+                "orbitquant_manifest.json": _sha256_bytes(next_manifest_bytes),
+                "README.md": _sha256_bytes(next_readme_bytes),
+            }
+        )
+        sha_entries.pop("SHA256SUMS", None)
+        next_sha256sums_bytes = _sha256sums_bytes(sha_entries)
+        file_payloads = {
+            "benchmark/summary.json": next_benchmark_bytes,
+            "orbitquant_manifest.json": next_manifest_bytes,
+            "README.md": next_readme_bytes,
+            "SHA256SUMS": next_sha256sums_bytes,
+        }
+        original_payloads = {
+            "benchmark/summary.json": benchmark_bytes,
+            "orbitquant_manifest.json": manifest_bytes,
+            "README.md": readme_bytes,
+            "SHA256SUMS": sha256sums_bytes,
+        }
+        changed_files = [
+            filename
+            for filename, payload in file_payloads.items()
+            if original_payloads.get(filename) != payload
+        ]
+        result.update(
+            {
+                "removed_invalid_native_smoke": True,
+                "changed_files": changed_files,
+            }
+        )
+        if dry_run or not changed_files:
+            return result
+        operations = [
+            CommitOperationAdd(path_in_repo=filename, path_or_fileobj=file_payloads[filename])
+            for filename in changed_files
+        ]
+        commit_info = api.create_commit(
+            repo_id=repo_id,
+            repo_type="model",
+            revision=revision,
+            operations=operations,
+            commit_message=commit_message
+            or "Remove unverified OrbitQuant native smoke proof",
+        )
+        result["commit"] = _commit_info_payload(commit_info)
+        return result
+
     native_smoke, skipped_reason = _recover_native_smoke_proof_from_compact_summary(
         benchmark_summary,
         suite=suite,

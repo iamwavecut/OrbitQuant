@@ -1119,6 +1119,73 @@ def test_repair_hf_native_smoke_proof_skips_compact_summary_without_raw_pair_evi
     assert fake_api.create_commit_calls == []
 
 
+def test_repair_hf_native_smoke_proof_removes_recovered_pair_claim(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    summary_path = tmp_path / "benchmark" / "summary.json"
+    summary = json.loads(_native_smoke_summary(suite))
+    summary["native_smoke"]["proof_source"] = (
+        "recovered_from_compact_summary_and_published_comparison_matrix"
+    )
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof(
+        repo_id=repo_id,
+        suite=suite,
+        revision="main",
+        api=fake_api,
+    )
+
+    assert result["commit"]["commit_oid"] == "repair-sha"
+    assert result["removed_invalid_native_smoke"] is True
+    assert result["changed_files"] == [
+        "benchmark/summary.json",
+        "orbitquant_manifest.json",
+        "README.md",
+        "SHA256SUMS",
+    ]
+    operation_by_path = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in fake_api.create_commit_calls[0]["operations"]
+    }
+    repaired_summary = json.loads(operation_by_path["benchmark/summary.json"])
+    repaired_readme = operation_by_path["README.md"].decode("utf-8")
+    repaired_manifest = json.loads(operation_by_path["orbitquant_manifest.json"])
+    sha_entries = hub_module._parse_sha256sums_bytes(operation_by_path["SHA256SUMS"])
+
+    assert "native_smoke" not in repaired_summary
+    assert "## Native Validation Proof" not in repaired_readme
+    assert repaired_manifest["checksums"]["benchmark/summary.json"] == sha_entries[
+        "benchmark/summary.json"
+    ]
+    assert sha_entries["README.md"] == hub_module._sha256_bytes(
+        operation_by_path["README.md"]
+    )
+
+
 def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
     tmp_path,
     monkeypatch,
