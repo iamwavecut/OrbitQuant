@@ -22,6 +22,7 @@ class OrbitQuantManifest:
     activation_kernel_backend: str
     quantization_device: str = "unknown"
     weight_quantization_backend: str = "unknown"
+    quantization_staging_mode: str = "unknown"
     quantized_modules: list[str] = field(default_factory=list)
     adaln_modules: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
@@ -43,6 +44,7 @@ class OrbitQuantManifest:
         checksums: dict[str, str] | None = None,
         quantization_device: str = "unknown",
         weight_quantization_backend: str = "unknown",
+        quantization_staging_mode: str = "unknown",
     ) -> OrbitQuantManifest:
         return cls(
             source_model_id=source_model_id,
@@ -61,6 +63,7 @@ class OrbitQuantManifest:
             activation_kernel_backend=config.activation_kernel_backend,
             quantization_device=quantization_device,
             weight_quantization_backend=weight_quantization_backend,
+            quantization_staging_mode=quantization_staging_mode,
             quantized_modules=list(quantized_modules),
             adaln_modules=[] if adaln_modules is None else list(adaln_modules),
             skipped_modules=list(skipped_modules),
@@ -89,6 +92,7 @@ class OrbitQuantManifest:
             "activation_kernel_backend": self.activation_kernel_backend,
             "quantization_device": self.quantization_device,
             "weight_quantization_backend": self.weight_quantization_backend,
+            "quantization_staging_mode": self.quantization_staging_mode,
             "target_policy": self.target_policy,
             "adaln_policy": "int4_rtn_group64_bf16_activation",
             "quantized_modules": self.quantized_modules,
@@ -117,6 +121,7 @@ class OrbitQuantManifest:
             activation_kernel_backend=data.get("activation_kernel_backend", "auto"),
             quantization_device=data.get("quantization_device", "unknown"),
             weight_quantization_backend=data.get("weight_quantization_backend", "unknown"),
+            quantization_staging_mode=data.get("quantization_staging_mode", "unknown"),
             quantized_modules=list(data.get("quantized_modules", [])),
             adaln_modules=list(data.get("adaln_modules", [])),
             skipped_modules=list(data.get("skipped_modules", [])),

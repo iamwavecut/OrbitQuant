@@ -9,7 +9,7 @@ import torch
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import backend_capabilities, quantize_activations_kernel, select_backend
 from orbitquant.layers import OrbitQuantLinear
-from orbitquant.modeling import prewarm_quantized_linear_modules
+from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
 
 
 def _resolve_device(device: str | torch.device) -> torch.device:
@@ -297,5 +297,142 @@ def benchmark_orbit_linear(
             "compiled CUDA path. forward_prewarmed_ms still uses OrbitQuant "
             "activation kernels plus cached dequantized weights and PyTorch "
             "linear; fused low-bit matmul is not enabled in this runtime mode."
+        ),
+    }
+
+
+class _QuantizeBenchModel(torch.nn.Module):
+    def __init__(
+        self,
+        *,
+        layers: int,
+        in_features: int,
+        hidden_features: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> None:
+        super().__init__()
+        blocks = []
+        for _ in range(layers):
+            blocks.append(
+                torch.nn.ModuleDict(
+                    {
+                        "attn": torch.nn.ModuleDict(
+                            {
+                                "to_q": torch.nn.Linear(
+                                    in_features, in_features, device=device, dtype=dtype
+                                ),
+                                "to_k": torch.nn.Linear(
+                                    in_features, in_features, device=device, dtype=dtype
+                                ),
+                                "to_v": torch.nn.Linear(
+                                    in_features, in_features, device=device, dtype=dtype
+                                ),
+                            }
+                        ),
+                        "ff": torch.nn.ModuleDict(
+                            {
+                                "linear_in": torch.nn.Linear(
+                                    in_features, hidden_features, device=device, dtype=dtype
+                                ),
+                                "linear_out": torch.nn.Linear(
+                                    hidden_features, in_features, device=device, dtype=dtype
+                                ),
+                            }
+                        ),
+                        "modulation": torch.nn.Linear(
+                            in_features, in_features * 2, device=device, dtype=dtype
+                        ),
+                    }
+                )
+            )
+        self.transformer_blocks = torch.nn.ModuleList(blocks)
+        self.proj_out = torch.nn.Linear(in_features, in_features, device=device, dtype=dtype)
+
+
+def benchmark_model_quantization(
+    *,
+    layers: int = 4,
+    in_features: int = 3072,
+    hidden_features: int | None = None,
+    weight_bits: int = 4,
+    activation_bits: int = 4,
+    block_size: int | str = "paper",
+    source_device: str | torch.device = "cpu",
+    quantization_device: str | torch.device = "auto",
+    staging_mode: str = "component",
+    dtype: torch.dtype = torch.bfloat16,
+    seed: int = 0,
+) -> dict[str, Any]:
+    if layers <= 0:
+        raise ValueError("layers must be positive")
+    if in_features <= 0:
+        raise ValueError("in_features must be positive")
+    if hidden_features is None:
+        hidden_features = in_features * 3
+    if hidden_features <= 0:
+        raise ValueError("hidden_features must be positive")
+
+    source = _resolve_device(source_device)
+    target = _resolve_device(quantization_device)
+    if source.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA source device requested but CUDA is not available")
+    if target.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA quantization device requested but CUDA is not available")
+
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if target.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(target)
+
+    model = _QuantizeBenchModel(
+        layers=layers,
+        in_features=in_features,
+        hidden_features=hidden_features,
+        device=source,
+        dtype=dtype,
+    )
+    model.requires_grad_(False)
+    config = OrbitQuantConfig(
+        weight_bits=weight_bits,
+        activation_bits=activation_bits,
+        block_size=block_size,
+        target_policy="flux2",
+        activation_kernel_backend="triton_cuda" if target.type == "cuda" else "auto",
+        runtime_mode="dequant_bf16",
+    )
+
+    _synchronize(target)
+    started_at = time.perf_counter()
+    summary = quantize_linear_modules(
+        model,
+        config,
+        quantization_device=target,
+        staging_mode=staging_mode,
+    )
+    _synchronize(target)
+    wall_seconds = time.perf_counter() - started_at
+
+    return {
+        "source_device": str(source),
+        "quantization_device": str(target),
+        "device_name": _device_name(target),
+        "dtype": str(dtype).removeprefix("torch."),
+        "layers": layers,
+        "in_features": in_features,
+        "hidden_features": hidden_features,
+        "weight_bits": weight_bits,
+        "activation_bits": activation_bits,
+        "block_size": block_size,
+        "staging_mode": staging_mode,
+        "wall_seconds": wall_seconds,
+        "summary": summary.__dict__,
+        "peak_memory_bytes": _peak_memory_bytes(target),
+        "notes": (
+            "This benchmark measures the full model replacement loop, including "
+            "host-to-device staging when source_device is cpu and quantization_device "
+            "is cuda. The OrbitQuant/AdaLN compute fields exclude explicit transfer "
+            "time; device_transfer_seconds is reported separately."
         ),
     }

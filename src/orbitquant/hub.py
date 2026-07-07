@@ -351,6 +351,7 @@ def repair_hf_artifact_metadata(
     before = {
         "quantization_device": manifest.quantization_device,
         "weight_quantization_backend": manifest.weight_quantization_backend,
+        "quantization_staging_mode": manifest.quantization_staging_mode,
     }
     repaired_manifest = OrbitQuantManifest(
         source_model_id=manifest.source_model_id,
@@ -367,6 +368,7 @@ def repair_hf_artifact_metadata(
         activation_kernel_backend=manifest.activation_kernel_backend,
         quantization_device=quantization_device,
         weight_quantization_backend=weight_quantization_backend,
+        quantization_staging_mode=manifest.quantization_staging_mode,
         quantized_modules=manifest.quantized_modules,
         adaln_modules=manifest.adaln_modules,
         skipped_modules=manifest.skipped_modules,
@@ -380,8 +382,10 @@ def repair_hf_artifact_metadata(
 
     model_index["quantization_device"] = quantization_device
     model_index["weight_quantization_backend"] = weight_quantization_backend
+    model_index["quantization_staging_mode"] = manifest.quantization_staging_mode
     benchmark_summary["quantization_device"] = quantization_device
     benchmark_summary["weight_quantization_backend"] = weight_quantization_backend
+    benchmark_summary["quantization_staging_mode"] = manifest.quantization_staging_mode
 
     next_model_index_bytes = _json_bytes(model_index)
     next_benchmark_bytes = _json_bytes(benchmark_summary)

@@ -153,6 +153,7 @@ def build_native_run_script(
     device: str = "cuda",
     dtype: str = "bfloat16",
     activation_kernel_backend: str = "triton_cuda",
+    staging_mode: str = "component",
     resume: bool = False,
 ) -> str:
     selected_suites = list_native_suites() if suites is None else suites
@@ -195,6 +196,8 @@ def build_native_run_script(
                     activation_kernel_backend,
                     "--device",
                     device,
+                    "--staging-mode",
+                    staging_mode,
                     "--dtype",
                     dtype,
                     "--output",

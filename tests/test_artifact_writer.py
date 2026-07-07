@@ -64,8 +64,10 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert manifest["source_model_id"] == "example/model"
     assert manifest["quantization_device"] == summary.quantization_device
     assert manifest["weight_quantization_backend"] == summary.weight_quantization_backend
+    assert manifest["quantization_staging_mode"] == summary.quantization_staging_mode
     assert model_index["quantization_device"] == summary.quantization_device
     assert model_index["weight_quantization_backend"] == summary.weight_quantization_backend
+    assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "model_index.json" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
@@ -118,6 +120,10 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert benchmark_summary["source_model_id"] == "example/model"
     assert benchmark_summary["quantization_device"] == summary.quantization_device
     assert benchmark_summary["weight_quantization_backend"] == summary.weight_quantization_backend
+    assert benchmark_summary["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert benchmark_summary["device_transfer_seconds"] >= 0.0
+    assert benchmark_summary["module_device_transfer_count"] >= 0
+    assert benchmark_summary["source_linear_device_counts"]
     assert (tmp_path / "benchmark" / "original.metrics.jsonl").read_text() == ""
     assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
     assert (tmp_path / "benchmark" / "original.metrics.csv").read_text() == "metric,value\n"
@@ -292,14 +298,18 @@ def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
     assert validation["weight_quantization_backend"] == "triton_cuda"
     assert manifest["quantization_device"] == "cuda"
     assert manifest["weight_quantization_backend"] == "triton_cuda"
+    assert manifest["quantization_staging_mode"] == summary.quantization_staging_mode
     assert model_index["quantization_device"] == "cuda"
     assert model_index["weight_quantization_backend"] == "triton_cuda"
+    assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
     assert benchmark["quantization_device"] == "cuda"
     assert benchmark["weight_quantization_backend"] == "triton_cuda"
+    assert benchmark["quantization_staging_mode"] == summary.quantization_staging_mode
     assert sha_entries["orbitquant_manifest.json"] == sha256_file(manifest_path)
     assert sha_entries["README.md"] == sha256_file(tmp_path / "README.md")
     assert "- Quantization device: `cuda`" in readme
     assert "- Weight quantization backend: `triton_cuda`" in readme
+    assert f"- Quantization staging: `{summary.quantization_staging_mode}`" in readme
 
 
 def test_validate_orbitquant_artifact_rejects_corrupted_readme_checksum(tmp_path):

@@ -28,9 +28,13 @@ class QuantizationSummary:
     skipped_modules: list[str] = field(default_factory=list)
     quantization_device: str = "auto"
     weight_quantization_backend: str = "torch_reference"
+    quantization_staging_mode: str = "streaming"
     elapsed_seconds: float = 0.0
     orbitquant_seconds: float = 0.0
     adaln_seconds: float = 0.0
+    device_transfer_seconds: float = 0.0
+    module_device_transfer_count: int = 0
+    source_linear_device_counts: dict[str, int] = field(default_factory=dict)
     quantized_buffer_device_counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -128,27 +132,59 @@ def _record_adaln_buffers(summary: QuantizationSummary, module: RTNInt4Linear) -
         _count_tensor_device(summary, module.bias)
 
 
+def _record_source_linear_device(summary: QuantizationSummary, module: torch.nn.Linear) -> None:
+    key = str(module.weight.device)
+    summary.source_linear_device_counts[key] = summary.source_linear_device_counts.get(key, 0) + 1
+
+
+def _move_module_to_device(
+    module: torch.nn.Module,
+    target_device: torch.device,
+    summary: QuantizationSummary,
+) -> None:
+    if _first_recursive_tensor_device(module) == target_device:
+        return
+    transfer_started_at = time.perf_counter()
+    module.to(device=target_device)
+    _synchronize_if_needed(target_device)
+    summary.device_transfer_seconds += time.perf_counter() - transfer_started_at
+    summary.module_device_transfer_count += 1
+
+
 def quantize_linear_modules(
     model: torch.nn.Module,
     config: OrbitQuantConfig,
     *,
     quantization_device: str | torch.device | None = "auto",
+    staging_mode: str = "streaming",
 ) -> QuantizationSummary:
+    if staging_mode not in {"streaming", "component"}:
+        raise ValueError("staging_mode must be 'streaming' or 'component'")
+
     decisions = classify_linear_modules(model, config)
     target_device = _quantization_device(quantization_device)
     summary = QuantizationSummary(
         quantization_device="preserve" if target_device is None else str(target_device),
         weight_quantization_backend=_weight_quantization_backend(target_device),
+        quantization_staging_mode=staging_mode,
     )
     started_at = time.perf_counter()
+
+    for name in decisions:
+        module = model.get_submodule(name)
+        if isinstance(module, torch.nn.Linear):
+            _record_source_linear_device(summary, module)
+
+    if target_device is not None and staging_mode == "component":
+        _move_module_to_device(model, target_device, summary)
 
     for name, decision in decisions.items():
         module = model.get_submodule(name)
         if not isinstance(module, torch.nn.Linear):
             continue
         if decision.action == "orbitquant":
-            if target_device is not None and module.weight.device != target_device:
-                module.to(device=target_device)
+            if target_device is not None and staging_mode == "streaming":
+                _move_module_to_device(module, target_device, summary)
             module_started_at = time.perf_counter()
             replacement = OrbitQuantLinear.from_linear(module, config=config, module_name=name)
             _synchronize_if_needed(_first_tensor_device(replacement))
@@ -158,8 +194,8 @@ def quantize_linear_modules(
             _set_child(parent, child_name, replacement)
             summary.quantized_modules.append(name)
         elif decision.action == "adaln_int4_rtn":
-            if target_device is not None and module.weight.device != target_device:
-                module.to(device=target_device)
+            if target_device is not None and staging_mode == "streaming":
+                _move_module_to_device(module, target_device, summary)
             module_started_at = time.perf_counter()
             replacement = RTNInt4Linear.from_linear(module, config=config, module_name=name)
             _synchronize_if_needed(_first_tensor_device(replacement))
@@ -213,6 +249,14 @@ def _first_tensor_device(module: torch.nn.Module) -> torch.device:
     for parameter in module.parameters(recurse=False):
         return parameter.device
     for buffer in module.buffers(recurse=False):
+        return buffer.device
+    return torch.device("cpu")
+
+
+def _first_recursive_tensor_device(module: torch.nn.Module) -> torch.device:
+    for parameter in module.parameters(recurse=True):
+        return parameter.device
+    for buffer in module.buffers(recurse=True):
         return buffer.device
     return torch.device("cpu")
 

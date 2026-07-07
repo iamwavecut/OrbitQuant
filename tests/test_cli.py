@@ -142,6 +142,42 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
     assert payload["quantization_buffers"]["packed_weight_indices_device"] == "cpu"
 
 
+def test_cli_quantize_bench_prints_full_model_staging_timings(capsys):
+    assert (
+        main(
+            [
+                "quantize-bench",
+                "--layers",
+                "1",
+                "--in-features",
+                "16",
+                "--hidden-features",
+                "32",
+                "--block-size",
+                "8",
+                "--source-device",
+                "cpu",
+                "--quantization-device",
+                "cpu",
+                "--staging-mode",
+                "component",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_device"] == "cpu"
+    assert payload["quantization_device"] == "cpu"
+    assert payload["staging_mode"] == "component"
+    assert payload["summary"]["quantization_staging_mode"] == "component"
+    assert payload["summary"]["source_linear_device_counts"]["cpu"] == 7
+    assert payload["summary"]["device_transfer_seconds"] >= 0.0
+    assert payload["summary"]["quantized_modules"]
+
+
 def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys, tmp_path):
     assert (
         main(
@@ -294,6 +330,7 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--weight-bits 4 --activation-bits 6" in script
     assert "--weight-bits 4 --activation-bits 4" in script
     assert "--activation-kernel-backend triton_cuda" in script
+    assert "--staging-mode component" in script
     assert script.count("orbitquant generate-pack") == 4
     assert "--split original" in script
     assert "--split orbitquant" in script
@@ -1428,6 +1465,11 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
 
     output = json.loads(capsys.readouterr().out)
     assert output["artifact_dir"] == str(tmp_path)
+    assert output["quantization_staging_mode"] == "streaming"
+    assert output["device_transfer_seconds"] >= 0.0
+    assert output["module_device_transfer_count"] >= 0
+    assert output["source_linear_device_counts"]
+    assert output["artifact_save_elapsed_seconds"] >= 0.0
     assert output["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
     assert (tmp_path / "model.safetensors").exists()
     assert (tmp_path / "orbitquant_manifest.json").exists()

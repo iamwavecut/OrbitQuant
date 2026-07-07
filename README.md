@@ -34,6 +34,7 @@ orbitquant quantize \
   --activation-bits 4 \
   --activation-kernel-backend triton_cuda \
   --device cuda \
+  --staging-mode component \
   --output ./artifacts/flux2-klein-w4a4
 ```
 
@@ -257,6 +258,7 @@ summary = quantize_pipeline(
     config,
     component="transformer",
     quantization_device="cuda",
+    staging_mode="component",
 )
 save_quantized_pipeline_component(
     pipe,
@@ -287,6 +289,12 @@ not serialized into `OrbitQuantConfig`; artifacts record the quantization method
 bits, policy, runtime mode, and kernel backend, while the device belongs to the
 current machine/run. Passing `quantization_device="cuda"` or `"mps"` fails loudly
 if that accelerator is unavailable.
+`staging_mode="streaming"` moves each target linear module to the quantization
+device immediately before replacement. `staging_mode="component"` moves the full
+component first, then runs the replacement loop; this is the preferred path for
+large CUDA GPUs when VRAM is sufficient because it keeps the source weights
+device-resident during OrbitQuant/AdaLN kernel work and makes transfer time
+explicit in the artifact summary.
 
 Current artifacts include:
 
@@ -347,6 +355,21 @@ orbitquant kernel-bench \
   --dtype bfloat16
 ```
 
+Benchmark the full model replacement loop, including source-device staging:
+
+```bash
+orbitquant quantize-bench \
+  --layers 4 \
+  --in-features 3072 \
+  --hidden-features 9216 \
+  --weight-bits 4 \
+  --activation-bits 4 \
+  --source-device cpu \
+  --quantization-device cuda \
+  --staging-mode component \
+  --dtype bfloat16
+```
+
 `kernel-info` reports whether `mps` is using `metal_codebook_rescale` or the
 `torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
 as partial optimization because matmul is still the BF16 PyTorch linear path.
@@ -356,6 +379,9 @@ hot measures the already compiled quantize+pack path. On Triton/CUDA, cold JIT
 compilation can be CPU-heavy and may show little GPU activity in provider UIs;
 the hot timing and `quantization_buffers` devices are the checks that the real
 weight-index and low-bit packing work stays on CUDA.
+`quantize-bench` reports `device_transfer_seconds` separately from
+`orbitquant_seconds` and `adaln_seconds`; use it to distinguish host-to-device
+staging and safetensors/checksum work from the actual CUDA quantization kernels.
 The `weight_dequant_optimized` field records whether packed weight
 dequantization avoids the CPU unpack path for that backend. The
 `weight_pack_optimized` field records whether artifact creation can pack low-bit

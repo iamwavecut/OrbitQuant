@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from orbitquant.artifacts import (
     save_orbitquant_artifact,
     validate_orbitquant_artifact,
 )
-from orbitquant.benchmarks import benchmark_orbit_linear
+from orbitquant.benchmarks import benchmark_model_quantization, benchmark_orbit_linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
 from orbitquant.eval.external_export import export_geneval_artifact, export_vbench_artifact
@@ -285,6 +286,27 @@ def main(argv: list[str] | None = None) -> int:
     kernel_bench_parser.add_argument("--iterations", type=int, default=20)
     kernel_bench_parser.add_argument("--seed", type=int, default=0)
 
+    quantize_bench_parser = subparsers.add_parser(
+        "quantize-bench", help="benchmark full model quantization staging"
+    )
+    quantize_bench_parser.add_argument("--layers", type=int, default=4)
+    quantize_bench_parser.add_argument("--in-features", type=int, default=3072)
+    quantize_bench_parser.add_argument("--hidden-features", type=int)
+    quantize_bench_parser.add_argument("--weight-bits", type=int, default=4)
+    quantize_bench_parser.add_argument("--activation-bits", type=int, default=4)
+    quantize_bench_parser.add_argument("--block-size", type=_parse_block_size, default="paper")
+    quantize_bench_parser.add_argument("--source-device", default="cpu")
+    quantize_bench_parser.add_argument("--quantization-device", default="auto")
+    quantize_bench_parser.add_argument(
+        "--staging-mode",
+        default="component",
+        choices=["streaming", "component"],
+    )
+    quantize_bench_parser.add_argument(
+        "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
+    )
+    quantize_bench_parser.add_argument("--seed", type=int, default=0)
+
     native_plan_parser = subparsers.add_parser(
         "native-plan", help="print native quant/eval job matrix"
     )
@@ -355,6 +377,11 @@ def main(argv: list[str] | None = None) -> int:
         default="triton_cuda",
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
+    native_script_parser.add_argument(
+        "--staging-mode",
+        default="component",
+        choices=["streaming", "component"],
+    )
     native_script_parser.add_argument("--resume", action="store_true")
 
     quantize_parser = subparsers.add_parser("quantize", help="quantize a Diffusers component")
@@ -379,6 +406,16 @@ def main(argv: list[str] | None = None) -> int:
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
     quantize_parser.add_argument("--device", default="auto")
+    quantize_parser.add_argument(
+        "--staging-mode",
+        default="streaming",
+        choices=["streaming", "component"],
+        help=(
+            "streaming moves each target module to the quantization device just before "
+            "replacement; component moves the full component first, which is preferred "
+            "for large CUDA GPUs when VRAM allows it"
+        ),
+    )
     quantize_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
     )
@@ -573,6 +610,26 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "quantize-bench":
+        print(
+            json.dumps(
+                benchmark_model_quantization(
+                    layers=args.layers,
+                    in_features=args.in_features,
+                    hidden_features=args.hidden_features,
+                    weight_bits=args.weight_bits,
+                    activation_bits=args.activation_bits,
+                    block_size=args.block_size,
+                    source_device=args.source_device,
+                    quantization_device=args.quantization_device,
+                    staging_mode=args.staging_mode,
+                    dtype=_torch_dtype(args.dtype),
+                    seed=args.seed,
+                ),
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "native-plan":
         suites = None
         if args.suite is not None:
@@ -659,11 +716,13 @@ def main(argv: list[str] | None = None) -> int:
                 device=args.device,
                 dtype=args.dtype,
                 activation_kernel_backend=args.activation_kernel_backend,
+                staging_mode=args.staging_mode,
                 resume=args.resume,
             )
         )
         return 0
     if args.command == "quantize":
+        command_started_at = time.perf_counter()
         device = _resolve_device(args.device)
         suite = None if args.suite is None else get_native_suite(args.suite)
         model_id = args.model_id if args.model_id is not None else None
@@ -686,22 +745,30 @@ def main(argv: list[str] | None = None) -> int:
         load_kwargs = {"torch_dtype": _torch_dtype(args.dtype)}
         if args.revision is not None:
             load_kwargs["revision"] = args.revision
+        load_started_at = time.perf_counter()
         if suite is None:
             from diffusers import DiffusionPipeline
 
             pipeline = DiffusionPipeline.from_pretrained(model_id, **load_kwargs)
         else:
             pipeline = load_pipeline_for_suite(suite, model_id=model_id, **load_kwargs)
+        load_elapsed_seconds = time.perf_counter() - load_started_at
         try:
             component = getattr(pipeline, args.component)
         except AttributeError as exc:
             raise ValueError(f"pipeline has no component {args.component!r}") from exc
+        quantize_started_at = time.perf_counter()
         summary = quantize_linear_modules(
             component,
             config,
             quantization_device=device,
+            staging_mode=args.staging_mode,
         )
+        quantize_elapsed_seconds = time.perf_counter() - quantize_started_at
+        metadata_started_at = time.perf_counter()
         metadata = inspect_model_metadata(model_id, revision=args.revision)
+        metadata_elapsed_seconds = time.perf_counter() - metadata_started_at
+        save_started_at = time.perf_counter()
         manifest = save_orbitquant_artifact(
             component,
             args.output,
@@ -712,6 +779,7 @@ def main(argv: list[str] | None = None) -> int:
             summary=summary,
             component=args.component,
         )
+        save_elapsed_seconds = time.perf_counter() - save_started_at
         print(
             json.dumps(
                 {
@@ -722,10 +790,19 @@ def main(argv: list[str] | None = None) -> int:
                     "source_license": manifest.source_license,
                     "quantization_device": summary.quantization_device,
                     "weight_quantization_backend": summary.weight_quantization_backend,
+                    "quantization_staging_mode": summary.quantization_staging_mode,
+                    "load_elapsed_seconds": load_elapsed_seconds,
                     "quantization_elapsed_seconds": summary.elapsed_seconds,
+                    "quantization_command_elapsed_seconds": quantize_elapsed_seconds,
                     "orbitquant_seconds": summary.orbitquant_seconds,
                     "adaln_seconds": summary.adaln_seconds,
+                    "device_transfer_seconds": summary.device_transfer_seconds,
+                    "module_device_transfer_count": summary.module_device_transfer_count,
+                    "source_linear_device_counts": summary.source_linear_device_counts,
                     "quantized_buffer_device_counts": summary.quantized_buffer_device_counts,
+                    "metadata_elapsed_seconds": metadata_elapsed_seconds,
+                    "artifact_save_elapsed_seconds": save_elapsed_seconds,
+                    "total_elapsed_seconds": time.perf_counter() - command_started_at,
                     "quantized_modules": summary.quantized_modules,
                     "adaln_modules": summary.adaln_modules,
                     "skipped_modules": summary.skipped_modules,

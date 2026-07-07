@@ -28,6 +28,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             f"- Activation kernel backend: `{data['activation_kernel_backend']}`",
             f"- Quantization device: `{data['quantization_device']}`",
             f"- Weight quantization backend: `{data['weight_quantization_backend']}`",
+            f"- Quantization staging: `{data['quantization_staging_mode']}`",
             f"- Target policy: `{data['target_policy']}`",
             f"- Rotation: `{data['rotation']}`",
             f"- Rotation seed: `{data['rotation_seed']}`",

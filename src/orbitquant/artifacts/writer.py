@@ -64,6 +64,7 @@ def _model_index_payload(
     component: str,
     quantization_device: str,
     weight_quantization_backend: str,
+    quantization_staging_mode: str,
 ) -> dict[str, Any]:
     return {
         "_class_name": "OrbitQuantComponentArtifact",
@@ -85,6 +86,7 @@ def _model_index_payload(
         "activation_kernel_backend": config.activation_kernel_backend,
         "quantization_device": quantization_device,
         "weight_quantization_backend": weight_quantization_backend,
+        "quantization_staging_mode": quantization_staging_mode,
     }
 
 
@@ -124,6 +126,9 @@ def save_orbitquant_artifact(
                 weight_quantization_backend=getattr(
                     summary, "weight_quantization_backend", "unknown"
                 ),
+                quantization_staging_mode=getattr(
+                    summary, "quantization_staging_mode", "unknown"
+                ),
             ),
             indent=2,
         )
@@ -150,9 +155,19 @@ def save_orbitquant_artifact(
         "weight_quantization_backend": getattr(
             summary, "weight_quantization_backend", "unknown"
         ),
+        "quantization_staging_mode": getattr(
+            summary, "quantization_staging_mode", "unknown"
+        ),
         "quantization_elapsed_seconds": getattr(summary, "elapsed_seconds", 0.0),
         "orbitquant_seconds": getattr(summary, "orbitquant_seconds", 0.0),
         "adaln_seconds": getattr(summary, "adaln_seconds", 0.0),
+        "device_transfer_seconds": getattr(summary, "device_transfer_seconds", 0.0),
+        "module_device_transfer_count": getattr(
+            summary, "module_device_transfer_count", 0
+        ),
+        "source_linear_device_counts": getattr(
+            summary, "source_linear_device_counts", {}
+        ),
         "quantized_buffer_device_counts": getattr(
             summary, "quantized_buffer_device_counts", {}
         ),
@@ -198,6 +213,9 @@ def save_orbitquant_artifact(
         quantization_device=getattr(summary, "quantization_device", "unknown"),
         weight_quantization_backend=getattr(
             summary, "weight_quantization_backend", "unknown"
+        ),
+        quantization_staging_mode=getattr(
+            summary, "quantization_staging_mode", "unknown"
         ),
     )
 
