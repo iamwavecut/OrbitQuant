@@ -428,6 +428,7 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "stage_log() {" in script
     assert "stage_log START preflight" in script
     assert "stage_log START 'kernel preflight'" in script
+    assert "stage_log START 'policy inventories'" in script
     assert "stage_log START 'wan-native W4A6 quantize'" in script
     assert "stage_log START 'wan-native W4A6 original generate-pack'" in script
     assert "stage_log END 'native eval report'" in script
@@ -438,6 +439,8 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "hf models info Wan-AI/Wan2.1-T2V-1.3B-Diffusers --format json >/dev/null" in script
     assert "orbitquant kernel-info" in script
     assert script.count("orbitquant kernel-bench") == 2
+    assert script.count("orbitquant inspect-policy") == 1
+    assert "--output reports/native/module-inventories/wan-native-policy.json" in script
     assert "--tokens 256 --in-features 3072 --out-features 3072" in script
     assert script.count("orbitquant quantize") == 2
     assert "--suite wan-native" in script
@@ -451,6 +454,10 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--seeds 0,1" in script
     assert "--prompt-limit 1" in script
     assert script.count("orbitquant validate-artifact") == 4
+    assert (
+        "--policy-inventory reports/native/module-inventories/wan-native-policy.json"
+        in script
+    )
     assert script.count("orbitquant report") == 1
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a6'}" in script
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a4'}" in script
@@ -508,7 +515,11 @@ def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_pat
 
     script = capsys.readouterr().out
     artifact_dir = tmp_path / "artifacts" / "flux2-native-w4a4"
-    assert f"if orbitquant validate-artifact --artifact {artifact_dir}" in script
+    inventory_path = "reports/native/module-inventories/flux2-native-policy.json"
+    assert (
+        f"if orbitquant validate-artifact --artifact {artifact_dir} "
+        f"--policy-inventory {inventory_path}"
+    ) in script
     assert f"echo 'Skipping existing valid artifact: {artifact_dir}'" in script
     assert "else\norbitquant quantize --suite flux2-native" in script
     assert "\nfi\nstage_log END 'flux2-native W4A4 quantize'" in script

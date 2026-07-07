@@ -203,6 +203,11 @@ orbitquant validate-artifact \
   --policy-inventory ./reports/inventories/flux2-klein-policy.json
 ```
 
+`orbitquant native-script` includes the same policy-inventory gate for every
+artifact it quantizes: it writes suite inventories under
+`reports/native/module-inventories/` and passes the matching inventory to each
+`validate-artifact` command.
+
 ## Release Target Settings
 
 Paper-aligned artifacts use these native target settings:

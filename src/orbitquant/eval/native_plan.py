@@ -151,6 +151,40 @@ def _kernel_preflight_lines(
     return lines
 
 
+def _policy_inventory_lines(
+    suites: list[NativeSuite],
+    *,
+    report_output_dir: str | Path,
+    dtype: str,
+) -> tuple[list[str], dict[str, str]]:
+    inventory_dir = Path(report_output_dir) / "module-inventories"
+    inventory_paths = {
+        suite.name: str(inventory_dir / f"{suite.name}-policy.json")
+        for suite in suites
+    }
+    lines = [
+        "# Policy inventories",
+        _cmd(["mkdir", "-p", str(inventory_dir)]),
+    ]
+    for suite in suites:
+        lines.append(
+            _cmd(
+                [
+                    "orbitquant",
+                    "inspect-policy",
+                    "--suite",
+                    suite.name,
+                    "--dtype",
+                    dtype,
+                    "--output",
+                    inventory_paths[suite.name],
+                ]
+            )
+        )
+    lines.append("")
+    return lines, inventory_paths
+
+
 def build_native_run_script(
     *,
     suites: list[NativeSuite] | None = None,
@@ -195,6 +229,15 @@ def build_native_run_script(
     )
     lines.append(_cmd(["stage_log", "END", "kernel preflight"]))
     lines.append("")
+    policy_lines, policy_inventory_paths = _policy_inventory_lines(
+        selected_suites,
+        report_output_dir=report_output_dir,
+        dtype=dtype,
+    )
+    lines.append(_cmd(["stage_log", "START", "policy inventories"]))
+    lines.extend(policy_lines)
+    lines.append(_cmd(["stage_log", "END", "policy inventories"]))
+    lines.append("")
     artifact_dirs = []
     for suite in selected_suites:
         for bit_setting in suite.bit_settings:
@@ -226,7 +269,16 @@ def build_native_run_script(
                     artifact_dir,
                 ]
             )
-            validate_command = _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir])
+            validate_command = _cmd(
+                [
+                    "orbitquant",
+                    "validate-artifact",
+                    "--artifact",
+                    artifact_dir,
+                    "--policy-inventory",
+                    policy_inventory_paths[suite.name],
+                ]
+            )
             if resume:
                 lines.extend(
                     [
