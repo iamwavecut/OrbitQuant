@@ -7,6 +7,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "final acceptance gate" in release_gates
     assert "verification output" in release_gates
     assert "arXiv 2607.02461" in release_gates
+    assert "`scripts/run_paper_methodology_checks.sh`" in release_gates
     assert "paper-aligned subset" in release_gates
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
     assert "native-resolution BF16-vs-OrbitQuant\n  comparison assets" in release_gates

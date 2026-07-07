@@ -48,3 +48,25 @@ def test_hf_compatibility_script_is_executable_and_release_dev_aware():
     assert "tests/test_pipeline_helpers.py" in text
     assert "tests/test_diffusers_modelmixin_integration.py" in text
     assert "tests/test_transformers_pretrained_integration.py" in text
+
+
+def test_paper_methodology_script_is_executable_and_scope_limited():
+    script = Path("scripts/run_paper_methodology_checks.sh")
+
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+
+    text = script.read_text(encoding="utf-8")
+    assert "PAPER_METHOD_STAGE" in text
+    assert "tests/test_codebooks.py" in text
+    assert "tests/test_rpbh.py" in text
+    assert "tests/test_orbit_linear.py" in text
+    assert "tests/test_adaln_rtn.py" in text
+    assert "tests/test_target_policies.py" in text
+    assert "orbitquant inspect-policy" in text
+    assert "flux1-schnell-native" in text
+    assert "z-image-native" in text
+    assert "wan-native" in text
+    assert "GenEval" in text
+    assert "VBench" in text
+    assert "model generation" in text
