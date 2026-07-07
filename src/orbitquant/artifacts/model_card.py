@@ -5,8 +5,8 @@ from orbitquant.artifacts.manifest import OrbitQuantManifest
 
 def _comparison_assets(checksums: dict[str, str]) -> list[str]:
     assets = []
-    for path in sorted(checksums):
-        if not path.startswith("assets/"):
+    for path in checksums:
+        if not (path.startswith("assets/") or "/assets/" in path):
             continue
         name = path.rsplit("/", maxsplit=1)[-1].lower()
         if (
@@ -15,7 +15,20 @@ def _comparison_assets(checksums: dict[str, str]) -> list[str]:
             or name.endswith("_contact_sheet.webp")
         ):
             assets.append(path)
-    return assets
+    return sorted(assets, key=_comparison_asset_sort_key)
+
+
+def _comparison_asset_sort_key(path: str) -> tuple[int, str]:
+    name = path.rsplit("/", maxsplit=1)[-1].lower()
+    if "comparison_matrix" in name:
+        priority = 0
+    elif name.startswith("original_vs_orbitquant_"):
+        priority = 1
+    elif name.endswith("_contact_sheet.webp"):
+        priority = 2
+    else:
+        priority = 3
+    return priority, path
 
 
 def _artifact_slug(model_id: str, bits: str) -> str:
@@ -24,6 +37,152 @@ def _artifact_slug(model_id: str, bits: str) -> str:
 
 def _usage_snippet(source_model_id: str, bits: str) -> str:
     placeholder_repo = f"WaveCut/{_artifact_slug(source_model_id, bits)}"
+    if source_model_id == "black-forest-labs/FLUX.2-klein-4B":
+        return "\n".join(
+            [
+                "```python",
+                "import torch",
+                "from diffusers import Flux2KleinPipeline",
+                "from huggingface_hub import snapshot_download",
+                "from orbitquant import load_quantized_pipeline_component",
+                "",
+                f'base_model = "{source_model_id}"',
+                f'artifact_id = "{placeholder_repo}"',
+                "",
+                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
+                "pipe = Flux2KleinPipeline.from_pretrained(",
+                "    base_model,",
+                "    torch_dtype=torch.bfloat16,",
+                ")",
+                "load_quantized_pipeline_component(",
+                "    pipe,",
+                "    artifact_dir,",
+                "    component=\"transformer\",",
+                "    device=\"cuda\",",
+                ")",
+                "pipe.to(\"cuda\")",
+                "",
+                "image = pipe(",
+                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
+                "    height=1024,",
+                "    width=1024,",
+                "    num_inference_steps=4,",
+                "    guidance_scale=1.0,",
+                ").images[0]",
+                "image.save(\"flux2-klein-orbitquant.png\")",
+                "```",
+            ]
+        )
+    if source_model_id == "black-forest-labs/FLUX.1-schnell":
+        return "\n".join(
+            [
+                "```python",
+                "import torch",
+                "from diffusers import FluxPipeline",
+                "from huggingface_hub import snapshot_download",
+                "from orbitquant import load_quantized_pipeline_component",
+                "",
+                f'base_model = "{source_model_id}"',
+                f'artifact_id = "{placeholder_repo}"',
+                "",
+                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
+                "pipe = FluxPipeline.from_pretrained(",
+                "    base_model,",
+                "    torch_dtype=torch.bfloat16,",
+                ")",
+                "load_quantized_pipeline_component(",
+                "    pipe,",
+                "    artifact_dir,",
+                "    component=\"transformer\",",
+                "    device=\"cuda\",",
+                ")",
+                "pipe.to(\"cuda\")",
+                "",
+                "image = pipe(",
+                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
+                "    height=1024,",
+                "    width=1024,",
+                "    num_inference_steps=4,",
+                "    guidance_scale=0.0,",
+                ").images[0]",
+                "image.save(\"flux1-schnell-orbitquant.png\")",
+                "```",
+            ]
+        )
+    if source_model_id == "Tongyi-MAI/Z-Image-Turbo":
+        return "\n".join(
+            [
+                "```python",
+                "import torch",
+                "from diffusers import ZImagePipeline",
+                "from huggingface_hub import snapshot_download",
+                "from orbitquant import load_quantized_pipeline_component",
+                "",
+                f'base_model = "{source_model_id}"',
+                f'artifact_id = "{placeholder_repo}"',
+                "",
+                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
+                "pipe = ZImagePipeline.from_pretrained(",
+                "    base_model,",
+                "    torch_dtype=torch.bfloat16,",
+                ")",
+                "load_quantized_pipeline_component(",
+                "    pipe,",
+                "    artifact_dir,",
+                "    component=\"transformer\",",
+                "    device=\"cuda\",",
+                ")",
+                "pipe.to(\"cuda\")",
+                "",
+                "image = pipe(",
+                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
+                "    height=1024,",
+                "    width=1024,",
+                "    num_inference_steps=10,",
+                "    guidance_scale=0.0,",
+                ").images[0]",
+                "image.save(\"z-image-orbitquant.png\")",
+                "```",
+            ]
+        )
+    if source_model_id == "Wan-AI/Wan2.1-T2V-1.3B-Diffusers":
+        return "\n".join(
+            [
+                "```python",
+                "import torch",
+                "from diffusers import WanPipeline",
+                "from diffusers.utils import export_to_video",
+                "from huggingface_hub import snapshot_download",
+                "from orbitquant import load_quantized_pipeline_component",
+                "",
+                f'base_model = "{source_model_id}"',
+                f'artifact_id = "{placeholder_repo}"',
+                "",
+                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
+                "pipe = WanPipeline.from_pretrained(",
+                "    base_model,",
+                "    torch_dtype=torch.bfloat16,",
+                ")",
+                "load_quantized_pipeline_component(",
+                "    pipe,",
+                "    artifact_dir,",
+                "    component=\"transformer\",",
+                "    device=\"cuda\",",
+                ")",
+                "pipe.to(\"cuda\")",
+                "",
+                "frames = pipe(",
+                "    prompt=\"A cinematic shot of a small robot walking through a neon market\",",
+                "    height=480,",
+                "    width=832,",
+                "    num_frames=81,",
+                "    num_inference_steps=50,",
+                "    guidance_scale=5.0,",
+                ").frames[0]",
+                "export_to_video(frames, \"wan-orbitquant.mp4\", fps=16)",
+                "```",
+            ]
+        )
     return "\n".join(
         [
             "```python",
@@ -116,11 +275,6 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             "and patch its transformer component with this artifact:",
             "",
             _usage_snippet(data["source_model_id"], bits),
-            "",
-            "For model-specific pipelines, you may replace `DiffusionPipeline` with "
-            "the matching Diffusers class, such as `FluxPipeline`, "
-            "`Flux2KleinPipeline`, `ZImagePipeline`, or `WanPipeline` when your "
-            "Diffusers version provides it.",
             "",
             "## Quantization",
             "",

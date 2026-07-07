@@ -2,6 +2,29 @@ from orbitquant.artifacts import OrbitQuantManifest, render_model_card
 from orbitquant.config import OrbitQuantConfig
 
 
+def _manifest_for_model(model_id: str, bits: tuple[int, int] = (4, 4)) -> OrbitQuantManifest:
+    config = OrbitQuantConfig(
+        weight_bits=bits[0],
+        activation_bits=bits[1],
+        target_policy="auto",
+    )
+    return OrbitQuantManifest.from_config(
+        config,
+        source_model_id=model_id,
+        source_revision="abc123",
+        source_license="unknown",
+        quantized_modules=["transformer_blocks.0.attn.to_q"],
+        skipped_modules=["text_encoder"],
+        checksums={
+            "assets/original_vs_orbitquant_seed0.webp": "0" * 64,
+            (
+                "reports/native/sample-report/assets/"
+                "image_generation_comparison_matrix.webp"
+            ): "1" * 64,
+        },
+    )
+
+
 def test_model_card_renders_rotation_and_codebook_metadata():
     config = OrbitQuantConfig(
         weight_bits=3,
@@ -41,3 +64,64 @@ def test_model_card_renders_rotation_and_codebook_metadata():
         "![assets/original_vs_orbitquant_z-image-native_seed0_W3A3_simple-object.webp]"
         "(assets/original_vs_orbitquant_z-image-native_seed0_W3A3_simple-object.webp)"
     ) in card
+
+
+def test_model_card_embeds_report_comparison_matrix_before_single_sample_assets():
+    card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
+
+    matrix = (
+        "reports/native/sample-report/assets/image_generation_comparison_matrix.webp"
+    )
+    single_sample = "assets/original_vs_orbitquant_seed0.webp"
+
+    assert f"![{matrix}]({matrix})" in card
+    assert f"![{single_sample}]({single_sample})" in card
+    assert card.index(matrix) < card.index(single_sample)
+
+
+def test_model_card_uses_flux2_native_code_example():
+    card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.2-klein-4B"))
+
+    assert "from diffusers import Flux2KleinPipeline" in card
+    assert "Flux2KleinPipeline.from_pretrained" in card
+    assert "height=1024" in card
+    assert "width=1024" in card
+    assert "num_inference_steps=4" in card
+    assert "guidance_scale=1.0" in card
+
+
+def test_model_card_uses_flux1_schnell_native_code_example():
+    card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
+
+    assert "from diffusers import FluxPipeline" in card
+    assert "FluxPipeline.from_pretrained" in card
+    assert "height=1024" in card
+    assert "width=1024" in card
+    assert "num_inference_steps=4" in card
+    assert "guidance_scale=0.0" in card
+
+
+def test_model_card_uses_z_image_native_code_example():
+    card = render_model_card(_manifest_for_model("Tongyi-MAI/Z-Image-Turbo"))
+
+    assert "from diffusers import ZImagePipeline" in card
+    assert "ZImagePipeline.from_pretrained" in card
+    assert "height=1024" in card
+    assert "width=1024" in card
+    assert "num_inference_steps=10" in card
+    assert "guidance_scale=0.0" in card
+
+
+def test_model_card_uses_wan_native_code_example():
+    card = render_model_card(
+        _manifest_for_model("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", bits=(4, 6))
+    )
+
+    assert "from diffusers import WanPipeline" in card
+    assert "from diffusers.utils import export_to_video" in card
+    assert "WanPipeline.from_pretrained" in card
+    assert "height=480" in card
+    assert "width=832" in card
+    assert "num_frames=81" in card
+    assert "num_inference_steps=50" in card
+    assert "guidance_scale=5.0" in card

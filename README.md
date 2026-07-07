@@ -75,8 +75,9 @@ result = pipe(
 )
 ```
 
-Use the model-specific Diffusers class when available, for example
-`FluxPipeline`, `Flux2KleinPipeline`, `ZImagePipeline`, or `WanPipeline`.
+Use the model-specific Diffusers class when available. The published artifact
+cards include full code-only examples for the matching pipeline and native
+generation settings.
 
 ## Quantize A Pipeline Component
 
@@ -140,12 +141,12 @@ orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 
 The current target matrix follows the agreed native settings:
 
-| Suite | Source model | Native setting | Bit settings |
-| --- | --- | --- | --- |
-| `flux2-native` | `black-forest-labs/FLUX.2-klein-4B` | 1024x1024, 4 steps, guidance 1.0 | W4A4, W3A3, W2A4, W2A3 |
-| `flux1-schnell-native` | `black-forest-labs/FLUX.1-schnell` | 1024x1024, 4 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
-| `z-image-native` | `Tongyi-MAI/Z-Image-Turbo` | 1024x1024, 10 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
-| `wan-native` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | 832x480, 81 frames, 50 steps, guidance 5.0 | W4A6, W4A4 |
+| Suite | Source model | Pipeline class | Native setting | Bit settings |
+| --- | --- | --- | --- | --- |
+| `flux2-native` | `black-forest-labs/FLUX.2-klein-4B` | `Flux2KleinPipeline` | 1024x1024, 4 steps, guidance 1.0 | W4A4, W3A3, W2A4, W2A3 |
+| `flux1-schnell-native` | `black-forest-labs/FLUX.1-schnell` | `FluxPipeline` | 1024x1024, 4 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
+| `z-image-native` | `Tongyi-MAI/Z-Image-Turbo` | `ZImagePipeline` | 1024x1024, 10 steps, guidance 0.0 | W4A4, W3A3, W2A4, W2A3 |
+| `wan-native` | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `WanPipeline` | 832x480, 81 frames, 50 steps, guidance 5.0 | W4A6, W4A4 |
 
 Small range smoke generations are not used as quality evidence. User-facing
 comparison assets are generated at the native settings above.
