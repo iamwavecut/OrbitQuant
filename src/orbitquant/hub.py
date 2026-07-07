@@ -427,6 +427,95 @@ def audit_hf_artifact_repos(
     }
 
 
+def _markdown_status(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _short_sha(value: Any) -> str:
+    if not value:
+        return ""
+    return str(value)[:12]
+
+
+def _missing_metrics_label(row: dict[str, Any]) -> str:
+    missing = row.get("missing_required_metrics") or []
+    if not missing:
+        return ""
+    labels = sorted({f"{item['split']}:{item['metric']}" for item in missing})
+    return ", ".join(labels)
+
+
+def _missing_metrics_count_label(row: dict[str, Any]) -> str:
+    count = len(row.get("missing_required_metrics") or [])
+    if count == 0:
+        return ""
+    return f"{count} missing"
+
+
+def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
+    """Render a compact human-readable HF artifact audit report."""
+
+    repo_count = payload.get("repo_count", 0)
+    lines = [
+        "# OrbitQuant HF Artifact Audit",
+        "",
+        f"- Namespace: `{payload.get('namespace', '')}`",
+        f"- Repositories: {payload.get('existing_count', 0)} / {repo_count} existing",
+        f"- Artifact ready: {payload.get('artifact_ready_count', 0)} / {repo_count}",
+        f"- Native smoke ready: {payload.get('native_smoke_ready_count', 0)} / {repo_count}",
+        f"- Release eval ready: {payload.get('release_eval_ready_count', 0)} / {repo_count}",
+        f"- Missing required metrics: {payload.get('missing_required_metric_count', 0)}",
+        f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
+        "",
+        "## Artifact Matrix",
+        "",
+        (
+            "| Suite | Bits | Repo | Private | Artifact | Native Smoke | Release Eval | "
+            "SHA | Missing Metrics |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in payload.get("rows", []):
+        repo_id = row.get("repo_id", "")
+        repo_label = f"`{repo_id}`" if repo_id else ""
+        if row.get("error") and not row.get("exists"):
+            missing_metrics = row.get("error", "")
+        else:
+            missing_metrics = _missing_metrics_count_label(row)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(row.get("suite", "")),
+                    str(row.get("bit_setting", "")),
+                    repo_label,
+                    _markdown_status(bool(row.get("private"))),
+                    _markdown_status(bool(row.get("artifact_ready"))),
+                    _markdown_status(bool(row.get("native_smoke_ready"))),
+                    _markdown_status(bool(row.get("release_eval_ready"))),
+                    _short_sha(row.get("sha")),
+                    missing_metrics,
+                ]
+            )
+            + " |"
+        )
+
+    blocking_rows = [
+        row
+        for row in payload.get("rows", [])
+        if row.get("native_smoke_ready") and not row.get("release_eval_ready")
+    ]
+    if blocking_rows:
+        lines.extend(["", "## Release Eval Gaps", ""])
+        for row in blocking_rows:
+            missing_label = _missing_metrics_label(row) or "release metrics missing"
+            lines.append(
+                f"- `{row.get('repo_id')}`: {missing_label}"
+            )
+
+    return "\n".join(lines) + "\n"
+
+
 def repair_hf_artifact_metadata(
     *,
     repo_id: str,

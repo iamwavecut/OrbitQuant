@@ -2038,6 +2038,7 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
 
     monkeypatch.setattr(cli_main, "audit_hf_artifact_repos", fake_audit_hf_artifacts)
     output_path = tmp_path / "reports" / "native" / "audit.json"
+    markdown_output_path = tmp_path / "reports" / "native" / "audit.md"
 
     assert (
         main(
@@ -2051,6 +2052,8 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
                 "main",
                 "--output",
                 str(output_path),
+                "--markdown-output",
+                str(markdown_output_path),
             ]
         )
         == 0
@@ -2058,9 +2061,12 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
 
     output = json.loads(capsys.readouterr().out)
     written = json.loads(output_path.read_text())
+    markdown = markdown_output_path.read_text()
     assert output_path.parent.is_dir()
     assert output == written
     assert output["repo_count"] == 1
+    assert "# OrbitQuant HF Artifact Audit" in markdown
+    assert "| `WaveCut/example` |" in markdown
     assert seen == {
         "namespace": "WaveCut",
         "suites": ["flux2-native"],

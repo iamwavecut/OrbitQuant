@@ -10,6 +10,7 @@ from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval.native_settings import NativeSuite
 from orbitquant.hub import (
     audit_hf_artifact_repos,
+    render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
     stage_compact_upload_artifact,
@@ -511,3 +512,60 @@ def test_audit_hf_artifact_repos_reports_missing_repo_without_downloading():
     assert result["existing_count"] == 0
     assert result["rows"][0]["exists"] is False
     assert "missing repo" in result["rows"][0]["error"]
+
+
+def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
+    payload = {
+        "namespace": "WaveCut",
+        "repo_count": 2,
+        "existing_count": 2,
+        "artifact_ready_count": 2,
+        "native_smoke_ready_count": 2,
+        "release_eval_ready_count": 1,
+        "missing_required_metric_count": 2,
+        "manifest_warning_count": 0,
+        "rows": [
+            {
+                "suite": "flux2-native",
+                "bit_setting": "W4A4",
+                "repo_id": "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4",
+                "private": True,
+                "artifact_ready": True,
+                "native_smoke_ready": True,
+                "release_eval_ready": True,
+                "sha": "abcdef1234567890",
+                "missing_required_metrics": [],
+            },
+            {
+                "suite": "flux1-schnell-native",
+                "bit_setting": "W4A4",
+                "repo_id": "WaveCut/FLUX.1-schnell-OrbitQuant-W4A4",
+                "private": True,
+                "artifact_ready": True,
+                "native_smoke_ready": True,
+                "release_eval_ready": False,
+                "sha": "123456abcdef7890",
+                "missing_required_metrics": [
+                    {"split": "original", "metric": "geneval_overall"},
+                    {"split": "orbitquant", "metric": "geneval_overall"},
+                ],
+            },
+        ],
+    }
+
+    markdown = render_hf_artifact_audit_markdown(payload)
+
+    assert "# OrbitQuant HF Artifact Audit" in markdown
+    assert "- Release eval ready: 1 / 2" in markdown
+    assert (
+        "| flux2-native | W4A4 | `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` | "
+        "yes | yes | yes | yes | abcdef123456 |  |"
+    ) in markdown
+    assert (
+        "| flux1-schnell-native | W4A4 | `WaveCut/FLUX.1-schnell-OrbitQuant-W4A4` | "
+        "yes | yes | yes | no | 123456abcdef | 2 missing |"
+    ) in markdown
+    assert (
+        "`WaveCut/FLUX.1-schnell-OrbitQuant-W4A4`: "
+        "orbitquant:geneval_overall, original:geneval_overall"
+    ) in markdown

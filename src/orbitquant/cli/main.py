@@ -51,6 +51,7 @@ from orbitquant.eval.report import generate_native_eval_report
 from orbitquant.hub import (
     audit_hf_artifact_repos,
     inspect_model_metadata,
+    render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
     upload_orbitquant_artifact,
@@ -498,6 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     audit_hf_parser.add_argument("--suite", action="append")
     audit_hf_parser.add_argument("--revision")
     audit_hf_parser.add_argument("--output")
+    audit_hf_parser.add_argument("--markdown-output")
 
     repair_hf_parser = subparsers.add_parser(
         "repair-hf-artifact-metadata",
@@ -922,6 +924,13 @@ def main(argv: list[str] | None = None) -> int:
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(rendered + "\n", encoding="utf-8")
+        if args.markdown_output is not None:
+            markdown_path = Path(args.markdown_output)
+            markdown_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path.write_text(
+                render_hf_artifact_audit_markdown(payload),
+                encoding="utf-8",
+            )
         print(rendered)
         return 0
     if args.command == "repair-hf-artifact-metadata":
