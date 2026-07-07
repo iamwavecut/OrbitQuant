@@ -169,6 +169,7 @@ def benchmark_orbit_linear(
             codebook=quantized.activation_codebook,
             eps=quantized.activation_eps,
             backend=quantized.activation_kernel_backend,
+            constant_tensors=quantized._activation_kernel_constant_tensors(target_device),
         )
 
     def weight_quantize_pack_hot() -> torch.Tensor:

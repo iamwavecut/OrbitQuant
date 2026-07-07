@@ -163,10 +163,17 @@ def _triton_cuda_quantize_activations(
     rotation: RPBHRotation,
     codebook: LloydMaxCodebook,
     eps: float,
+    constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
     from orbitquant.kernels.triton_cuda import quantize_activations_with_triton
 
-    return quantize_activations_with_triton(x, rotation=rotation, codebook=codebook, eps=eps)
+    return quantize_activations_with_triton(
+        x,
+        rotation=rotation,
+        codebook=codebook,
+        eps=eps,
+        constant_tensors=constant_tensors,
+    )
 
 
 def quantize_activations_kernel(
@@ -176,6 +183,7 @@ def quantize_activations_kernel(
     codebook: LloydMaxCodebook,
     eps: float,
     backend: str = "auto",
+    constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
     selected = select_backend(x.device, requested=backend)
     if selected == "cpu":
@@ -184,6 +192,10 @@ def quantize_activations_kernel(
         return _mps_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
     if selected == "triton_cuda":
         return _triton_cuda_quantize_activations(
-            x, rotation=rotation, codebook=codebook, eps=eps
+            x,
+            rotation=rotation,
+            codebook=codebook,
+            eps=eps,
+            constant_tensors=constant_tensors,
         )
     raise AssertionError(f"unhandled backend {selected}")

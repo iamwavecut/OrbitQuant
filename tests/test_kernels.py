@@ -137,8 +137,9 @@ def test_triton_cuda_dispatch_uses_backend_function_with_reference_equivalent_ou
     codebook = get_codebook(dim=16, bits=4)
     calls = []
 
-    def fake_triton_backend(input_tensor, *, rotation, codebook, eps):
+    def fake_triton_backend(input_tensor, *, rotation, codebook, eps, constant_tensors=None):
         calls.append(input_tensor.shape)
+        assert constant_tensors is None
         return quantize_activations(input_tensor, rotation=rotation, codebook=codebook, eps=eps)
 
     monkeypatch.setattr(dispatch_module, "_triton_cuda_quantize_activations", fake_triton_backend)

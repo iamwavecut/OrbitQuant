@@ -70,6 +70,26 @@ class OrbitQuantLinear(nn.Module):
         )
         self.weight_codebook = get_codebook(in_features, config.weight_bits)
         self.activation_codebook = get_codebook(in_features, config.activation_bits)
+        self.register_buffer(
+            "_rotation_permutation",
+            self.rotation.permutation.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_rotation_signs",
+            self.rotation.signs.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_activation_codebook_centroids",
+            self.activation_codebook.centroids.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_activation_codebook_boundaries",
+            self.activation_codebook.boundaries.detach().clone(),
+            persistent=False,
+        )
 
         if bias is None:
             self.register_parameter("bias", None)
@@ -184,6 +204,34 @@ class OrbitQuantLinear(nn.Module):
         self._dequantized_weight_cache = None
         self._dequantized_weight_cache_key = None
 
+    def _constant_buffer(
+        self,
+        name: str,
+        *,
+        device: torch.device,
+        dtype: torch.dtype | None = None,
+    ) -> torch.Tensor:
+        tensor = getattr(self, name)
+        target_dtype = tensor.dtype if dtype is None else dtype
+        if tensor.device != device or tensor.dtype != target_dtype:
+            tensor = tensor.to(device=device, dtype=target_dtype)
+            setattr(self, name, tensor)
+        return tensor
+
+    def _activation_kernel_constant_tensors(self, device: torch.device) -> dict[str, torch.Tensor]:
+        return {
+            "permutation": self._constant_buffer(
+                "_rotation_permutation", device=device, dtype=torch.int64
+            ),
+            "signs": self._constant_buffer("_rotation_signs", device=device, dtype=torch.int8),
+            "centroids": self._constant_buffer(
+                "_activation_codebook_centroids", device=device, dtype=torch.float32
+            ),
+            "boundaries": self._constant_buffer(
+                "_activation_codebook_boundaries", device=device, dtype=torch.float32
+            ),
+        }
+
     def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         cache_key = (str(device), dtype)
         if (
@@ -269,6 +317,7 @@ class OrbitQuantLinear(nn.Module):
                 codebook=self.activation_codebook,
                 eps=self.activation_eps,
                 backend=self.activation_kernel_backend,
+                constant_tensors=self._activation_kernel_constant_tensors(x.device),
             )
 
         weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)

@@ -503,6 +503,7 @@ def quantize_activations_with_triton(
     rotation: RPBHRotation,
     codebook: LloydMaxCodebook,
     eps: float,
+    constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
     if not x.is_cuda:
         raise RuntimeError("triton_cuda activation quantization requires CUDA tensors")
@@ -521,10 +522,15 @@ def quantize_activations_with_triton(
 
     norms = torch.empty(rows, device=x.device, dtype=torch.float32)
     work = torch.empty(total, device=x.device, dtype=torch.float32)
-    permutation = rotation.permutation.to(device=x.device, dtype=torch.int64).contiguous()
-    signs = rotation.signs.to(device=x.device, dtype=torch.int8).contiguous()
-    centroids = codebook.centroids.to(device=x.device, dtype=torch.float32).contiguous()
-    boundaries = codebook.boundaries.to(device=x.device, dtype=torch.float32).contiguous()
+    constants = {} if constant_tensors is None else constant_tensors
+    permutation_source = constants.get("permutation", rotation.permutation)
+    signs_source = constants.get("signs", rotation.signs)
+    centroids_source = constants.get("centroids", codebook.centroids)
+    boundaries_source = constants.get("boundaries", codebook.boundaries)
+    permutation = permutation_source.to(device=x.device, dtype=torch.int64).contiguous()
+    signs = signs_source.to(device=x.device, dtype=torch.int8).contiguous()
+    centroids = centroids_source.to(device=x.device, dtype=torch.float32).contiguous()
+    boundaries = boundaries_source.to(device=x.device, dtype=torch.float32).contiguous()
 
     norm_block_size = triton.next_power_of_2(dim)
     _row_norm_kernel[(rows,)](

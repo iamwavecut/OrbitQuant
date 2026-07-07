@@ -42,6 +42,8 @@ def test_orbit_linear_quantized_forward_is_finite_and_shape_preserving():
     assert actual.shape == (2, 5, 7)
     assert torch.isfinite(actual).all()
     assert not any(parameter.requires_grad for parameter in quantized.parameters())
+    assert "_rotation_permutation" not in quantized.state_dict()
+    assert "_activation_codebook_centroids" not in quantized.state_dict()
 
 
 def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):
@@ -68,6 +70,42 @@ def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):
     quantized(x)
 
     assert seen_backends == ["cpu"]
+
+
+def test_orbit_linear_reuses_cuda_activation_constant_buffers(monkeypatch):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    torch.manual_seed(2)
+    source = torch.nn.Linear(16, 7, device="cuda", dtype=torch.float32)
+    x = torch.randn(2, 5, 16, device="cuda")
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        activation_kernel_backend="triton_cuda",
+    )
+    quantized = OrbitQuantLinear.from_linear(
+        source, config=config, module_name="block.ff.linear"
+    )
+    seen_constant_ids = []
+
+    def fake_kernel(input_tensor, *, constant_tensors, **kwargs):
+        assert input_tensor.is_cuda
+        assert set(constant_tensors) == {"permutation", "signs", "centroids", "boundaries"}
+        assert all(tensor.is_cuda for tensor in constant_tensors.values())
+        seen_constant_ids.append(
+            {name: id(tensor) for name, tensor in constant_tensors.items()}
+        )
+        return torch.zeros_like(input_tensor)
+
+    monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_kernel)
+
+    quantized(x)
+    quantized(x)
+
+    assert seen_constant_ids[0] == seen_constant_ids[1]
 
 
 def test_orbit_linear_caches_dequantized_weight(monkeypatch):
