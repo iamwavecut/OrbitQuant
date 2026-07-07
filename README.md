@@ -115,7 +115,11 @@ bash run-native.sh
 
 `native-script` emits a preflight block (`hf auth whoami`, `hf env`, CUDA,
 package-version, disk, and `hf models info` access checks) before quantizing and
-running native `generate-pack` jobs. The generated matrix uses the native
+running native `generate-pack` jobs. It also emits a kernel preflight block with
+`orbitquant kernel-info` and short `orbitquant kernel-bench` runs for the unique
+bit settings in the matrix. This makes first-use CUDA/Triton compilation
+visible before the long quantization jobs and keeps JIT CPU time separate from
+hot kernel timings. The generated matrix uses the native
 settings in this repository: FLUX/Z-Image at 1024x1024 and Wan at 832x480,
 81 frames, 50 steps, CFG 5.0. It does not create range smoke jobs. With
 `--resume`, the script skips quantization for existing valid artifacts and adds
@@ -285,6 +289,12 @@ orbitquant kernel-bench \
 `kernel-info` reports whether `mps` is using `metal_codebook_rescale` or the
 `torch_reference_mps` fallback on the current machine. It reports `triton_cuda`
 as partial optimization because matmul is still the BF16 PyTorch linear path.
+`kernel-bench` reports both `weight_quantize_pack_cold_ms` and
+`weight_quantize_pack_hot_ms`: cold includes first-use backend compilation, while
+hot measures the already compiled quantize+pack path. On Triton/CUDA, cold JIT
+compilation can be CPU-heavy and may show little GPU activity in provider UIs;
+the hot timing and `quantization_buffers` devices are the checks that the real
+weight-index and low-bit packing work stays on CUDA.
 The `weight_dequant_optimized` field records whether packed weight
 dequantization avoids the CPU unpack path for that backend. The
 `weight_pack_optimized` field records whether artifact creation can pack low-bit

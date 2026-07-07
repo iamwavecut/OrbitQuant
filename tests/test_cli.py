@@ -132,7 +132,10 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
     assert payload["device"] == "cpu"
     assert payload["full_fusion"] is False
     assert payload["prewarm"]["total_modules"] == 1
+    assert payload["timings_ms"]["weight_quantize_pack_cold_ms"] >= 0.0
+    assert payload["timings_ms"]["weight_quantize_pack_hot_ms"] >= 0.0
     assert payload["timings_ms"]["forward_prewarmed_ms"] >= 0.0
+    assert payload["quantization_buffers"]["packed_weight_indices_device"] == "cpu"
 
 
 def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys, tmp_path):
@@ -273,6 +276,9 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "torch.cuda.is_available()" in script
     assert "shutil.disk_usage" in script
     assert "hf models info Wan-AI/Wan2.1-T2V-1.3B-Diffusers --format json >/dev/null" in script
+    assert "orbitquant kernel-info" in script
+    assert script.count("orbitquant kernel-bench") == 2
+    assert "--tokens 256 --in-features 3072 --out-features 3072" in script
     assert script.count("orbitquant quantize") == 2
     assert "--suite wan-native" in script
     assert "--weight-bits 4 --activation-bits 6" in script

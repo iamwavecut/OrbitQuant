@@ -95,6 +95,54 @@ def _preflight_lines(suites: list[NativeSuite]) -> list[str]:
     return lines
 
 
+def _kernel_preflight_lines(
+    suites: list[NativeSuite],
+    *,
+    device: str,
+    dtype: str,
+    activation_kernel_backend: str,
+) -> list[str]:
+    lines = [
+        "# Kernel preflight",
+        "orbitquant kernel-info",
+    ]
+    unique_bit_settings = sorted(
+        {bit_setting for suite in suites for bit_setting in suite.bit_settings}
+    )
+    for bit_setting in unique_bit_settings:
+        weight_bits, activation_bits = _bits(bit_setting)
+        lines.append(
+            _cmd(
+                [
+                    "orbitquant",
+                    "kernel-bench",
+                    "--tokens",
+                    "256",
+                    "--in-features",
+                    "3072",
+                    "--out-features",
+                    "3072",
+                    "--weight-bits",
+                    weight_bits,
+                    "--activation-bits",
+                    activation_bits,
+                    "--activation-kernel-backend",
+                    activation_kernel_backend,
+                    "--device",
+                    device,
+                    "--dtype",
+                    dtype,
+                    "--warmup",
+                    "1",
+                    "--iterations",
+                    "3",
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
 def build_native_run_script(
     *,
     suites: list[NativeSuite] | None = None,
@@ -116,6 +164,14 @@ def build_native_run_script(
         "",
     ]
     lines.extend(_preflight_lines(selected_suites))
+    lines.extend(
+        _kernel_preflight_lines(
+            selected_suites,
+            device=device,
+            dtype=dtype,
+            activation_kernel_backend=activation_kernel_backend,
+        )
+    )
     artifact_dirs = []
     for suite in selected_suites:
         for bit_setting in suite.bit_settings:
