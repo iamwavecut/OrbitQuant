@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from orbitquant.artifacts.manifest import OrbitQuantManifest
+from orbitquant.eval.native_settings import NativeSuite, list_native_suites
 
 
 def _comparison_assets(checksums: dict[str, str]) -> list[str]:
@@ -25,6 +26,13 @@ def _comparison_assets(checksums: dict[str, str]) -> list[str]:
 
 def _artifact_slug(model_id: str, bits: str) -> str:
     return f"{model_id.rsplit('/', maxsplit=1)[-1]}-OrbitQuant-{bits}"
+
+
+def _native_suite_for_source_model(source_model_id: str) -> NativeSuite | None:
+    for suite in list_native_suites():
+        if suite.model_id == source_model_id:
+            return suite
+    return None
 
 
 def _install_snippet() -> str:
@@ -219,44 +227,36 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
 
 
 def _native_settings_section(source_model_id: str) -> list[str]:
-    rows = {
-        "black-forest-labs/FLUX.2-klein-4B": [
-            ("Pipeline", "`Flux2KleinPipeline`"),
-            ("Resolution", "`1024x1024`"),
-            ("Inference steps", "`4`"),
-            ("Guidance scale", "`1.0`"),
-            ("Output", "image"),
-            ("Scope", "extra target; not an OrbitQuant paper reproduction model"),
-        ],
-        "black-forest-labs/FLUX.1-schnell": [
-            ("Pipeline", "`FluxPipeline`"),
-            ("Resolution", "`1024x1024`"),
-            ("Inference steps", "`4`"),
-            ("Guidance scale", "`0.0`"),
-            ("Output", "image"),
-            ("Scope", "paper image target"),
-        ],
-        "Tongyi-MAI/Z-Image-Turbo": [
-            ("Pipeline", "`ZImagePipeline`"),
-            ("Resolution", "`1024x1024`"),
-            ("Inference steps", "`10`"),
-            ("Guidance scale", "`0.0`"),
-            ("Output", "image"),
-            ("Scope", "paper image target"),
-        ],
-        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": [
-            ("Pipeline", "`WanPipeline`"),
-            ("Resolution", "`832x480`"),
-            ("Frames", "`81`"),
-            ("Inference steps", "`50`"),
-            ("Guidance scale", "`5.0`"),
-            ("Export FPS", "`16`"),
-            ("Output", "video"),
-            ("Scope", "paper video target"),
-        ],
-    }.get(source_model_id)
-    if rows is None:
+    suite = _native_suite_for_source_model(source_model_id)
+    if suite is None:
         return []
+    output = "video" if suite.frames is not None else "image"
+    if suite.note.startswith("Extra target"):
+        scope = (suite.note[:1].lower() + suite.note[1:]).rstrip(".")
+    elif suite.metric == "vbench":
+        scope = "paper video target"
+    else:
+        scope = "paper image target"
+    rows = [
+        ("Pipeline", f"`{suite.pipeline}`"),
+        ("Resolution", f"`{suite.width}x{suite.height}`"),
+    ]
+    if suite.frames is not None:
+        rows.append(("Frames", f"`{suite.frames}`"))
+    rows.extend(
+        [
+            ("Inference steps", f"`{suite.steps}`"),
+            ("Guidance scale", f"`{suite.guidance}`"),
+        ]
+    )
+    if suite.export_fps is not None:
+        rows.append(("Export FPS", f"`{suite.export_fps}`"))
+    rows.extend(
+        [
+            ("Output", output),
+            ("Scope", scope),
+        ]
+    )
 
     lines = [
         "## Native Settings",

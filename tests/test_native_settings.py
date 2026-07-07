@@ -43,6 +43,7 @@ def test_wan_native_suite_uses_paper_video_settings():
     assert suite.width == 832
     assert suite.height == 480
     assert suite.frames == 81
+    assert suite.export_fps == 16
     assert suite.steps == 50
     assert suite.guidance == 5.0
     assert suite.bit_settings == ["W4A6", "W4A4"]

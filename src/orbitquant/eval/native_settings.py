@@ -14,6 +14,7 @@ class NativeSuite:
     guidance: float
     bit_settings: list[str]
     frames: int | None = None
+    export_fps: int | None = None
     metric: str | None = None
     note: str = ""
     transformer_class: str | None = None
@@ -66,6 +67,7 @@ _SUITES = {
         width=832,
         height=480,
         frames=81,
+        export_fps=16,
         steps=50,
         guidance=5.0,
         bit_settings=["W4A6", "W4A4"],
