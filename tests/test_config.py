@@ -1,3 +1,5 @@
+import json
+
 from orbitquant.config import OrbitQuantConfig
 
 
@@ -18,6 +20,19 @@ def test_orbit_quant_config_round_trips_to_dict():
     assert restored.activation_kernel_backend == "cpu"
     assert restored.modules_to_not_convert == ["text_encoder"]
     assert restored.quant_method == "orbitquant"
+
+
+def test_orbit_quant_config_supports_hf_json_helpers():
+    config = OrbitQuantConfig(weight_bits=3, activation_bits=3, block_size=8)
+
+    payload = json.loads(config.to_json_string())
+    restored = OrbitQuantConfig.from_dict(payload)
+
+    assert payload["quant_method"] == "orbitquant"
+    assert payload["weight_bits"] == 3
+    assert payload["activation_bits"] == 3
+    assert restored.weight_bits == 3
+    assert restored.activation_bits == 3
 
 
 def test_orbit_quant_config_accepts_triton_packed_matmul_runtime_mode():

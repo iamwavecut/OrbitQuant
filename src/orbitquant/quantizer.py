@@ -177,6 +177,18 @@ class OrbitQuantizer(*_hf_base_classes()):
     def is_serializable(self, *args: Any, **kwargs: Any) -> bool:
         return True
 
+    def validate_environment(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def update_torch_dtype(self, torch_dtype: torch.dtype | None) -> torch.dtype | None:
+        return torch_dtype
+
+    def adjust_target_dtype(self, torch_dtype: torch.dtype | None) -> torch.dtype | None:
+        return torch_dtype
+
+    def update_device_map(self, device_map: Any | None) -> Any | None:
+        return device_map
+
     def _param_action(self, model: Any, param_name: str) -> str | None:
         if not param_name.endswith(".weight"):
             return None

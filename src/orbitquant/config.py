@@ -111,6 +111,9 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_diff_dict(self) -> dict[str, Any]:
+        return self.to_dict()
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> OrbitQuantConfig:
         values = dict(data)
