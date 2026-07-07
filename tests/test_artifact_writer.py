@@ -9,6 +9,7 @@ from orbitquant.artifacts import (
     load_orbitquant_artifact,
     record_artifact_asset,
     record_artifact_metrics,
+    refresh_artifact_checksums,
     repair_artifact_metadata,
     save_orbitquant_artifact,
     sha256_file,
@@ -526,6 +527,70 @@ def test_record_artifact_metrics_can_skip_heavy_checksum_preflight(tmp_path):
         assert "checksum mismatch for model.safetensors" in str(exc)
     else:
         raise AssertionError("strict artifact validation accepted a stale model checksum")
+
+
+def test_deferred_artifact_refresh_rebuilds_manifest_and_sha256sums_once(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    asset_path = tmp_path / "assets" / "flux2-native_seed7_W4A4_simple-object.png"
+    asset_path.write_bytes(b"fake image bytes")
+
+    relative_asset = record_artifact_asset(
+        tmp_path,
+        asset_path,
+        validate_checksums_enabled=False,
+        refresh_checksums_enabled=False,
+    )
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={"generated_samples": 1},
+        metadata={
+            "suite": "flux2-native",
+            "seed": 7,
+            "bit_setting": "W4A4",
+            "prompt_record": {"id": "simple-object"},
+            "output_path": str(asset_path),
+        },
+        validate_checksums_enabled=False,
+        refresh_checksums_enabled=False,
+    )
+
+    stale_manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    stale_sha = read_sha256sums(tmp_path / "SHA256SUMS")
+    assert relative_asset == "assets/flux2-native_seed7_W4A4_simple-object.png"
+    assert relative_asset not in stale_manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.jsonl" in stale_manifest["checksums"]
+    assert stale_sha["benchmark/orbitquant.metrics.jsonl"] != sha256_file(
+        tmp_path / "benchmark" / "orbitquant.metrics.jsonl"
+    )
+
+    result = refresh_artifact_checksums(tmp_path)
+
+    validation = validate_orbitquant_artifact(tmp_path)
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    sha_entries = read_sha256sums(tmp_path / "SHA256SUMS")
+    assert result["checksum_count"] == len(manifest["checksums"])
+    assert validation["valid"] is True
+    assert manifest["checksums"][relative_asset] == sha256_file(asset_path)
+    assert manifest["checksums"]["benchmark/orbitquant.metrics.jsonl"] == sha256_file(
+        tmp_path / "benchmark" / "orbitquant.metrics.jsonl"
+    )
+    assert sha_entries[relative_asset] == manifest["checksums"][relative_asset]
+    assert sha_entries["orbitquant_manifest.json"] == sha256_file(
+        tmp_path / "orbitquant_manifest.json"
+    )
+    assert sha_entries["README.md"] == sha256_file(tmp_path / "README.md")
 
 
 def test_record_artifact_asset_adds_asset_to_manifest_and_validation(tmp_path):

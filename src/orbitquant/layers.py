@@ -15,6 +15,20 @@ def _packed_length(value_count: int, bits: int) -> int:
     return (value_count * bits + 7) // 8
 
 
+def _first_available_device(*tensors: torch.Tensor | None) -> torch.device | None:
+    for tensor in tensors:
+        if tensor is not None and tensor.device.type != "meta":
+            return tensor.device
+    return None
+
+
+def _clone_constant(tensor: torch.Tensor, *, device: torch.device | None) -> torch.Tensor:
+    constant = tensor.detach().clone()
+    if device is not None:
+        constant = constant.to(device=device)
+    return constant
+
+
 def _quantize_weight_indices(
     weight: torch.Tensor,
     row_norms: torch.Tensor,
@@ -98,24 +112,30 @@ class OrbitQuantLinear(nn.Module):
         )
         self.weight_codebook = get_codebook(in_features, config.weight_bits)
         self.activation_codebook = get_codebook(in_features, config.activation_bits)
+        constant_device = _first_available_device(
+            packed_weight_indices,
+            row_norms,
+            debug_weight,
+            bias,
+        )
         self.register_buffer(
             "_rotation_permutation",
-            self.rotation.permutation.detach().clone(),
+            _clone_constant(self.rotation.permutation, device=constant_device),
             persistent=False,
         )
         self.register_buffer(
             "_rotation_signs",
-            self.rotation.signs.detach().clone(),
+            _clone_constant(self.rotation.signs, device=constant_device),
             persistent=False,
         )
         self.register_buffer(
             "_activation_codebook_centroids",
-            self.activation_codebook.centroids.detach().clone(),
+            _clone_constant(self.activation_codebook.centroids, device=constant_device),
             persistent=False,
         )
         self.register_buffer(
             "_activation_codebook_boundaries",
-            self.activation_codebook.boundaries.detach().clone(),
+            _clone_constant(self.activation_codebook.boundaries, device=constant_device),
             persistent=False,
         )
 

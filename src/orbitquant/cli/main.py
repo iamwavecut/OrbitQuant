@@ -13,6 +13,7 @@ from orbitquant.artifacts import (
     create_artifact_image_comparisons,
     record_artifact_asset,
     record_artifact_metrics,
+    refresh_artifact_checksums,
     repair_artifact_metadata,
     save_orbitquant_artifact,
     validate_orbitquant_artifact,
@@ -195,18 +196,21 @@ def _record_generated_artifact(
     seed: int,
     bit_setting: str | None,
     validate_checksums_enabled: bool = True,
+    refresh_checksums_enabled: bool = True,
 ) -> tuple[dict[str, Any], list[str]]:
     if _path_is_relative_to(result.output_path, artifact_path):
         record_artifact_asset(
             artifact_path,
             result.output_path,
             validate_checksums_enabled=validate_checksums_enabled,
+            refresh_checksums_enabled=refresh_checksums_enabled,
         )
     if _path_is_relative_to(result.metadata_path, artifact_path):
         record_artifact_asset(
             artifact_path,
             result.metadata_path,
             validate_checksums_enabled=validate_checksums_enabled,
+            refresh_checksums_enabled=refresh_checksums_enabled,
         )
     for asset_path in result.asset_paths:
         if _path_is_relative_to(asset_path, artifact_path):
@@ -214,6 +218,7 @@ def _record_generated_artifact(
                 artifact_path,
                 asset_path,
                 validate_checksums_enabled=validate_checksums_enabled,
+                refresh_checksums_enabled=refresh_checksums_enabled,
             )
     metrics = {
         "generated_samples": 1,
@@ -247,10 +252,12 @@ def _record_generated_artifact(
             "scheduler": result.metadata["scheduler"],
         },
         validate_checksums_enabled=validate_checksums_enabled,
+        refresh_checksums_enabled=refresh_checksums_enabled,
     )
     return metrics_record, create_artifact_image_comparisons(
         artifact_path,
         validate_checksums_enabled=validate_checksums_enabled,
+        refresh_checksums_enabled=refresh_checksums_enabled,
     )
 
 
@@ -1049,6 +1056,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if not pending_jobs:
+            checksum_refresh = None
+            if args.skip_artifact_checksums:
+                checksum_refresh = refresh_artifact_checksums(artifact_path)
             print(
                 json.dumps(
                     {
@@ -1058,6 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
                         "run_count": 0,
                         "skipped_count": len(skipped_outputs),
                         "skipped_outputs": skipped_outputs,
+                        "checksum_refresh": checksum_refresh,
                         "outputs": [],
                     }
                 )
@@ -1124,6 +1135,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=seed,
                 bit_setting=bit_setting,
                 validate_checksums_enabled=not args.skip_artifact_checksums,
+                refresh_checksums_enabled=not args.skip_artifact_checksums,
             )
             outputs.append(
                 {
@@ -1135,6 +1147,9 @@ def main(argv: list[str] | None = None) -> int:
                     "seed": seed,
                 }
             )
+        checksum_refresh = None
+        if args.skip_artifact_checksums:
+            checksum_refresh = refresh_artifact_checksums(artifact_path)
         print(
             json.dumps(
                 {
@@ -1144,6 +1159,7 @@ def main(argv: list[str] | None = None) -> int:
                     "run_count": len(outputs),
                     "skipped_count": len(skipped_outputs),
                     "skipped_outputs": skipped_outputs,
+                    "checksum_refresh": checksum_refresh,
                     "outputs": outputs,
                 }
             )

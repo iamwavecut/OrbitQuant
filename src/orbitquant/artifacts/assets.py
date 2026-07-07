@@ -33,6 +33,7 @@ def record_artifact_asset(
     asset_path: str | Path,
     *,
     validate_checksums_enabled: bool = True,
+    refresh_checksums_enabled: bool = True,
 ) -> str:
     artifact_path = Path(artifact_dir)
     asset = Path(asset_path)
@@ -45,6 +46,8 @@ def record_artifact_asset(
         validate_checksums(artifact_path, manifest.checksums)
 
     relative_path = _relative_asset_path(artifact_path, asset)
+    if not refresh_checksums_enabled:
+        return relative_path
     checksums = dict(manifest.checksums)
     checksums[relative_path] = sha256_file(asset)
     payload = manifest.to_dict()

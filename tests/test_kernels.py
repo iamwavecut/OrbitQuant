@@ -551,3 +551,7 @@ def test_cuda_quantize_linear_modules_keeps_packed_buffers_on_gpu_until_serializ
     assert quantized.row_norms is not None
     assert quantized.packed_weight_indices.is_cuda
     assert quantized.row_norms.is_cuda
+    assert quantized._rotation_permutation.is_cuda
+    assert quantized._rotation_signs.is_cuda
+    assert quantized._activation_codebook_centroids.is_cuda
+    assert quantized._activation_codebook_boundaries.is_cuda

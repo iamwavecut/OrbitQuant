@@ -76,6 +76,7 @@ def record_artifact_metrics(
     metrics: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     validate_checksums_enabled: bool = True,
+    refresh_checksums_enabled: bool = True,
 ) -> dict[str, Any]:
     normalized_split = split.lower()
     if normalized_split not in _VALID_METRIC_SPLITS:
@@ -120,6 +121,8 @@ def record_artifact_metrics(
         f"benchmark/{normalized_split}.metrics.jsonl",
         f"benchmark/{normalized_split}.metrics.csv",
     )
+    if not refresh_checksums_enabled:
+        return record
     checksums = _write_manifest_with_refreshed_checksums(
         artifact_path, manifest, changed_paths
     )

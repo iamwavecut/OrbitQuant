@@ -87,6 +87,7 @@ def create_artifact_image_comparisons(
     artifact_dir: str | Path,
     *,
     validate_checksums_enabled: bool = True,
+    refresh_checksums_enabled: bool = True,
 ) -> list[str]:
     from orbitquant.eval.assets import create_image_comparison_sheet
 
@@ -125,6 +126,7 @@ def create_artifact_image_comparisons(
                 artifact_path,
                 output_path,
                 validate_checksums_enabled=validate_checksums_enabled,
+                refresh_checksums_enabled=refresh_checksums_enabled,
             )
         )
     return created

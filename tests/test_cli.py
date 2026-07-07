@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 
 import orbitquant.cli.main as cli_main
-from orbitquant.artifacts import save_orbitquant_artifact
+from orbitquant.artifacts import save_orbitquant_artifact, validate_orbitquant_artifact
 from orbitquant.cli.main import main
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.modeling import quantize_linear_modules
@@ -1227,6 +1227,93 @@ def test_cli_generate_pack_runs_jobs_once_per_prompt_seed_and_records_artifacts(
     assert "assets/flux2-native_seed3_W4A4_counting.png" in manifest["checksums"]
     assert len(metrics_rows) == 2
     assert json.loads(metrics_rows[0])["metadata"]["prompt_record"]["id"] == "simple-object"
+
+
+def test_cli_generate_pack_skip_checksums_refreshes_artifact_once_at_end(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+            self.calls = []
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "green")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    restored = TinyPipeline()
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            return restored
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-id",
+                "simple-object",
+                "--seeds",
+                "3",
+                "--resume-existing",
+                "--skip-artifact-checksums",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    validation = validate_orbitquant_artifact(tmp_path)
+    image_path = "assets/flux2-native_seed3_W4A4_simple-object.png"
+    metadata_path = "assets/flux2-native_seed3_W4A4_simple-object.png.json"
+    assert output["job_count"] == 1
+    assert output["run_count"] == 1
+    assert output["checksum_refresh"]["checksum_count"] == len(manifest["checksums"])
+    assert validation["valid"] is True
+    assert image_path in manifest["checksums"]
+    assert metadata_path in manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
 
 
 def test_cli_generate_pack_resume_existing_skips_completed_outputs(
