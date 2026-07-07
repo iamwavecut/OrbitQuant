@@ -197,6 +197,7 @@ def _record_generated_artifact(
     bit_setting: str | None,
     validate_checksums_enabled: bool = True,
     refresh_checksums_enabled: bool = True,
+    create_comparisons_enabled: bool = True,
 ) -> tuple[dict[str, Any], list[str]]:
     if _path_is_relative_to(result.output_path, artifact_path):
         record_artifact_asset(
@@ -254,11 +255,14 @@ def _record_generated_artifact(
         validate_checksums_enabled=validate_checksums_enabled,
         refresh_checksums_enabled=refresh_checksums_enabled,
     )
-    return metrics_record, create_artifact_image_comparisons(
-        artifact_path,
-        validate_checksums_enabled=validate_checksums_enabled,
-        refresh_checksums_enabled=refresh_checksums_enabled,
-    )
+    comparisons: list[str] = []
+    if create_comparisons_enabled:
+        comparisons = create_artifact_image_comparisons(
+            artifact_path,
+            validate_checksums_enabled=validate_checksums_enabled,
+            refresh_checksums_enabled=refresh_checksums_enabled,
+        )
+    return metrics_record, comparisons
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -570,6 +574,15 @@ def main(argv: list[str] | None = None) -> int:
     generate_pack_parser.add_argument(
         "--prompt-metadata-jsonl",
         help="GenEval evaluation_metadata.jsonl file to use instead of artifact prompts",
+    )
+    generate_pack_parser.add_argument(
+        "--comparison-mode",
+        default="auto",
+        choices=["auto", "always", "never"],
+        help=(
+            "comparison sheet behavior for generate-pack; auto creates sheets once "
+            "for artifact/visual packs and skips GenEval metadata packs"
+        ),
     )
     generate_pack_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
     generate_pack_parser.add_argument("--device", default="cuda")
@@ -989,6 +1002,9 @@ def main(argv: list[str] | None = None) -> int:
         bit_setting = artifact_bit_setting if args.split == "orbitquant" else "original"
         quantization_config = artifact_config if args.split == "orbitquant" else None
         output_dir = artifact_path / "assets" if args.output is None else Path(args.output)
+        create_pack_comparisons = args.comparison_mode == "always" or (
+            args.comparison_mode == "auto" and args.prompt_metadata_jsonl is None
+        )
         prompt_payload = _load_generate_pack_prompt_payload(
             artifact_path=artifact_path,
             suite=suite,
@@ -1056,6 +1072,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if not pending_jobs:
+            artifact_comparisons: list[str] = []
+            if create_pack_comparisons:
+                artifact_comparisons = create_artifact_image_comparisons(
+                    artifact_path,
+                    validate_checksums_enabled=not args.skip_artifact_checksums,
+                    refresh_checksums_enabled=not args.skip_artifact_checksums,
+                )
             checksum_refresh = None
             if args.skip_artifact_checksums:
                 checksum_refresh = refresh_artifact_checksums(artifact_path)
@@ -1068,6 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
                         "run_count": 0,
                         "skipped_count": len(skipped_outputs),
                         "skipped_outputs": skipped_outputs,
+                        "artifact_comparisons": artifact_comparisons,
                         "checksum_refresh": checksum_refresh,
                         "outputs": [],
                     }
@@ -1136,6 +1160,7 @@ def main(argv: list[str] | None = None) -> int:
                 bit_setting=bit_setting,
                 validate_checksums_enabled=not args.skip_artifact_checksums,
                 refresh_checksums_enabled=not args.skip_artifact_checksums,
+                create_comparisons_enabled=False,
             )
             outputs.append(
                 {
@@ -1146,6 +1171,13 @@ def main(argv: list[str] | None = None) -> int:
                     "prompt_record": prompt_record,
                     "seed": seed,
                 }
+            )
+        artifact_comparisons: list[str] = []
+        if create_pack_comparisons:
+            artifact_comparisons = create_artifact_image_comparisons(
+                artifact_path,
+                validate_checksums_enabled=not args.skip_artifact_checksums,
+                refresh_checksums_enabled=not args.skip_artifact_checksums,
             )
         checksum_refresh = None
         if args.skip_artifact_checksums:
@@ -1159,6 +1191,7 @@ def main(argv: list[str] | None = None) -> int:
                     "run_count": len(outputs),
                     "skipped_count": len(skipped_outputs),
                     "skipped_outputs": skipped_outputs,
+                    "artifact_comparisons": artifact_comparisons,
                     "checksum_refresh": checksum_refresh,
                     "outputs": outputs,
                 }

@@ -1314,6 +1314,183 @@ def test_cli_generate_pack_skip_checksums_refreshes_artifact_once_at_end(
     assert image_path in manifest["checksums"]
     assert metadata_path in manifest["checksums"]
     assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
+    assert output["artifact_comparisons"] == []
+    assert output["outputs"][0]["comparisons"] == []
+
+
+def test_cli_generate_pack_defers_comparison_creation_until_after_jobs(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "green")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            return TinyPipeline()
+
+    comparison_calls = []
+
+    def fake_create_comparisons(artifact_dir, **kwargs):
+        comparison_calls.append({"artifact_dir": artifact_dir, "kwargs": kwargs})
+        return ["assets/fake-comparison.webp"]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+    monkeypatch.setattr(cli_main, "create_artifact_image_comparisons", fake_create_comparisons)
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-id",
+                "simple-object",
+                "--prompt-id",
+                "counting",
+                "--seeds",
+                "3",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert len(comparison_calls) == 1
+    assert output["run_count"] == 2
+    assert output["artifact_comparisons"] == ["assets/fake-comparison.webp"]
+    assert [item["comparisons"] for item in output["outputs"]] == [[], []]
+
+
+def test_cli_generate_pack_prompt_metadata_disables_comparisons_by_default(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "green")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    metadata_jsonl = tmp_path / "evaluation_metadata.jsonl"
+    metadata_jsonl.write_text(
+        json.dumps(
+            {
+                "tag": "single_object",
+                "include": [{"class": "bench", "count": 1}],
+                "prompt": "a photo of a bench",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            return TinyPipeline()
+
+    def fail_create_comparisons(*args, **kwargs):
+        raise AssertionError("GenEval metadata packs must not create comparison sheets by default")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+    monkeypatch.setattr(cli_main, "create_artifact_image_comparisons", fail_create_comparisons)
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-metadata-jsonl",
+                str(metadata_jsonl),
+                "--seeds",
+                "3",
+                "--skip-artifact-checksums",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["run_count"] == 1
+    assert output["artifact_comparisons"] == []
+    assert output["outputs"][0]["comparisons"] == []
 
 
 def test_cli_generate_pack_resume_existing_skips_completed_outputs(
