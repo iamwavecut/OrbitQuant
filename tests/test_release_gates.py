@@ -31,6 +31,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "ComfyUI compatibility is verified after the relevant schema stabilizes" in release_gates
     assert "artifact-focused\n  model cards" in release_gates
     assert "native\n  comparison assets" in release_gates
+    assert "`metadata_complete_ready`" in release_gates
+    assert (
+        "quantization device, weight quantization backend, and\n  staging mode provenance"
+        in release_gates
+    )
     assert "not host logs, raw eval dumps, or terminal transcripts" in release_gates
     assert "The GitHub repository is public" in release_gates
     assert "python -m build" in release_gates

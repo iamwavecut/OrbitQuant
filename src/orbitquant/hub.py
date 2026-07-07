@@ -301,6 +301,52 @@ def _manifest_warnings(manifest: dict[str, Any]) -> list[str]:
     return warnings
 
 
+_METADATA_COMPLETENESS_FIELDS = (
+    "quantization_device",
+    "weight_quantization_backend",
+    "quantization_staging_mode",
+)
+
+
+def _metadata_completeness_missing(
+    manifest: dict[str, Any],
+    *,
+    model_index: dict[str, Any],
+    benchmark_summary: dict[str, Any],
+) -> list[str]:
+    missing = []
+    documents = {
+        "manifest": manifest,
+        "model_index": model_index,
+        "benchmark_summary": benchmark_summary,
+    }
+    for document, payload in documents.items():
+        if not payload:
+            missing.append(f"{document}_missing")
+            continue
+        for field in _METADATA_COMPLETENESS_FIELDS:
+            if payload.get(field) in (None, "", "unknown"):
+                missing.append(f"{document}.{field}_missing")
+
+    if manifest:
+        for field in _METADATA_COMPLETENESS_FIELDS:
+            expected = manifest.get(field)
+            if expected in (None, "", "unknown"):
+                continue
+            for document, payload in (
+                ("model_index", model_index),
+                ("benchmark_summary", benchmark_summary),
+            ):
+                actual = payload.get(field) if payload else None
+                if actual in (None, "", "unknown"):
+                    continue
+                if actual != expected:
+                    missing.append(
+                        f"{document}.{field}_mismatch: expected {expected!r}, got {actual!r}"
+                    )
+    return missing
+
+
 def _manifest_mismatches(
     manifest: dict[str, Any],
     *,
@@ -965,6 +1011,15 @@ def audit_hf_artifact_repos(
                     )
                 except Exception as exc:
                     manifest_error = f"{type(exc).__name__}: {str(exc)}"
+            model_index = {}
+            model_index_error = None
+            if "model_index.json" in file_names:
+                try:
+                    model_index = _read_remote_json(
+                        repo_id, "model_index.json", revision=revision
+                    )
+                except Exception as exc:
+                    model_index_error = f"{type(exc).__name__}: {str(exc)}"
             sha256sums_entries: dict[str, str] = {}
             sha256sums_error = None
             if "SHA256SUMS" in file_names:
@@ -975,10 +1030,14 @@ def audit_hf_artifact_repos(
                 except Exception as exc:
                     sha256sums_error = f"{type(exc).__name__}: {str(exc)}"
             benchmark_summary = {}
+            benchmark_summary_error = None
             if "benchmark/summary.json" in file_names:
-                benchmark_summary = _read_remote_json(
-                    repo_id, "benchmark/summary.json", revision=revision
-                )
+                try:
+                    benchmark_summary = _read_remote_json(
+                        repo_id, "benchmark/summary.json", revision=revision
+                    )
+                except Exception as exc:
+                    benchmark_summary_error = f"{type(exc).__name__}: {str(exc)}"
             metrics = _metrics_by_split(
                 repo_id,
                 file_names,
@@ -990,6 +1049,11 @@ def audit_hf_artifact_repos(
                 manifest,
                 suite=suite,
                 bit_setting=bit_setting,
+            )
+            metadata_missing = _metadata_completeness_missing(
+                manifest,
+                model_index=model_index,
+                benchmark_summary=benchmark_summary,
             )
             remote_checksum_mismatches = _remote_checksum_mismatches(
                 manifest,
@@ -1024,6 +1088,10 @@ def audit_hf_artifact_repos(
                     "manifest_error": manifest_error,
                     "manifest_mismatches": manifest_mismatches,
                     "manifest_warnings": _manifest_warnings(manifest),
+                    "model_index_error": model_index_error,
+                    "benchmark_summary_error": benchmark_summary_error,
+                    "metadata_complete_ready": not metadata_missing,
+                    "metadata_missing": metadata_missing,
                     "sha256sums_error": sha256sums_error,
                     "sha256sums_entry_count": len(sha256sums_entries),
                     "remote_lfs_checksum_count": len(_lfs_sha256_by_file(siblings_by_file)),
@@ -1041,6 +1109,8 @@ def audit_hf_artifact_repos(
                 not required_missing
                 and files.get("model.safetensors") is not None
                 and not manifest_error
+                and not model_index_error
+                and not benchmark_summary_error
                 and not manifest_mismatches
                 and not forbidden_files
                 and not sha256sums_error
@@ -1052,6 +1122,7 @@ def audit_hf_artifact_repos(
             )
             row["release_eval_ready"] = (
                 row["release_eval_applicable"]
+                and row["metadata_complete_ready"]
                 and row["native_smoke_ready"]
                 and not missing_metrics
             )
@@ -1065,6 +1136,9 @@ def audit_hf_artifact_repos(
         "existing_count": sum(1 for row in rows if row["exists"]),
         "artifact_ready_count": sum(1 for row in rows if row["artifact_ready"]),
         "native_smoke_ready_count": sum(1 for row in rows if row["native_smoke_ready"]),
+        "metadata_complete_ready_count": sum(
+            1 for row in rows if row.get("metadata_complete_ready")
+        ),
         "release_eval_applicable_count": release_eval_applicable_count,
         "release_eval_not_applicable_count": len(rows) - release_eval_applicable_count,
         "release_eval_ready_count": sum(1 for row in rows if row["release_eval_ready"]),
@@ -1072,6 +1146,7 @@ def audit_hf_artifact_repos(
             len(row.get("missing_required_metrics", [])) for row in rows
         ),
         "manifest_warning_count": sum(len(row.get("manifest_warnings", [])) for row in rows),
+        "metadata_missing_count": sum(len(row.get("metadata_missing", [])) for row in rows),
         "remote_checksum_mismatch_count": sum(
             len(row.get("remote_checksum_mismatches", [])) for row in rows
         )
@@ -1123,6 +1198,10 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Namespace: `{payload.get('namespace', '')}`",
         f"- Repositories: {payload.get('existing_count', 0)} / {repo_count} existing",
         f"- Artifact ready: {payload.get('artifact_ready_count', 0)} / {repo_count}",
+        (
+            f"- Metadata complete: {payload.get('metadata_complete_ready_count', 0)} / "
+            f"{repo_count}"
+        ),
         f"- Native smoke ready: {payload.get('native_smoke_ready_count', 0)} / {repo_count}",
         f"- Release eval applicable: {release_eval_applicable_count} / {repo_count}",
         (
@@ -1131,6 +1210,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         ),
         f"- Missing release metrics: {payload.get('missing_required_metric_count', 0)}",
         f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
+        f"- Metadata missing fields: {payload.get('metadata_missing_count', 0)}",
         f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
         f"- Forbidden files: {payload.get('forbidden_file_count', 0)}",
         "",
@@ -1146,17 +1226,21 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
             "GenEval or VBench result."
         ),
         (
+            "- Metadata complete means quantization device, weight quantization "
+            "backend, and staging mode are recorded."
+        ),
+        (
             "- Release eval ready is the only readiness flag for paper metric "
-            "or reproduction claims."
+            "or reproduction claims; it requires metadata completeness."
         ),
         "",
         "## Artifact Matrix",
         "",
         (
-            "| Suite | Bits | Repo | Private | Artifact | Native Smoke | Release Eval | "
-            "SHA | Missing Release Metrics | Forbidden Files |"
+            "| Suite | Bits | Repo | Private | Artifact | Metadata | Native Smoke | "
+            "Release Eval | SHA | Missing Release Metrics | Forbidden Files |"
         ),
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in payload.get("rows", []):
         repo_id = row.get("repo_id", "")
@@ -1174,6 +1258,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
                     repo_label,
                     _markdown_status(bool(row.get("private"))),
                     _markdown_status(bool(row.get("artifact_ready"))),
+                    _markdown_status(bool(row.get("metadata_complete_ready"))),
                     _markdown_status(bool(row.get("native_smoke_ready"))),
                     _markdown_release_eval_status(row),
                     _short_sha(row.get("sha")),

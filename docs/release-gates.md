@@ -39,6 +39,9 @@ URL, or signed-off audit note.
   model cards, complete file manifests, checksums where applicable, and native
   comparison assets for the advertised targets. Cards must describe the
   artifact and usage, not host logs, raw eval dumps, or terminal transcripts.
+  HF artifact audits must report `metadata_complete_ready` for every released
+  artifact, proving quantization device, weight quantization backend, and
+  staging mode provenance are present.
 - [ ] The GitHub repository is public, tagged, and includes the release docs,
   license, source distribution expectations, and reproducible verification
   commands.

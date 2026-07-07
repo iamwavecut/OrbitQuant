@@ -159,7 +159,45 @@ def _remote_path(artifact_dir, filename):
     return artifact_dir / filename
 
 
-def _native_smoke_summary(suite, *, release_metrics=None):
+def _write_remote_model_index(
+    path,
+    *,
+    quantization_device="unknown",
+    weight_quantization_backend="unknown",
+    quantization_staging_mode="unknown",
+):
+    path.write_text(
+        json.dumps(
+            {
+                "_class_name": "OrbitQuantArtifact",
+                "quantization_device": quantization_device,
+                "weight_quantization_backend": weight_quantization_backend,
+                "quantization_staging_mode": quantization_staging_mode,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _audit_file_map(repo_id, *, manifest_path, sha256sums_path, summary_path, model_index_path):
+    return {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "model_index.json"): model_index_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/summary.json"): summary_path,
+    }
+
+
+def _native_smoke_summary(
+    suite,
+    *,
+    release_metrics=None,
+    quantization_device="unknown",
+    weight_quantization_backend="unknown",
+    quantization_staging_mode="unknown",
+):
     native_settings = {
         "suite": suite.name,
         "height": suite.height,
@@ -188,6 +226,9 @@ def _native_smoke_summary(suite, *, release_metrics=None):
         {
             "published_summary": "compact",
             "raw_generation_records": "local-only",
+            "quantization_device": quantization_device,
+            "weight_quantization_backend": weight_quantization_backend,
+            "quantization_staging_mode": quantization_staging_mode,
             "metrics": {
                 "original": {"records": 1, "latest_metrics": metrics},
                 "orbitquant": {"records": 1, "latest_metrics": metrics},
@@ -1174,11 +1215,15 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     )
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1206,10 +1251,106 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
         "quantization_device_missing",
         "weight_quantization_backend_missing",
     ]
+    assert row["metadata_complete_ready"] is False
+    assert row["metadata_missing"] == [
+        "manifest.quantization_device_missing",
+        "manifest.weight_quantization_backend_missing",
+        "manifest.quantization_staging_mode_missing",
+        "model_index.quantization_device_missing",
+        "model_index.weight_quantization_backend_missing",
+        "model_index.quantization_staging_mode_missing",
+        "benchmark_summary.quantization_device_missing",
+        "benchmark_summary.weight_quantization_backend_missing",
+        "benchmark_summary.quantization_staging_mode_missing",
+    ]
     assert row["remote_checksum_mismatches"] == []
     assert row["missing_required_metrics"] == _expected_missing_geneval_metrics()
     assert row["native_smoke_proof_ready"] is True
     assert row["native_smoke_missing_evidence"] == []
+
+
+def test_audit_hf_artifact_repos_marks_complete_metadata_when_provenance_matches(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux2",
+          "quantization_device": "cuda",
+          "weight_quantization_backend": "triton_cuda",
+          "quantization_staging_mode": "component",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": [],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(
+        model_index_path,
+        quantization_device="cuda",
+        weight_quantization_backend="triton_cuda",
+        quantization_staging_mode="component",
+    )
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        _native_smoke_summary(
+            suite,
+            quantization_device="cuda",
+            weight_quantization_backend="triton_cuda",
+            quantization_staging_mode="component",
+        ),
+        encoding="utf-8",
+    )
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+
+    row = result["rows"][0]
+    assert result["artifact_ready_count"] == 1
+    assert result["metadata_complete_ready_count"] == 1
+    assert result["metadata_missing_count"] == 0
+    assert row["metadata_complete_ready"] is True
+    assert row["metadata_missing"] == []
 
 
 def test_audit_hf_artifact_repos_requires_native_smoke_proof_block(
@@ -1263,11 +1404,15 @@ def test_audit_hf_artifact_repos_requires_native_smoke_proof_block(
           }
         }"""
     )
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1333,11 +1478,15 @@ def test_audit_hf_artifact_repos_requires_geneval_per_task_metrics(
         _native_smoke_summary(suite, release_metrics={"geneval_overall": 0.71}),
         encoding="utf-8",
     )
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1404,11 +1553,15 @@ def test_audit_hf_artifact_repos_flags_extra_comparison_matrix_assets(
     )
     summary_path = tmp_path / "summary.json"
     summary_path.write_text('{"metrics": {}}\n')
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1460,11 +1613,15 @@ def test_audit_hf_artifact_repos_rejects_lfs_checksum_mismatch(tmp_path, monkeyp
     )
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1557,11 +1714,15 @@ def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(
     )
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1630,11 +1791,15 @@ def test_audit_hf_artifact_repos_flags_forbidden_remote_assets(tmp_path, monkeyp
           }
         }"""
     )
-    file_map = {
-        (repo_id, "orbitquant_manifest.json"): manifest_path,
-        (repo_id, "SHA256SUMS"): sha256sums_path,
-        (repo_id, "benchmark/summary.json"): summary_path,
-    }
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+    )
 
     def fake_download(repo, filename, **kwargs):
         return str(file_map[(repo, filename)])
@@ -1677,12 +1842,14 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
         "repo_count": 2,
         "existing_count": 2,
         "artifact_ready_count": 2,
+        "metadata_complete_ready_count": 1,
         "native_smoke_ready_count": 2,
         "release_eval_applicable_count": 1,
         "release_eval_not_applicable_count": 1,
         "release_eval_ready_count": 0,
         "missing_required_metric_count": 2,
         "manifest_warning_count": 0,
+        "metadata_missing_count": 3,
         "rows": [
             {
                 "suite": "flux2-native",
@@ -1690,6 +1857,7 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
                 "repo_id": "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4",
                 "private": True,
                 "artifact_ready": True,
+                "metadata_complete_ready": True,
                 "native_smoke_ready": True,
                 "release_eval_applicable": False,
                 "release_eval_ready": False,
@@ -1702,6 +1870,7 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
                 "repo_id": "WaveCut/FLUX.1-schnell-OrbitQuant-W4A4",
                 "private": True,
                 "artifact_ready": True,
+                "metadata_complete_ready": False,
                 "native_smoke_ready": True,
                 "release_eval_applicable": True,
                 "release_eval_ready": False,
@@ -1717,21 +1886,24 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     markdown = render_hf_artifact_audit_markdown(payload)
 
     assert "# OrbitQuant HF Artifact Audit" in markdown
+    assert "- Metadata complete: 1 / 2" in markdown
     assert "- Release eval applicable: 1 / 2" in markdown
     assert "- Release eval ready: 0 / 1" in markdown
     assert "- Missing release metrics: 2" in markdown
+    assert "- Metadata missing fields: 3" in markdown
     assert "## Readiness Semantics" in markdown
     assert "no forbidden raw files" in markdown
     assert "it is not a GenEval or VBench result" in markdown
+    assert "Metadata complete means quantization device" in markdown
     assert "paper metric or reproduction claims" in markdown
     assert "Missing required metrics" not in markdown
     assert (
         "| flux2-native | W4A4 | `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` | "
-        "yes | yes | yes | n/a | abcdef123456 |  |"
+        "yes | yes | yes | yes | n/a | abcdef123456 |  |"
     ) in markdown
     assert (
         "| flux1-schnell-native | W4A4 | `WaveCut/FLUX.1-schnell-OrbitQuant-W4A4` | "
-        "yes | yes | yes | no | 123456abcdef | 2 release metrics missing |"
+        "yes | yes | no | yes | no | 123456abcdef | 2 release metrics missing |"
     ) in markdown
     assert (
         "`WaveCut/FLUX.1-schnell-OrbitQuant-W4A4`: "
