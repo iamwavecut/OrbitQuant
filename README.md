@@ -170,6 +170,34 @@ User-facing comparison assets are generated at the native settings above. Small
 low-resolution range checks are useful only for local debugging and are not used
 as quality evidence.
 
+## Release Metrics
+
+Release-grade metrics are imported from the upstream metric runners. For image
+paper targets, generate native samples with the upstream GenEval metadata file:
+
+```bash
+orbitquant native-script \
+  --suite flux1-schnell-native \
+  --prompt-metadata-jsonl /path/to/GenEval/evaluation_metadata.jsonl \
+  --output-root ./artifacts/native \
+  --resume > run-native-flux1-geneval.sh
+```
+
+Then export generated samples, run the external metric runner, summarize
+results, and import the metrics back into the artifacts:
+
+```bash
+orbitquant external-eval-script \
+  --suite flux1-schnell-native \
+  --output-root ./artifacts/native \
+  --metrics-root ./metrics/native \
+  --report-output ./reports/native > run-flux1-geneval-metrics.sh
+```
+
+For Wan, use the same `external-eval-script` path with `--suite wan-native` to
+run VBench custom-input dimensions against the native 832x480, 81-frame videos.
+Generated scripts emit `stage_log START/END` markers for long-running phases.
+
 ## Comparison Assets
 
 Artifacts can include BF16-vs-OrbitQuant visual comparisons under `assets/`.

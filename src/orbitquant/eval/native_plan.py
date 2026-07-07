@@ -51,8 +51,16 @@ def _bits(bit_setting: str) -> tuple[str, str]:
     return weight.removeprefix("W"), activation
 
 
-def _cmd(parts: list[str]) -> str:
+def _cmd(parts: list[str | Path]) -> str:
     return " ".join(shlex.quote(part) for part in parts)
+
+
+def _stage_lines(label: str, command: str) -> list[str]:
+    return [
+        _cmd(["stage_log", "START", label]),
+        command,
+        _cmd(["stage_log", "END", label]),
+    ]
 
 
 def _preflight_lines(suites: list[NativeSuite]) -> list[str]:
@@ -150,12 +158,16 @@ def build_native_run_script(
     report_output_dir: str | Path = "reports/native",
     seeds: list[int] | None = None,
     prompt_limit: int | None = None,
+    prompt_pack: str = "artifact",
+    prompt_metadata_jsonl: str | Path | None = None,
     device: str = "cuda",
     dtype: str = "bfloat16",
     activation_kernel_backend: str = "triton_cuda",
     staging_mode: str = "component",
     resume: bool = False,
 ) -> str:
+    if prompt_metadata_jsonl is not None and prompt_pack != "artifact":
+        raise ValueError("prompt_metadata_jsonl cannot be combined with a non-artifact prompt pack")
     selected_suites = list_native_suites() if suites is None else suites
     selected_seeds = [0] if seeds is None else seeds
     seed_arg = ",".join(str(seed) for seed in selected_seeds)
@@ -163,8 +175,16 @@ def build_native_run_script(
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
+        "stage_log() {",
+        "  printf '==== %s %s %s ====\\n' \"$1\" \"$(date -Is)\" \"$2\"",
+        "}",
+        "",
     ]
+    lines.append(_cmd(["stage_log", "START", "preflight"]))
     lines.extend(_preflight_lines(selected_suites))
+    lines.append(_cmd(["stage_log", "END", "preflight"]))
+    lines.append("")
+    lines.append(_cmd(["stage_log", "START", "kernel preflight"]))
     lines.extend(
         _kernel_preflight_lines(
             selected_suites,
@@ -173,6 +193,8 @@ def build_native_run_script(
             activation_kernel_backend=activation_kernel_backend,
         )
     )
+    lines.append(_cmd(["stage_log", "END", "kernel preflight"]))
+    lines.append("")
     artifact_dirs = []
     for suite in selected_suites:
         for bit_setting in suite.bit_settings:
@@ -208,17 +230,22 @@ def build_native_run_script(
             if resume:
                 lines.extend(
                     [
+                        _cmd(["stage_log", "START", f"{suite.name} {bit_setting} quantize"]),
                         f"if {validate_command} >/dev/null 2>&1; then",
                         f"echo 'Skipping existing valid artifact: {artifact_dir}'",
                         "else",
                         quantize_command,
                         "fi",
+                        _cmd(["stage_log", "END", f"{suite.name} {bit_setting} quantize"]),
                     ]
                 )
             else:
-                lines.append(quantize_command)
-            lines.append(
-                validate_command
+                lines.extend(_stage_lines(f"{suite.name} {bit_setting} quantize", quantize_command))
+            lines.extend(
+                _stage_lines(
+                    f"{suite.name} {bit_setting} validate quantized artifact",
+                    validate_command,
+                )
             )
             for split in ("original", "orbitquant"):
                 command = [
@@ -237,18 +264,36 @@ def build_native_run_script(
                     "--dtype",
                     dtype,
                 ]
+                if prompt_metadata_jsonl is not None:
+                    command.extend(["--prompt-metadata-jsonl", str(prompt_metadata_jsonl)])
+                elif prompt_pack != "artifact":
+                    command.extend(["--prompt-pack", prompt_pack])
                 if prompt_limit is not None:
                     command.extend(["--prompt-limit", str(prompt_limit)])
                 if resume:
                     command.append("--resume-existing")
-                lines.append(_cmd(command))
-            lines.append(
-                _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir])
+                lines.extend(
+                    _stage_lines(
+                        f"{suite.name} {bit_setting} {split} generate-pack",
+                        _cmd(command),
+                    )
+                )
+            lines.extend(
+                _stage_lines(
+                    f"{suite.name} {bit_setting} validate generated artifact",
+                    _cmd(["orbitquant", "validate-artifact", "--artifact", artifact_dir]),
+                )
             )
             lines.append("")
     report_command = ["orbitquant", "report"]
     for artifact_dir in artifact_dirs:
         report_command.extend(["--artifact", artifact_dir])
     report_command.extend(["--output", str(report_output_dir)])
-    lines.extend(["# Native report", _cmd(report_command), ""])
+    lines.extend(
+        [
+            "# Native report",
+            *_stage_lines("native eval report", _cmd(report_command)),
+            "",
+        ]
+    )
     return "\n".join(lines)

@@ -398,6 +398,16 @@ def main(argv: list[str] | None = None) -> int:
     native_script_parser.add_argument("--report-output", default="reports/native")
     native_script_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
     native_script_parser.add_argument("--prompt-limit", type=int)
+    native_script_parser.add_argument(
+        "--prompt-pack",
+        default="artifact",
+        choices=["artifact", "visual", "geneval-smoke"],
+        help="prompt payload source passed to generate-pack",
+    )
+    native_script_parser.add_argument(
+        "--prompt-metadata-jsonl",
+        help="GenEval evaluation_metadata.jsonl file passed to generate-pack",
+    )
     native_script_parser.add_argument("--device", default="cuda")
     native_script_parser.add_argument(
         "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
@@ -812,6 +822,8 @@ def main(argv: list[str] | None = None) -> int:
                 report_output_dir=args.report_output,
                 seeds=args.seeds,
                 prompt_limit=args.prompt_limit,
+                prompt_pack=args.prompt_pack,
+                prompt_metadata_jsonl=args.prompt_metadata_jsonl,
                 device=args.device,
                 dtype=args.dtype,
                 activation_kernel_backend=args.activation_kernel_backend,

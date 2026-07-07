@@ -358,6 +358,12 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
 
     script = capsys.readouterr().out
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "stage_log() {" in script
+    assert "stage_log START preflight" in script
+    assert "stage_log START 'kernel preflight'" in script
+    assert "stage_log START 'wan-native W4A6 quantize'" in script
+    assert "stage_log START 'wan-native W4A6 original generate-pack'" in script
+    assert "stage_log END 'native eval report'" in script
     assert "hf auth whoami" in script
     assert "hf env" in script
     assert "torch.cuda.is_available()" in script
@@ -372,7 +378,7 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--weight-bits 4 --activation-bits 4" in script
     assert "--activation-kernel-backend triton_cuda" in script
     assert "--staging-mode component" in script
-    assert script.count("orbitquant generate-pack") == 4
+    assert script.count("\norbitquant generate-pack") == 4
     assert "--split original" in script
     assert "--split orbitquant" in script
     assert "--seeds 0,1" in script
@@ -383,6 +389,37 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a4'}" in script
     assert "--output reports/native" in script
     assert "range" not in script.lower()
+
+
+def test_cli_native_script_can_generate_geneval_metadata_pack(capsys, tmp_path):
+    metadata_jsonl = tmp_path / "evaluation_metadata.jsonl"
+    assert (
+        main(
+            [
+                "native-script",
+                "--suite",
+                "flux1-schnell-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--prompt-metadata-jsonl",
+                str(metadata_jsonl),
+                "--seeds",
+                "0",
+                "--prompt-limit",
+                "2",
+            ]
+        )
+        == 0
+    )
+
+    script = capsys.readouterr().out
+    assert "--prompt-metadata-jsonl" in script
+    assert str(metadata_jsonl) in script
+    assert "--prompt-limit 2" in script
+    assert "--prompt-pack" not in script
+    assert "stage_log START 'flux1-schnell-native W4A4 original generate-pack'" in script
+    assert "stage_log START 'flux1-schnell-native W4A4 orbitquant generate-pack'" in script
+    assert script.count("\norbitquant generate-pack") == 8
 
 
 def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_path):
@@ -407,7 +444,8 @@ def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_pat
     assert f"if orbitquant validate-artifact --artifact {artifact_dir}" in script
     assert f"echo 'Skipping existing valid artifact: {artifact_dir}'" in script
     assert "else\norbitquant quantize --suite flux2-native" in script
-    assert "\nfi\norbitquant validate-artifact --artifact" in script
+    assert "\nfi\nstage_log END 'flux2-native W4A4 quantize'" in script
+    assert "stage_log START 'flux2-native W4A4 validate quantized artifact'" in script
     assert "\norbitquant generate-pack --suite flux2-native" in script
     assert "--resume-existing" in script
 
