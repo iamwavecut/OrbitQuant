@@ -28,6 +28,28 @@ def test_rpbh_permutation_spreads_block_local_mass_before_hadamard():
     assert (block_energy > 1e-6).sum().item() > 1
 
 
+def test_rpbh_matches_paper_order_permute_sign_block_hadamard_normalize():
+    rotation = RPBHRotation(dim=8, seed=5, block_size=4)
+    x = torch.arange(16, dtype=torch.float32).reshape(2, 8) - 3
+    hadamard4 = torch.tensor(
+        [
+            [1, 1, 1, 1],
+            [1, -1, 1, -1],
+            [1, 1, -1, -1],
+            [1, -1, -1, 1],
+        ],
+        dtype=torch.float32,
+    )
+
+    permuted = x.index_select(dim=-1, index=rotation.permutation)
+    signed = permuted * rotation.signs.to(dtype=torch.float32)
+    blocks = signed.reshape(2, rotation.num_blocks, rotation.block_size)
+    expected = torch.matmul(blocks, hadamard4.T) * rotation.normalization
+    expected = expected.reshape_as(x)
+
+    assert torch.allclose(rotation.apply_to_activations(x), expected)
+
+
 def test_rpbh_folds_weight_with_activation_rotation_identity():
     x = torch.randn(4, 16)
     weight = torch.randn(7, 16)
