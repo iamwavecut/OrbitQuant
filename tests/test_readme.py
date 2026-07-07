@@ -8,6 +8,8 @@ def test_readme_documents_component_artifact_usage():
     assert "load_quantized_pipeline_component" in readme
     assert "Published OrbitQuant model repos are component artifacts" in readme
     assert "DiffusionPipeline.from_pretrained" in readme
+    assert "build_diffusers_pipeline_quantization_config" in readme
+    assert "`PipelineQuantizationConfig`" in readme
     assert "orbitquant quantize" in readme
     assert "orbitquant inspect-policy" in readme
     assert "empty-weight skeleton" in readme

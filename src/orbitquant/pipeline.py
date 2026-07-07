@@ -13,6 +13,44 @@ from orbitquant.artifacts import (
 )
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.modeling import QuantizationSummary, quantize_linear_modules
+from orbitquant.quantizer import register_hf_quantizers
+
+
+def _component_list(components: str | list[str] | tuple[str, ...]) -> list[str]:
+    if isinstance(components, str):
+        return [components]
+    result = list(components)
+    if not result:
+        raise ValueError("components must not be empty")
+    return result
+
+
+def build_diffusers_pipeline_quantization_config(
+    config: OrbitQuantConfig,
+    *,
+    components: str | list[str] | tuple[str, ...] = "transformer",
+    granular: bool = True,
+) -> Any:
+    """Build a Diffusers PipelineQuantizationConfig for OrbitQuant components."""
+
+    try:
+        from diffusers.quantizers import PipelineQuantizationConfig
+    except Exception as exc:
+        raise ImportError(
+            "build_diffusers_pipeline_quantization_config requires diffusers"
+        ) from exc
+
+    register_hf_quantizers()
+    component_names = _component_list(components)
+    if granular:
+        return PipelineQuantizationConfig(
+            quant_mapping={component: config for component in component_names}
+        )
+    return PipelineQuantizationConfig(
+        quant_backend="orbitquant",
+        quant_kwargs=config.to_dict(),
+        components_to_quantize=component_names,
+    )
 
 
 def _get_pipeline_component(pipeline: Any, component: str) -> torch.nn.Module:

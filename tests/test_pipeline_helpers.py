@@ -1,10 +1,12 @@
 import json
 
+import pytest
 import torch
 
 from orbitquant import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.pipeline import (
+    build_diffusers_pipeline_quantization_config,
     load_quantized_pipeline_component,
     quantize_pipeline,
     save_quantized_pipeline_component,
@@ -31,6 +33,67 @@ def test_quantize_pipeline_quantizes_named_component():
 
     assert summary.quantized_modules == ["transformer_blocks.0.attn.to_q"]
     assert isinstance(pipeline.transformer.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+
+
+def test_build_diffusers_pipeline_quantization_config_uses_component_mapping():
+    pytest.importorskip("diffusers")
+    config = OrbitQuantConfig(
+        weight_bits=3,
+        activation_bits=3,
+        block_size=4,
+        target_policy="generic_dit",
+    )
+
+    pipeline_config = build_diffusers_pipeline_quantization_config(
+        config, components=["transformer", "denoiser"]
+    )
+
+    assert pipeline_config.is_granular is True
+    assert set(pipeline_config.quant_mapping) == {"transformer", "denoiser"}
+    resolved = pipeline_config._resolve_quant_config(
+        is_diffusers=True, module_name="transformer"
+    )
+    restored = OrbitQuantConfig.from_dict(resolved.to_dict())
+
+    assert resolved is config
+    assert restored.quant_method == "orbitquant"
+    assert restored.weight_bits == 3
+    assert restored.activation_bits == 3
+    assert pipeline_config._resolve_quant_config(
+        is_diffusers=True, module_name="text_encoder"
+    ) is None
+
+
+def test_build_diffusers_pipeline_quantization_config_can_use_backend_mode():
+    pytest.importorskip("diffusers")
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+
+    pipeline_config = build_diffusers_pipeline_quantization_config(
+        config, components="transformer", granular=False
+    )
+    resolved = pipeline_config._resolve_quant_config(
+        is_diffusers=True, module_name="transformer"
+    )
+
+    assert pipeline_config.is_granular is False
+    assert pipeline_config.quant_backend == "orbitquant"
+    assert pipeline_config.components_to_quantize == ["transformer"]
+    assert resolved.to_dict() == config.to_dict()
+    assert pipeline_config._resolve_quant_config(
+        is_diffusers=True, module_name="text_encoder"
+    ) is None
+
+
+def test_build_diffusers_pipeline_quantization_config_rejects_empty_components():
+    pytest.importorskip("diffusers")
+    config = OrbitQuantConfig(block_size=4)
+
+    try:
+        build_diffusers_pipeline_quantization_config(config, components=[])
+    except ValueError as exc:
+        assert "components" in str(exc)
+    else:
+        raise AssertionError("empty Diffusers pipeline component list was accepted")
 
 
 def test_save_quantized_pipeline_component_writes_artifact(tmp_path):

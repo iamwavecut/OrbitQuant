@@ -138,6 +138,31 @@ save_quantized_pipeline_component(
 )
 ```
 
+To use Diffusers' native pipeline-level quantization entrypoint, build a
+`PipelineQuantizationConfig` for the component that should be quantized:
+
+```python
+import torch
+from diffusers import DiffusionPipeline
+from orbitquant import OrbitQuantConfig, build_diffusers_pipeline_quantization_config
+
+config = OrbitQuantConfig(
+    weight_bits=4,
+    activation_bits=4,
+    target_policy="flux2",
+)
+pipeline_quant_config = build_diffusers_pipeline_quantization_config(
+    config,
+    components="transformer",
+)
+
+pipe = DiffusionPipeline.from_pretrained(
+    "black-forest-labs/FLUX.2-klein-4B",
+    torch_dtype=torch.bfloat16,
+    quantization_config=pipeline_quant_config,
+)
+```
+
 Equivalent CLI:
 
 ```bash
