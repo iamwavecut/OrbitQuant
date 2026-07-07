@@ -37,6 +37,34 @@ def _quantize_weight_indices(
     return codebook.quantize_indices(unit_weight)
 
 
+def _quantize_weight_pack(
+    weight: torch.Tensor,
+    row_norms: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook,
+    bits: int,
+) -> torch.Tensor:
+    if weight.is_cuda:
+        from orbitquant.kernels.triton_cuda import quantize_weight_packed_with_triton
+
+        return quantize_weight_packed_with_triton(
+            weight,
+            row_norms,
+            rotation=rotation,
+            codebook=codebook,
+            bits=bits,
+        )
+
+    weight_indices = _quantize_weight_indices(
+        weight,
+        row_norms,
+        rotation=rotation,
+        codebook=codebook,
+    )
+    return pack_lowbit(weight_indices, bits=bits, validate=False)
+
+
 class OrbitQuantLinear(nn.Module):
     """Linear layer with OrbitQuant-packed rotated weights.
 
@@ -140,13 +168,13 @@ class OrbitQuantLinear(nn.Module):
 
         row_norms = weight.norm(dim=-1).clamp_min(config.activation_eps)
         codebook = get_codebook(layer.in_features, config.weight_bits)
-        weight_indices = _quantize_weight_indices(
+        packed = _quantize_weight_pack(
             weight,
             row_norms,
             rotation=rotation,
             codebook=codebook,
+            bits=config.weight_bits,
         )
-        packed = pack_lowbit(weight_indices, bits=config.weight_bits, validate=False)
 
         return cls(
             in_features=layer.in_features,

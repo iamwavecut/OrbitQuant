@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.kernels import backend_capabilities, quantize_activations_kernel
+from orbitquant.kernels import backend_capabilities, quantize_activations_kernel, select_backend
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import prewarm_quantized_linear_modules
 
@@ -253,12 +253,22 @@ def benchmark_orbit_linear(
         "activation_bits": activation_bits,
         "block_size": quantized.rotation.block_size,
         "activation_kernel_backend": activation_kernel_backend,
+        "selected_activation_kernel_backend": select_backend(
+            target_device, requested=activation_kernel_backend
+        ),
+        "weight_quantization_backend": (
+            "triton_cuda"
+            if target_device.type == "cuda" and backend_capabilities()["triton_cuda"]["available"]
+            else "torch_reference"
+        ),
         "runtime_mode": config.runtime_mode,
         "full_fusion": False,
         "prewarm": prewarm.__dict__,
         "timings_ms": timings,
         "peak_memory_bytes": _peak_memory_bytes(target_device),
         "quantization_buffers": {
+            "source_weight_device": str(source.weight.device),
+            "source_weight_is_cuda": bool(source.weight.is_cuda),
             "packed_weight_indices_device": (
                 None
                 if quantized.packed_weight_indices is None

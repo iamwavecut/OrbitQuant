@@ -36,6 +36,10 @@ def test_quantize_linear_modules_replaces_orbit_and_adaln_targets_only():
     assert summary.skipped_modules == ["proj_out"]
     assert summary.quantization_device == ("cuda" if torch.cuda.is_available() else "cpu")
     assert summary.weight_quantization_backend in {"torch_reference", "triton_cuda"}
+    assert summary.elapsed_seconds >= 0.0
+    assert summary.orbitquant_seconds >= 0.0
+    assert summary.adaln_seconds >= 0.0
+    assert summary.quantized_buffer_device_counts
 
 
 def test_quantize_linear_modules_keeps_dtype_overridden_modules_unquantized():
@@ -66,6 +70,24 @@ def test_quantize_linear_modules_fails_loud_for_unavailable_cuda_device(monkeypa
         assert "CUDA quantization device requested" in str(exc)
     else:
         raise AssertionError("unavailable CUDA quantization device was accepted")
+
+
+def test_quantize_linear_modules_fails_loud_for_cuda_without_triton(monkeypatch):
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        modeling_module,
+        "available_backends",
+        lambda: {"cpu": True, "mps": False, "triton_cuda": False},
+    )
+
+    try:
+        quantize_linear_modules(model, config, quantization_device="cuda")
+    except RuntimeError as exc:
+        assert "Triton CUDA backend" in str(exc)
+    else:
+        raise AssertionError("CUDA quantization without Triton was accepted")
 
 
 def test_auto_quantization_device_prefers_cuda_and_falls_back_to_cpu(monkeypatch):

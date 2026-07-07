@@ -28,6 +28,10 @@ class QuantizationSummary:
     skipped_modules: list[str] = field(default_factory=list)
     quantization_device: str = "auto"
     weight_quantization_backend: str = "torch_reference"
+    elapsed_seconds: float = 0.0
+    orbitquant_seconds: float = 0.0
+    adaln_seconds: float = 0.0
+    quantized_buffer_device_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -88,11 +92,40 @@ def _quantization_device(device: str | torch.device | None) -> torch.device | No
 def _weight_quantization_backend(device: torch.device | None) -> str:
     if device is None:
         return "module_device"
-    if device.type == "cuda" and available_backends()["triton_cuda"]:
+    if device.type == "cuda":
+        if not available_backends()["triton_cuda"]:
+            raise RuntimeError(
+                "CUDA quantization requires the Triton CUDA backend. Install triton "
+                "or use --device cpu for the reference quantization path."
+            )
         return "triton_cuda"
     if device.type == "mps":
         return "torch_reference_mps"
     return "torch_reference"
+
+
+def _count_tensor_device(summary: QuantizationSummary, tensor: torch.Tensor | None) -> None:
+    if tensor is None:
+        return
+    key = str(tensor.device)
+    summary.quantized_buffer_device_counts[key] = (
+        summary.quantized_buffer_device_counts.get(key, 0) + 1
+    )
+
+
+def _record_orbitquant_buffers(summary: QuantizationSummary, module: OrbitQuantLinear) -> None:
+    _count_tensor_device(summary, module.packed_weight_indices)
+    _count_tensor_device(summary, module.row_norms)
+    _count_tensor_device(summary, module.debug_weight)
+    if module.bias is not None:
+        _count_tensor_device(summary, module.bias)
+
+
+def _record_adaln_buffers(summary: QuantizationSummary, module: RTNInt4Linear) -> None:
+    _count_tensor_device(summary, module.packed_weight)
+    _count_tensor_device(summary, module.scales)
+    if module.bias is not None:
+        _count_tensor_device(summary, module.bias)
 
 
 def quantize_linear_modules(
@@ -107,6 +140,7 @@ def quantize_linear_modules(
         quantization_device="preserve" if target_device is None else str(target_device),
         weight_quantization_backend=_weight_quantization_backend(target_device),
     )
+    started_at = time.perf_counter()
 
     for name, decision in decisions.items():
         module = model.get_submodule(name)
@@ -115,14 +149,22 @@ def quantize_linear_modules(
         if decision.action == "orbitquant":
             if target_device is not None and module.weight.device != target_device:
                 module.to(device=target_device)
+            module_started_at = time.perf_counter()
             replacement = OrbitQuantLinear.from_linear(module, config=config, module_name=name)
+            _synchronize_if_needed(_first_tensor_device(replacement))
+            summary.orbitquant_seconds += time.perf_counter() - module_started_at
+            _record_orbitquant_buffers(summary, replacement)
             parent, child_name = _parent_and_child(model, name)
             _set_child(parent, child_name, replacement)
             summary.quantized_modules.append(name)
         elif decision.action == "adaln_int4_rtn":
             if target_device is not None and module.weight.device != target_device:
                 module.to(device=target_device)
+            module_started_at = time.perf_counter()
             replacement = RTNInt4Linear.from_linear(module, config=config, module_name=name)
+            _synchronize_if_needed(_first_tensor_device(replacement))
+            summary.adaln_seconds += time.perf_counter() - module_started_at
+            _record_adaln_buffers(summary, replacement)
             parent, child_name = _parent_and_child(model, name)
             _set_child(parent, child_name, replacement)
             summary.adaln_modules.append(name)
@@ -130,6 +172,9 @@ def quantize_linear_modules(
             _apply_dtype_override(module, decision)
             summary.skipped_modules.append(name)
 
+    if target_device is not None:
+        _synchronize_if_needed(target_device)
+    summary.elapsed_seconds = time.perf_counter() - started_at
     return summary
 
 

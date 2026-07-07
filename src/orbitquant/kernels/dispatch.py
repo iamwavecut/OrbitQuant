@@ -80,7 +80,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "full_fusion": False,
             "optimized_stage": (
                 "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
-                "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant,"
+                "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
                 "adaln_rtn_quant_pack,adaln_rtn_dequant"
             ),
             "weight_dequant_optimized": bool(available["triton_cuda"]),
@@ -93,8 +93,9 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "implementation": "triton_codebook_rescale",
             "notes": (
                 "Triton handles runtime activation norm, RPBH/FWHT rotation, codebook "
-                "lookup/rescale, packed weight dequant, offline low-bit pack, offline "
-                "weight RPBH/FWHT codebook indexing, and AdaLN INT4 RTN "
+                "lookup/rescale, packed weight dequant, offline low-bit pack/unpack, "
+                "offline weight RPBH/FWHT codebook indexing with direct low-bit packing, "
+                "and AdaLN INT4 RTN "
                 "quantize/pack/dequant. Matmul is still the BF16 PyTorch linear path."
             ),
         },

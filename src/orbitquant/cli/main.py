@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     native_script_parser.add_argument(
         "--activation-kernel-backend",
-        default="auto",
+        default="triton_cuda",
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
     native_script_parser.add_argument("--resume", action="store_true")
@@ -613,6 +613,10 @@ def main(argv: list[str] | None = None) -> int:
                     "source_license": manifest.source_license,
                     "quantization_device": summary.quantization_device,
                     "weight_quantization_backend": summary.weight_quantization_backend,
+                    "quantization_elapsed_seconds": summary.elapsed_seconds,
+                    "orbitquant_seconds": summary.orbitquant_seconds,
+                    "adaln_seconds": summary.adaln_seconds,
+                    "quantized_buffer_device_counts": summary.quantized_buffer_device_counts,
                     "quantized_modules": summary.quantized_modules,
                     "adaln_modules": summary.adaln_modules,
                     "skipped_modules": summary.skipped_modules,

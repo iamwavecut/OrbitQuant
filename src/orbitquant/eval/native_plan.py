@@ -152,7 +152,7 @@ def build_native_run_script(
     prompt_limit: int | None = None,
     device: str = "cuda",
     dtype: str = "bfloat16",
-    activation_kernel_backend: str = "auto",
+    activation_kernel_backend: str = "triton_cuda",
     resume: bool = False,
 ) -> str:
     selected_suites = list_native_suites() if suites is None else suites

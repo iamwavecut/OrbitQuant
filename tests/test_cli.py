@@ -56,7 +56,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
             "triton_cuda": {
                 "optimized_stage": (
                     "codebook_lookup_rescale,packed_weight_dequant,"
-                    "lowbit_pack,weight_rotation_fwht_quant,"
+                    "lowbit_pack,weight_rotation_fwht_quant_pack,"
                     "adaln_rtn_quant_pack,adaln_rtn_dequant"
                 ),
                 "weight_dequant_optimized": True,
@@ -89,7 +89,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["mps"]["full_fusion"] is False
     assert payload["triton_cuda"]["optimized_stage"] == (
         "codebook_lookup_rescale,packed_weight_dequant,"
-        "lowbit_pack,weight_rotation_fwht_quant,"
+        "lowbit_pack,weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
     assert payload["triton_cuda"]["weight_dequant_optimized"] is True
@@ -135,6 +135,10 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
     assert payload["timings_ms"]["weight_quantize_pack_cold_ms"] >= 0.0
     assert payload["timings_ms"]["weight_quantize_pack_hot_ms"] >= 0.0
     assert payload["timings_ms"]["forward_prewarmed_ms"] >= 0.0
+    assert payload["selected_activation_kernel_backend"] == "cpu"
+    assert payload["weight_quantization_backend"] == "torch_reference"
+    assert payload["quantization_buffers"]["source_weight_device"] == "cpu"
+    assert payload["quantization_buffers"]["source_weight_is_cuda"] is False
     assert payload["quantization_buffers"]["packed_weight_indices_device"] == "cpu"
 
 

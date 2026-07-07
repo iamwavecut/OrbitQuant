@@ -150,6 +150,12 @@ def save_orbitquant_artifact(
         "weight_quantization_backend": getattr(
             summary, "weight_quantization_backend", "unknown"
         ),
+        "quantization_elapsed_seconds": getattr(summary, "elapsed_seconds", 0.0),
+        "orbitquant_seconds": getattr(summary, "orbitquant_seconds", 0.0),
+        "adaln_seconds": getattr(summary, "adaln_seconds", 0.0),
+        "quantized_buffer_device_counts": getattr(
+            summary, "quantized_buffer_device_counts", {}
+        ),
     }
     benchmark_path.write_text(json.dumps(benchmark_summary, indent=2) + "\n", encoding="utf-8")
     original_metrics_jsonl_path = output_path / "benchmark" / "original.metrics.jsonl"

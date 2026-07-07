@@ -80,7 +80,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["triton_cuda"]["optimized"] is True
     assert capabilities["triton_cuda"]["optimized_stage"] == (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
-        "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant,"
+        "lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
         "adaln_rtn_quant_pack,adaln_rtn_dequant"
     )
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is True
@@ -334,6 +334,34 @@ def test_triton_weight_quant_indices_match_reference_rotation_path(bits):
         row_norms,
         rotation=rotation,
         codebook=codebook,
+    )
+
+    assert actual.is_cuda
+    assert torch.equal(actual.cpu(), expected.cpu())
+
+
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+def test_triton_weight_quant_pack_matches_reference_two_step_path(bits):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import quantize_weight_packed_with_triton
+
+    torch.manual_seed(124)
+    weight = torch.randn(9, 32, device="cuda", dtype=torch.float32)
+    rotation = RPBHRotation(dim=32, seed=5, block_size=8)
+    codebook = get_codebook(dim=32, bits=bits)
+    row_norms = weight.norm(dim=-1).clamp_min(1e-12)
+    rotated = rotation.apply_to_weight(weight)
+    expected_indices = codebook.quantize_indices(rotated / row_norms[:, None])
+    expected = pack_lowbit(expected_indices, bits=bits)
+
+    actual = quantize_weight_packed_with_triton(
+        weight,
+        row_norms,
+        rotation=rotation,
+        codebook=codebook,
+        bits=bits,
     )
 
     assert actual.is_cuda

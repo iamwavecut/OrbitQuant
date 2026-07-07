@@ -338,6 +338,42 @@ def _quantize_rotated_weight_indices_kernel(
 
 
 @triton.jit
+def _quantize_rotated_weight_pack_kernel(
+    work_ptr,
+    row_norms_ptr,
+    boundaries_ptr,
+    packed_ptr,
+    packed_length: tl.constexpr,
+    value_count: tl.constexpr,
+    in_features: tl.constexpr,
+    bits: tl.constexpr,
+    levels: tl.constexpr,
+    inv_sqrt_block: tl.constexpr,
+    block_size: tl.constexpr,
+):
+    byte_offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
+    mask = byte_offsets < packed_length
+    packed = tl.zeros((block_size,), dtype=tl.uint32)
+    byte_bit_starts = byte_offsets * 8
+    for bit_id in tl.static_range(0, 8):
+        global_bit = byte_bit_starts + bit_id
+        value_offsets = global_bit // bits
+        value_bit_offsets = global_bit % bits
+        valid = mask & (value_offsets < value_count)
+        rows = value_offsets // in_features
+        norms = tl.load(row_norms_ptr + rows, mask=valid, other=1.0).to(tl.float32)
+        values = tl.load(work_ptr + value_offsets, mask=valid, other=0.0).to(tl.float32)
+        values = values * inv_sqrt_block / norms
+        indices = tl.zeros((block_size,), dtype=tl.int32)
+        for idx in tl.static_range(0, levels - 1):
+            boundary = tl.load(boundaries_ptr + idx)
+            indices += (values > boundary).to(tl.int32)
+        source_bits = (indices.to(tl.uint32) >> value_bit_offsets) & 1
+        packed |= source_bits << bit_id
+    tl.store(packed_ptr + byte_offsets, packed.to(tl.uint8), mask=mask)
+
+
+@triton.jit
 def _adaln_group_scales_kernel(
     weight_ptr,
     scales_ptr,
@@ -865,3 +901,89 @@ def quantize_weight_indices_with_triton(
         block_size=element_block_size,
     )
     return indices.reshape(out_features, in_features)
+
+
+def quantize_weight_packed_with_triton(
+    weight: torch.Tensor,
+    row_norms: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook: LloydMaxCodebook,
+    bits: int,
+) -> torch.Tensor:
+    if bits <= 0 or bits > 8:
+        raise ValueError("bits must be in [1, 8]")
+    if not weight.is_cuda:
+        raise RuntimeError("triton_cuda packed weight quantization requires CUDA tensors")
+    if weight.ndim != 2:
+        raise ValueError("weight must be a rank-2 tensor")
+    if weight.shape[-1] != rotation.dim:
+        raise ValueError(f"expected in_features {rotation.dim}, got {weight.shape[-1]}")
+
+    triton, _ = _load_triton()
+    out_features, in_features = weight.shape
+    total = out_features * in_features
+    packed_length = (total * bits + 7) // 8
+    packed = torch.empty(packed_length, device=weight.device, dtype=torch.uint8)
+    if total == 0:
+        return packed
+
+    weight_fp32 = weight.to(dtype=torch.float32).contiguous()
+    norms = row_norms.to(device=weight.device, dtype=torch.float32).contiguous()
+    permutation = rotation.permutation.to(device=weight.device, dtype=torch.int64).contiguous()
+    signs = rotation.signs.to(device=weight.device, dtype=torch.int8).contiguous()
+    boundaries = codebook.boundaries.to(device=weight.device, dtype=torch.float32).contiguous()
+    work = torch.empty(total, device=weight.device, dtype=torch.float32)
+
+    element_block_size = 256
+    _permute_sign_weight_kernel[(triton.cdiv(total, element_block_size),)](
+        weight_fp32,
+        permutation,
+        signs,
+        work,
+        total=total,
+        in_features=in_features,
+        block_size=element_block_size,
+    )
+
+    orbit_block_size = int(rotation.block_size)
+    num_blocks = int(rotation.num_blocks)
+    stage_width = 1
+    while stage_width * 2 < orbit_block_size:
+        total_quads = out_features * num_blocks * (orbit_block_size // 4)
+        _fwht_two_stage_kernel[(triton.cdiv(total_quads, element_block_size),)](
+            work,
+            total_quads=total_quads,
+            in_features=in_features,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+        stage_width *= 4
+    if stage_width < orbit_block_size:
+        total_pairs = out_features * num_blocks * (orbit_block_size // 2)
+        _fwht_stage_weight_kernel[(triton.cdiv(total_pairs, element_block_size),)](
+            work,
+            total_pairs=total_pairs,
+            in_features=in_features,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+
+    _quantize_rotated_weight_pack_kernel[(triton.cdiv(packed_length, element_block_size),)](
+        work,
+        norms,
+        boundaries,
+        packed,
+        packed_length=packed_length,
+        value_count=total,
+        in_features=in_features,
+        bits=bits,
+        levels=codebook.centroids.numel(),
+        inv_sqrt_block=float(rotation.normalization),
+        block_size=element_block_size,
+    )
+    return packed
