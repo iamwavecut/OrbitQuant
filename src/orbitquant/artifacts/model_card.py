@@ -9,26 +9,9 @@ def _comparison_assets(checksums: dict[str, str]) -> list[str]:
         if not path.startswith("assets/"):
             continue
         name = path.rsplit("/", maxsplit=1)[-1].lower()
-        if (
-            "comparison_matrix" in name
-            or name.startswith("original_vs_orbitquant_")
-            or name.endswith("_contact_sheet.webp")
-        ):
+        if name.endswith("_generation_comparison_matrix.webp"):
             assets.append(path)
-    return sorted(assets, key=_comparison_asset_sort_key)
-
-
-def _comparison_asset_sort_key(path: str) -> tuple[int, str]:
-    name = path.rsplit("/", maxsplit=1)[-1].lower()
-    if "comparison_matrix" in name:
-        priority = 0
-    elif name.startswith("original_vs_orbitquant_"):
-        priority = 1
-    elif name.endswith("_contact_sheet.webp"):
-        priority = 2
-    else:
-        priority = 3
-    return priority, path
+    return sorted(assets)
 
 
 def _artifact_slug(model_id: str, bits: str) -> str:
@@ -305,7 +288,8 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             [
                 "## Visual Comparison",
                 "",
-                "No generation comparison asset is stored in this artifact yet.",
+                "Release readiness: blocked. This artifact does not include a "
+                "generation comparison matrix or promoted comparison asset yet.",
                 "",
             ]
         )
@@ -355,7 +339,6 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             f"- Activation kernel backend: `{data['activation_kernel_backend']}`",
             f"- Quantization device: `{data['quantization_device']}`",
             f"- Weight quantization backend: `{data['weight_quantization_backend']}`",
-            f"- Quantization staging: `{data['quantization_staging_mode']}`",
             f"- Target policy: `{data['target_policy']}`",
             f"- Rotation: `{data['rotation']}`",
             f"- Rotation seed: `{data['rotation_seed']}`",

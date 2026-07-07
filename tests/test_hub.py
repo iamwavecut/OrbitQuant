@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from orbitquant.hub import (
     audit_hf_artifact_repos,
     cleanup_hf_artifact_reports,
     cleanup_hf_artifact_reports_matrix,
+    fetch_hf_artifacts,
     render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
     repair_hf_artifact_metadata_matrix,
@@ -186,10 +188,14 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
         / "assets"
         / "original_vs_orbitquant_flux2-native_seed0_W4A4_simple-object.webp"
     )
+    raw_video_asset = tmp_path / "assets" / "wan-native_seed0_W4A4_simple-motion.mp4"
+    raw_video_metadata = raw_video_asset.with_suffix(".mp4.json")
     raw_eval_asset.write_bytes(b"raw eval image")
     raw_eval_metadata.write_text('{"prompt_id":"geneval-00000"}\n', encoding="utf-8")
     visual_asset.write_bytes(b"visual image")
     comparison_asset.write_bytes(b"comparison")
+    raw_video_asset.write_bytes(b"raw video")
+    raw_video_metadata.write_text('{"prompt_id":"simple-motion"}\n', encoding="utf-8")
     report_dir = tmp_path.parent / f"{tmp_path.name}-report"
     report_matrix = report_dir / "assets" / "image_generation_comparison_matrix.webp"
     report_matrix.parent.mkdir(parents=True)
@@ -223,15 +229,17 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
 
     staged_checksums = read_sha256sums(stage_dir / "SHA256SUMS")
     assert result["validation"]["valid"] is True
-    assert result["omitted_raw_eval_asset_count"] == 2
+    assert result["omitted_raw_eval_asset_count"] == 6
     assert result["omitted_report_file_count"] == 2
     assert result["copied_report_asset_count"] == 2
     assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
     assert not (stage_dir / raw_eval_metadata.relative_to(tmp_path)).exists()
+    assert not (stage_dir / visual_asset.relative_to(tmp_path)).exists()
+    assert not (stage_dir / comparison_asset.relative_to(tmp_path)).exists()
+    assert not (stage_dir / raw_video_asset.relative_to(tmp_path)).exists()
+    assert not (stage_dir / raw_video_metadata.relative_to(tmp_path)).exists()
     assert not (stage_dir / in_artifact_report.relative_to(tmp_path)).exists()
     assert not (stage_dir / in_artifact_markdown.relative_to(tmp_path)).exists()
-    assert (stage_dir / visual_asset.relative_to(tmp_path)).is_file()
-    assert (stage_dir / comparison_asset.relative_to(tmp_path)).is_file()
     staged_report = stage_dir / "assets" / "image_generation_comparison_matrix.webp"
     staged_collision_report = (
         stage_dir / "assets" / f"{report_dir.name}_image_generation_comparison_matrix.webp"
@@ -239,6 +247,9 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
     assert staged_report.is_file()
     assert staged_collision_report.is_file()
     assert raw_eval_asset.relative_to(tmp_path).as_posix() not in staged_checksums
+    assert visual_asset.relative_to(tmp_path).as_posix() not in staged_checksums
+    assert comparison_asset.relative_to(tmp_path).as_posix() not in staged_checksums
+    assert raw_video_asset.relative_to(tmp_path).as_posix() not in staged_checksums
     assert not any(path.startswith("reports/") for path in staged_checksums)
     assert staged_report.relative_to(stage_dir).as_posix() in staged_checksums
     assert staged_collision_report.relative_to(stage_dir).as_posix() in staged_checksums
@@ -348,6 +359,10 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
 ):
     repo_id = "WaveCut/example-orbitquant"
     _write_artifact(tmp_path)
+    raw_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
+    raw_sidecar = raw_asset.with_suffix(".png.json")
+    raw_asset.write_bytes(b"raw generated image")
+    raw_sidecar.write_text('{"prompt_id":"simple-object"}\n', encoding="utf-8")
     report_matrix = (
         tmp_path
         / "reports"
@@ -376,8 +391,13 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
 
     assert result["report_file_count"] == 2
     assert result["report_matrix_count"] == 1
+    assert result["forbidden_file_count"] == 4
     assert result["promoted_assets"] == ["assets/image_generation_comparison_matrix.webp"]
-    assert result["delete_paths"] == ["reports"]
+    assert result["delete_paths"] == [
+        "assets/flux2-native_seed0_W4A4_simple-object.png",
+        "assets/flux2-native_seed0_W4A4_simple-object.png.json",
+        "reports",
+    ]
     assert result["commit"]["commit_oid"] == "repair-sha"
     assert len(fake_api.create_commit_calls) == 1
 
@@ -396,9 +416,13 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
     ]
     assert "model.safetensors" not in added
     assert added["assets/image_generation_comparison_matrix.webp"] == b"report matrix"
-    assert len(deleted) == 1
-    assert deleted[0].path_in_repo == "reports"
-    assert deleted[0].is_folder is True
+    assert len(deleted) == 3
+    deleted_paths = {operation.path_in_repo: operation.is_folder for operation in deleted}
+    assert deleted_paths == {
+        "assets/flux2-native_seed0_W4A4_simple-object.png": False,
+        "assets/flux2-native_seed0_W4A4_simple-object.png.json": False,
+        "reports": True,
+    }
 
     next_manifest = json.loads(added["orbitquant_manifest.json"].decode("utf-8"))
     next_readme = added["README.md"].decode("utf-8")
@@ -571,11 +595,11 @@ def test_upload_orbitquant_artifact_can_upload_compact_staged_copy(tmp_path):
 
     assert result["upload_profile"] == "compact"
     assert result["staging"]["enabled"] is True
-    assert result["staging"]["omitted_raw_eval_asset_count"] == 1
+    assert result["staging"]["omitted_raw_eval_asset_count"] == 2
     assert len(fake_api.upload_folder_calls) == 1
     assert fake_api.upload_folder_calls[0]["folder_path"] == str(stage_dir)
     assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
-    assert (stage_dir / visual_asset.relative_to(tmp_path)).is_file()
+    assert not (stage_dir / visual_asset.relative_to(tmp_path)).exists()
     assert result["validation"]["valid"] is True
     assert result["upload"]["commit_oid"] == "uploaded-sha"
 
@@ -598,9 +622,10 @@ def test_upload_orbitquant_artifact_defaults_to_compact_staged_copy(tmp_path):
 
     assert result["upload_profile"] == "compact"
     assert result["staging"]["enabled"] is True
-    assert result["staging"]["omitted_raw_eval_asset_count"] == 1
+    assert result["staging"]["omitted_raw_eval_asset_count"] == 2
     assert result["staging"]["omitted_raw_eval_assets"] == [
-        "assets/flux2-native_seed0_W4A4_geneval-00000.png"
+        "assets/flux2-native_seed0_W4A4_geneval-00000.png",
+        "assets/flux2-native_seed0_W4A4_simple-object.png",
     ]
     upload_path = Path(fake_api.upload_folder_calls[0]["folder_path"])
     assert upload_path != tmp_path
@@ -620,6 +645,154 @@ def test_upload_orbitquant_artifact_rejects_invalid_artifact_before_hub_calls(tm
     assert fake_api.create_repo_calls == []
     assert fake_api.upload_folder_calls == []
     assert fake_api.model_info_calls == []
+
+
+def test_fetch_hf_artifacts_dry_run_reports_native_artifact_layout(tmp_path):
+    suite = NativeSuite(
+        name="flux1-schnell-native",
+        model_id="black-forest-labs/FLUX.1-schnell",
+        pipeline="FluxPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=0.0,
+        bit_settings=["W4A4", "W3A3"],
+        metric="geneval",
+    )
+
+    result = fetch_hf_artifacts(
+        namespace="WaveCut",
+        suites=[suite],
+        output_root=tmp_path / "artifacts",
+        dry_run=True,
+    )
+
+    assert result["repo_count"] == 2
+    assert result["downloaded_count"] == 0
+    assert result["dry_run"] is True
+    assert result["rows"][0]["repo_id"] == "WaveCut/FLUX.1-schnell-OrbitQuant-W4A4"
+    assert result["rows"][0]["artifact_dir"].endswith("flux1-schnell-native-w4a4")
+    assert result["rows"][1]["repo_id"] == "WaveCut/FLUX.1-schnell-OrbitQuant-W3A3"
+    assert result["rows"][1]["artifact_dir"].endswith("flux1-schnell-native-w3a3")
+
+
+def test_fetch_hf_artifacts_downloads_and_validates_artifact(
+    tmp_path,
+    monkeypatch,
+):
+    source_dir = tmp_path / "source"
+    _write_artifact(source_dir)
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    calls = []
+    stages = []
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        destination = Path(kwargs["local_dir"])
+        shutil.copytree(source_dir, destination, dirs_exist_ok=True)
+        return str(destination)
+
+    monkeypatch.setattr(hub_module, "snapshot_download", fake_snapshot_download)
+
+    result = fetch_hf_artifacts(
+        namespace="WaveCut",
+        suites=[suite],
+        output_root=tmp_path / "artifacts",
+        revision="main",
+        stage_logger=lambda event, label: stages.append((event, label)),
+    )
+
+    artifact_dir = tmp_path / "artifacts" / "flux2-native-w4a4"
+    assert result["downloaded_count"] == 1
+    assert result["skipped_existing_count"] == 0
+    assert result["rows"][0]["artifact_dir"] == str(artifact_dir)
+    assert result["rows"][0]["validation"]["valid"] is True
+    assert calls == [
+        {
+            "repo_id": "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4",
+            "repo_type": "model",
+            "revision": "main",
+            "local_dir": artifact_dir,
+            "force_download": False,
+            "local_files_only": False,
+        }
+    ]
+    assert stages == [
+        ("START", "flux2-native W4A4 fetch WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"),
+        ("END", "flux2-native W4A4 fetch WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"),
+    ]
+
+
+def test_fetch_hf_artifacts_resume_skips_valid_existing_artifact(tmp_path, monkeypatch):
+    artifact_dir = tmp_path / "artifacts" / "flux2-native-w4a4"
+    _write_artifact(artifact_dir)
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+
+    def fail_snapshot_download(**kwargs):
+        raise AssertionError("resume should not download a valid existing artifact")
+
+    monkeypatch.setattr(hub_module, "snapshot_download", fail_snapshot_download)
+
+    result = fetch_hf_artifacts(
+        namespace="WaveCut",
+        suites=[suite],
+        output_root=tmp_path / "artifacts",
+    )
+
+    assert result["downloaded_count"] == 0
+    assert result["skipped_existing_count"] == 1
+    assert result["rows"][0]["skipped_existing"] is True
+    assert result["rows"][0]["validation"]["valid"] is True
+
+
+def test_fetch_hf_artifacts_logs_error_stage_on_download_failure(tmp_path, monkeypatch):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    stages = []
+
+    def fail_snapshot_download(**kwargs):
+        raise RuntimeError("download failed")
+
+    monkeypatch.setattr(hub_module, "snapshot_download", fail_snapshot_download)
+
+    with pytest.raises(RuntimeError, match="download failed"):
+        fetch_hf_artifacts(
+            namespace="WaveCut",
+            suites=[suite],
+            output_root=tmp_path / "artifacts",
+            stage_logger=lambda event, label: stages.append((event, label)),
+        )
+
+    assert stages == [
+        ("START", "flux2-native W4A4 fetch WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"),
+        ("ERROR", "flux2-native W4A4 fetch WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"),
+    ]
 
 
 def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_metrics(
@@ -642,8 +815,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     siblings.update(
         {
             "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
-            "assets/original.png": 10,
-            "assets/orbitquant.png": 10,
+            "assets/image_generation_comparison_matrix.webp": 10,
         }
     )
     api = FakeAuditHfApi({repo_id: siblings})
@@ -690,6 +862,7 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
     assert result["release_eval_applicable_count"] == 1
     assert result["release_eval_not_applicable_count"] == 0
     assert result["release_eval_ready_count"] == 0
+    assert result["forbidden_file_count"] == 0
     assert result["missing_required_metric_count"] == 2
     row = result["rows"][0]
     assert row["repo_id"] == repo_id
@@ -819,8 +992,7 @@ def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(
     siblings.update(
         {
             "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
-            "assets/original.png": 10,
-            "assets/orbitquant.png": 10,
+            "assets/image_generation_comparison_matrix.webp": 10,
         }
     )
     api = FakeAuditHfApi({repo_id: siblings})
@@ -866,9 +1038,74 @@ def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(
     assert result["release_eval_applicable_count"] == 0
     assert result["release_eval_not_applicable_count"] == 1
     assert result["release_eval_ready_count"] == 0
+    assert result["forbidden_file_count"] == 0
     assert row["release_eval_applicable"] is False
     assert row["release_eval_ready"] is False
     assert row["missing_required_metrics"] == []
+
+
+def test_audit_hf_artifact_repos_flags_forbidden_remote_assets(tmp_path, monkeypatch):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+            "assets/flux2-native_seed0_W4A4_simple-object.png": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux2",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": [],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    original_metrics_path = tmp_path / "original.metrics.jsonl"
+    original_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
+    orbitquant_metrics_path = tmp_path / "orbitquant.metrics.jsonl"
+    orbitquant_metrics_path.write_text('{"metrics":{"generated_samples":1}}\n')
+    file_map = {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/original.metrics.jsonl"): original_metrics_path,
+        (repo_id, "benchmark/orbitquant.metrics.jsonl"): orbitquant_metrics_path,
+    }
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+    row = result["rows"][0]
+
+    assert result["forbidden_file_count"] == 1
+    assert result["artifact_ready_count"] == 0
+    assert row["artifact_ready"] is False
+    assert row["forbidden_files"] == ["assets/flux2-native_seed0_W4A4_simple-object.png"]
 
 
 def test_audit_hf_artifact_repos_reports_missing_repo_without_downloading():

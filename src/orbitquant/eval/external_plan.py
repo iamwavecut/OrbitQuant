@@ -13,6 +13,8 @@ VBENCH_CUSTOM_INPUT_DIMENSIONS = (
     "dynamic_degree",
     "aesthetic_quality",
     "imaging_quality",
+    "scene",
+    "overall_consistency",
 )
 
 
@@ -370,7 +372,7 @@ def build_external_eval_script(
         report_command = ["orbitquant", "report"]
         for artifact_dir in artifact_dirs:
             report_command.extend(["--artifact", artifact_dir])
-        report_command.extend(["--output", str(report_output_dir)])
+        report_command.extend(["--output", str(report_output_dir), "--fail-on-missing-required"])
         lines.extend(
             [
                 "# Native report",

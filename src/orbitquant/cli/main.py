@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +54,7 @@ from orbitquant.hub import (
     audit_hf_artifact_repos,
     cleanup_hf_artifact_reports,
     cleanup_hf_artifact_reports_matrix,
+    fetch_hf_artifacts,
     inspect_model_metadata,
     render_hf_artifact_audit_markdown,
     repair_hf_artifact_metadata,
@@ -531,6 +534,22 @@ def main(argv: list[str] | None = None) -> int:
     audit_hf_parser.add_argument("--output")
     audit_hf_parser.add_argument("--markdown-output")
 
+    fetch_hf_parser = subparsers.add_parser(
+        "fetch-hf-artifacts",
+        help="download published HF OrbitQuant artifacts into the native artifact layout",
+    )
+    fetch_hf_parser.add_argument("--namespace", default="WaveCut")
+    fetch_hf_parser.add_argument("--suite", action="append")
+    fetch_hf_parser.add_argument("--output-root", default="artifacts/native")
+    fetch_hf_parser.add_argument("--revision")
+    fetch_hf_parser.add_argument("--no-resume", action="store_true")
+    fetch_hf_parser.add_argument("--force-download", action="store_true")
+    fetch_hf_parser.add_argument("--local-files-only", action="store_true")
+    fetch_hf_parser.add_argument("--validate-checksums", action="store_true")
+    fetch_hf_parser.add_argument("--validate-tensors", action="store_true")
+    fetch_hf_parser.add_argument("--dry-run", action="store_true")
+    fetch_hf_parser.add_argument("--no-stage-log", action="store_true")
+
     repair_hf_parser = subparsers.add_parser(
         "repair-hf-artifact-metadata",
         help="repair remote HF artifact metadata without reuploading large tensors",
@@ -551,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     cleanup_hf_parser = subparsers.add_parser(
         "cleanup-hf-artifact-reports",
         help=(
-            "promote final comparison matrices to assets/ and remove report logs "
+            "promote final comparison matrices and remove non-card assets/reports "
             "from remote HF OrbitQuant artifact repos"
         ),
     )
@@ -577,6 +596,7 @@ def main(argv: list[str] | None = None) -> int:
     report_parser.add_argument("--artifact", action="append", required=True)
     report_parser.add_argument("--output", required=True)
     report_parser.add_argument("--date")
+    report_parser.add_argument("--fail-on-missing-required", action="store_true")
 
     record_metrics_parser = subparsers.add_parser(
         "record-metrics", help="import external eval metrics into an artifact"
@@ -984,6 +1004,33 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(rendered)
         return 0
+    if args.command == "fetch-hf-artifacts":
+        suites = None
+        if args.suite is not None:
+            suites = [get_native_suite(name) for name in args.suite]
+
+        def stage_logger(event: str, label: str) -> None:
+            print(f"==== {event} {datetime.now().isoformat()} {label} ====", file=sys.stderr)
+
+        print(
+            json.dumps(
+                fetch_hf_artifacts(
+                    namespace=args.namespace,
+                    suites=suites,
+                    output_root=args.output_root,
+                    revision=args.revision,
+                    resume=not args.no_resume,
+                    force_download=args.force_download,
+                    local_files_only=args.local_files_only,
+                    validate_checksums=args.validate_checksums,
+                    validate_tensors=args.validate_tensors,
+                    dry_run=args.dry_run,
+                    stage_logger=None if args.no_stage_log or args.dry_run else stage_logger,
+                ),
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "repair-hf-artifact-metadata":
         suites = None
         if args.suite is not None:
@@ -1075,6 +1122,8 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
         )
+        if args.fail_on_missing_required and result.missing_required_metrics:
+            return 1
         return 0
     if args.command == "record-metrics":
         metrics = load_metric_json(args.metrics_json, metric_prefix=args.metric_prefix)

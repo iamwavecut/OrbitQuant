@@ -329,7 +329,39 @@ def test_cli_external_eval_script_prints_metric_runner_script(capsys, tmp_path):
     assert "--metric-prefix vbench" in script
     assert "orbitquant report" in script
     assert f"--output {tmp_path / 'reports'}" in script
+    assert "--fail-on-missing-required" in script
     assert "range" not in script.lower()
+
+
+def test_cli_report_can_fail_on_missing_required_metrics(capsys, monkeypatch, tmp_path):
+    result = SimpleNamespace(
+        report_path=tmp_path / "report.md",
+        table_paths={},
+        rows=[],
+        missing_required_metrics=[{"metric": "geneval_overall"}],
+    )
+    monkeypatch.setattr(cli_main, "generate_native_eval_report", lambda *args, **kwargs: result)
+
+    assert (
+        main(["report", "--artifact", str(tmp_path / "artifact"), "--output", str(tmp_path)])
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["missing_required_metric_count"] == 1
+
+    assert (
+        main(
+            [
+                "report",
+                "--artifact",
+                str(tmp_path / "artifact"),
+                "--output",
+                str(tmp_path),
+                "--fail-on-missing-required",
+            ]
+        )
+        == 1
+    )
+    assert json.loads(capsys.readouterr().out)["missing_required_metric_count"] == 1
 
 
 def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tmp_path):
@@ -2235,3 +2267,90 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
         "suites": ["flux2-native"],
         "revision": "main",
     }
+
+
+def test_cli_fetch_hf_artifacts_wires_suite_and_download_options(
+    capsys, tmp_path, monkeypatch
+):
+    seen = {}
+
+    def fake_fetch_hf_artifacts(**kwargs):
+        seen.update(kwargs)
+        if kwargs["stage_logger"] is not None:
+            kwargs["stage_logger"]("START", "example fetch")
+        return {
+            "namespace": kwargs["namespace"],
+            "output_root": str(kwargs["output_root"]),
+            "repo_count": 1,
+            "downloaded_count": 0,
+            "skipped_existing_count": 0,
+            "dry_run": kwargs["dry_run"],
+            "rows": [{"repo_id": "WaveCut/example"}],
+        }
+
+    monkeypatch.setattr(cli_main, "fetch_hf_artifacts", fake_fetch_hf_artifacts)
+
+    assert (
+        main(
+            [
+                "fetch-hf-artifacts",
+                "--namespace",
+                "WaveCut",
+                "--suite",
+                "flux1-schnell-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--revision",
+                "main",
+                "--no-resume",
+                "--force-download",
+                "--local-files-only",
+                "--validate-checksums",
+                "--validate-tensors",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert output["repo_count"] == 1
+    assert "example fetch" in captured.err
+    assert seen["namespace"] == "WaveCut"
+    assert [suite.name for suite in seen["suites"]] == ["flux1-schnell-native"]
+    assert seen["output_root"] == str(tmp_path / "artifacts")
+    assert seen["revision"] == "main"
+    assert seen["resume"] is False
+    assert seen["force_download"] is True
+    assert seen["local_files_only"] is True
+    assert seen["validate_checksums"] is True
+    assert seen["validate_tensors"] is True
+    assert seen["dry_run"] is False
+    assert seen["stage_logger"] is not None
+
+
+def test_cli_fetch_hf_artifacts_dry_run_suppresses_stage_log(capsys, monkeypatch):
+    seen = {}
+
+    def fake_fetch_hf_artifacts(**kwargs):
+        seen.update(kwargs)
+        return {
+            "namespace": kwargs["namespace"],
+            "output_root": str(kwargs["output_root"]),
+            "repo_count": 0,
+            "downloaded_count": 0,
+            "skipped_existing_count": 0,
+            "dry_run": kwargs["dry_run"],
+            "rows": [],
+        }
+
+    monkeypatch.setattr(cli_main, "fetch_hf_artifacts", fake_fetch_hf_artifacts)
+
+    assert main(["fetch-hf-artifacts", "--dry-run"]) == 0
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert output["dry_run"] is True
+    assert captured.err == ""
+    assert seen["dry_run"] is True
+    assert seen["stage_logger"] is None

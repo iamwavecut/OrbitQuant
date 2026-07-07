@@ -316,7 +316,7 @@ def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
     assert sha_entries["README.md"] == sha256_file(tmp_path / "README.md")
     assert "- Quantization device: `cuda`" in readme
     assert "- Weight quantization backend: `triton_cuda`" in readme
-    assert "- Quantization staging: `component`" in readme
+    assert "Quantization staging" not in readme
 
 
 def test_validate_orbitquant_artifact_rejects_corrupted_readme_checksum(tmp_path):

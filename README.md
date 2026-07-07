@@ -10,9 +10,9 @@ transformer-component artifacts that can be patched back into the original
 pipeline.
 
 The repository contains the Python package, quantization code, artifact tools,
-and validation helpers. Generated images, videos, raw logs, and metric dumps are
-local evidence inputs; published model repositories should contain compact
-artifacts, usage instructions, provenance, and selected final comparison assets.
+and validation helpers. Published model repositories contain compact artifacts,
+usage instructions, provenance, native eval summaries, and final comparison
+matrices.
 
 ## What It Provides
 
@@ -173,7 +173,15 @@ as quality evidence.
 ## Release Metrics
 
 Release-grade metrics are imported from the upstream metric runners. For image
-paper targets, generate native samples with the upstream GenEval metadata file:
+paper targets, first fetch the published artifacts into the native local layout:
+
+```bash
+orbitquant fetch-hf-artifacts \
+  --suite flux1-schnell-native \
+  --output-root ./artifacts/native
+```
+
+Then generate native samples with the upstream GenEval metadata file:
 
 ```bash
 orbitquant native-script \
@@ -196,24 +204,23 @@ orbitquant external-eval-script \
 
 For Wan, use the same `external-eval-script` path with `--suite wan-native` to
 run VBench custom-input dimensions against the native 832x480, 81-frame videos.
-Generated scripts emit `stage_log START/END` markers for long-running phases.
+
+Final publication gates are tracked in
+[docs/release-gates.md](docs/release-gates.md).
 
 ## Comparison Assets
 
-Artifacts can include BF16-vs-OrbitQuant visual comparisons under `assets/`.
-When these files are present and recorded in the manifest, the generated
-Hugging Face model card embeds them directly:
+Artifacts can include a final BF16-vs-OrbitQuant comparison matrix under
+`assets/`. When this file is present and recorded in the manifest, the generated
+Hugging Face model card embeds it directly:
 
-- `assets/original_vs_orbitquant_*.webp`
-- `assets/*generation_comparison_matrix.webp`
-- Wan contact-sheet comparisons for video artifacts
+- `assets/*_generation_comparison_matrix.webp`
 
 `orbitquant upload-artifact` uses the compact upload profile by default. The
-compact profile promotes final comparison matrices into `assets/` and omits
-`reports/` logs and raw eval dumps from the uploaded repository. Local raw logs
-and intermediate eval outputs should stay outside the model repo. Model cards
-describe the artifact, show how to use it, state source provenance, and display
-final comparison assets.
+compact profile promotes final comparison matrices into `assets/` and uploads
+only the compact artifact files required for use, validation, and the model
+card. Model cards describe the artifact, show how to use it, state source
+provenance, and display final comparison matrices.
 
 ## Artifact Layout
 
@@ -227,7 +234,7 @@ Each artifact is intentionally inspectable without executing code:
 - `orbitquant_rotations.safetensors`: deterministic RPBH rotation metadata.
 - `benchmark/*.jsonl` and `benchmark/*.csv`: imported metrics and native
   generation metadata.
-- `assets/`: selected final comparison images, contact sheets, and videos.
+- `assets/`: final comparison matrices embedded by the model card.
 - `SHA256SUMS`: checksums for artifact files.
 
 ## Kernels

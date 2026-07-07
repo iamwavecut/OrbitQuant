@@ -2,7 +2,13 @@ from orbitquant.artifacts import OrbitQuantManifest, render_model_card
 from orbitquant.config import OrbitQuantConfig
 
 
-def _manifest_for_model(model_id: str, bits: tuple[int, int] = (4, 4)) -> OrbitQuantManifest:
+def _manifest_for_model(
+    model_id: str,
+    bits: tuple[int, int] = (4, 4),
+    *,
+    checksums: dict[str, str] | None = None,
+    quantization_staging_mode: str = "unknown",
+) -> OrbitQuantManifest:
     config = OrbitQuantConfig(
         weight_bits=bits[0],
         activation_bits=bits[1],
@@ -15,7 +21,8 @@ def _manifest_for_model(model_id: str, bits: tuple[int, int] = (4, 4)) -> OrbitQ
         source_license="unknown",
         quantized_modules=["transformer_blocks.0.attn.to_q"],
         skipped_modules=["text_encoder"],
-        checksums={
+        checksums=checksums
+        or {
             "assets/image_generation_comparison_matrix.webp": "2" * 64,
             "assets/original_vs_orbitquant_seed0.webp": "0" * 64,
             (
@@ -23,6 +30,7 @@ def _manifest_for_model(model_id: str, bits: tuple[int, int] = (4, 4)) -> OrbitQ
                 "image_generation_comparison_matrix.webp"
             ): "1" * 64,
         },
+        quantization_staging_mode=quantization_staging_mode,
     )
 
 
@@ -42,9 +50,7 @@ def test_model_card_renders_rotation_and_codebook_metadata():
         quantized_modules=["transformer_blocks.0.attn.to_q"],
         skipped_modules=["text_encoder"],
         checksums={
-            "assets/original_vs_orbitquant_z-image-native_seed0_W3A3_simple-object.webp": (
-                "0" * 64
-            )
+            "assets/image_generation_comparison_matrix.webp": "0" * 64,
         },
     )
 
@@ -63,8 +69,8 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     assert "## Native Settings" in card
     assert "## Visual Comparison" in card
     assert (
-        "![assets/original_vs_orbitquant_z-image-native_seed0_W3A3_simple-object.webp]"
-        "(assets/original_vs_orbitquant_z-image-native_seed0_W3A3_simple-object.webp)"
+        "![assets/image_generation_comparison_matrix.webp]"
+        "(assets/image_generation_comparison_matrix.webp)"
     ) in card
 
 
@@ -75,21 +81,70 @@ def test_model_card_contains_install_command_not_workflow_log_language():
     assert "diffusers" in card
     assert "transformers" in card
     assert "accelerate" in card
-    assert "RunPod" not in card
-    assert "REMOTE_STAGE" not in card
-    assert "local report log" not in card
+    for forbidden in (
+        "reports/",
+        "terminal.log",
+        "run.jsonl",
+        "stage_log",
+        "RunPod",
+        "REMOTE_STAGE",
+    ):
+        assert forbidden not in card
 
 
-def test_model_card_embeds_artifact_comparison_matrix_before_single_sample_assets():
+def test_model_card_embeds_only_promoted_comparison_matrix_assets():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
     matrix = "assets/image_generation_comparison_matrix.webp"
     single_sample = "assets/original_vs_orbitquant_seed0.webp"
 
     assert f"![{matrix}]({matrix})" in card
-    assert f"![{single_sample}]({single_sample})" in card
-    assert card.index(matrix) < card.index(single_sample)
+    assert f"![{single_sample}]({single_sample})" not in card
     assert "reports/native" not in card
+
+
+def test_model_card_ignores_contact_sheets_for_published_artifacts():
+    contact_sheet = "assets/flux1_schnell_contact_sheet.webp"
+    single_sample = "assets/original_vs_orbitquant_seed0.webp"
+    card = render_model_card(
+        _manifest_for_model(
+            "black-forest-labs/FLUX.1-schnell",
+            checksums={
+                single_sample: "0" * 64,
+                contact_sheet: "1" * 64,
+            },
+        )
+    )
+
+    assert "Release readiness: blocked" in card
+    assert f"![{contact_sheet}]({contact_sheet})" not in card
+    assert f"![{single_sample}]({single_sample})" not in card
+
+
+def test_model_card_marks_release_blocked_without_promoted_comparison_assets():
+    card = render_model_card(
+        _manifest_for_model(
+            "black-forest-labs/FLUX.1-schnell",
+            checksums={
+                "assets/terminal.log": "0" * 64,
+                "assets/run.jsonl": "1" * 64,
+                "reports/native/stage_log/image_generation_comparison_matrix.webp": "2" * 64,
+            },
+            quantization_staging_mode="REMOTE_STAGE",
+        )
+    )
+
+    assert "Release readiness: blocked" in card
+    assert "does not include a generation comparison matrix" in card
+    for forbidden in (
+        "reports/",
+        "terminal.log",
+        "run.jsonl",
+        "stage_log",
+        "RunPod",
+        "REMOTE_STAGE",
+    ):
+        assert forbidden not in card
 
 
 def test_model_card_uses_flux2_native_code_example():

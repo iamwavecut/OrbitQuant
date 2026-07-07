@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from huggingface_hub import (
     CommitOperationDelete,
     HfApi,
     hf_hub_download,
+    snapshot_download,
 )
 
 from orbitquant.artifacts import refresh_artifact_checksums, validate_orbitquant_artifact
@@ -74,6 +76,7 @@ _REQUIRED_METRICS_BY_SUITE = {
 }
 _COMPACT_RAW_EVAL_ASSET_MARKERS = ("_geneval-", "_vbench-")
 _COMPACT_REPORT_ROOT = "reports/"
+_PUBLISHED_CORE_ARTIFACT_FILES = set(_REQUIRED_ARTIFACT_FILES)
 
 
 def inspect_model_metadata(model_id: str, *, revision: str | None = None) -> dict[str, Any]:
@@ -114,6 +117,103 @@ def _commit_info_payload(commit_info: Any) -> dict[str, Any]:
 def default_artifact_repo_id(namespace: str, suite: NativeSuite, bit_setting: str) -> str:
     model_name = suite.model_id.rsplit("/", maxsplit=1)[-1]
     return f"{namespace}/{model_name}-OrbitQuant-{bit_setting.upper()}"
+
+
+def _artifact_dir_name(suite: NativeSuite, bit_setting: str) -> str:
+    return f"{suite.name}-{bit_setting.lower()}"
+
+
+def fetch_hf_artifacts(
+    *,
+    namespace: str = "WaveCut",
+    suites: list[NativeSuite] | None = None,
+    output_root: str | Path = "artifacts/native",
+    revision: str | None = None,
+    resume: bool = True,
+    force_download: bool = False,
+    local_files_only: bool = False,
+    validate_checksums: bool = False,
+    validate_tensors: bool = False,
+    dry_run: bool = False,
+    stage_logger: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
+    selected_suites = list_native_suites() if suites is None else suites
+    output_path = Path(output_root)
+    rows = []
+    for suite in selected_suites:
+        for bit_setting in suite.bit_settings:
+            repo_id = default_artifact_repo_id(namespace, suite, bit_setting)
+            artifact_dir = output_path / _artifact_dir_name(suite, bit_setting)
+            label = f"{suite.name} {bit_setting} fetch {repo_id}"
+            row: dict[str, Any] = {
+                "suite": suite.name,
+                "bit_setting": bit_setting,
+                "repo_id": repo_id,
+                "artifact_dir": str(artifact_dir),
+                "revision": revision,
+                "dry_run": dry_run,
+                "downloaded": False,
+                "skipped_existing": False,
+            }
+            if dry_run:
+                rows.append(row)
+                continue
+
+            if resume and artifact_dir.is_dir():
+                try:
+                    validation = validate_orbitquant_artifact(
+                        artifact_dir,
+                        validate_checksums_enabled=validate_checksums,
+                        validate_tensors=validate_tensors,
+                    )
+                except Exception as exc:
+                    row["existing_validation_error"] = f"{type(exc).__name__}: {str(exc)}"
+                else:
+                    row["skipped_existing"] = True
+                    row["validation"] = validation
+                    rows.append(row)
+                    continue
+
+            if stage_logger is not None:
+                stage_logger("START", label)
+            try:
+                snapshot_path = snapshot_download(
+                    repo_id=repo_id,
+                    repo_type="model",
+                    revision=revision,
+                    local_dir=artifact_dir,
+                    force_download=force_download,
+                    local_files_only=local_files_only,
+                )
+                validation = validate_orbitquant_artifact(
+                    artifact_dir,
+                    validate_checksums_enabled=validate_checksums,
+                    validate_tensors=validate_tensors,
+                )
+            except Exception:
+                if stage_logger is not None:
+                    stage_logger("ERROR", label)
+                raise
+            else:
+                if stage_logger is not None:
+                    stage_logger("END", label)
+            row.update(
+                {
+                    "downloaded": True,
+                    "snapshot_path": str(snapshot_path),
+                    "validation": validation,
+                }
+            )
+            rows.append(row)
+    return {
+        "namespace": namespace,
+        "output_root": str(output_path),
+        "repo_count": len(rows),
+        "downloaded_count": sum(1 for row in rows if row["downloaded"]),
+        "skipped_existing_count": sum(1 for row in rows if row["skipped_existing"]),
+        "dry_run": dry_run,
+        "rows": rows,
+    }
 
 
 def _read_remote_json(repo_id: str, filename: str, *, revision: str | None = None) -> Any:
@@ -316,6 +416,18 @@ def _is_raw_eval_asset(relative_path: str) -> bool:
     return any(marker in name for marker in _COMPACT_RAW_EVAL_ASSET_MARKERS)
 
 
+def _is_published_card_asset(relative_path: str) -> bool:
+    if not relative_path.startswith("assets/"):
+        return False
+    return Path(relative_path).name.lower().endswith("_generation_comparison_matrix.webp")
+
+
+def _is_publishable_artifact_file(relative_path: str) -> bool:
+    return relative_path in _PUBLISHED_CORE_ARTIFACT_FILES or _is_published_card_asset(
+        relative_path
+    )
+
+
 def _is_report_file(relative_path: str) -> bool:
     return relative_path.startswith(_COMPACT_REPORT_ROOT)
 
@@ -401,6 +513,7 @@ def stage_compact_upload_artifact(
     copied_files = []
     omitted_raw_eval_assets = []
     omitted_report_files = []
+    omitted_unexpected_files = []
     for source_path in sorted(artifact_path.rglob("*")):
         if not source_path.is_file():
             continue
@@ -410,11 +523,19 @@ def stage_compact_upload_artifact(
         if _is_report_file(relative_path):
             omitted_report_files.append(relative_path)
             continue
+        if _is_publishable_artifact_file(relative_path):
+            _copy_artifact_file(source_path, artifact_path, output_path)
+            copied_files.append(relative_path)
+            continue
         if _is_raw_eval_asset(relative_path):
             omitted_raw_eval_assets.append(relative_path)
             continue
-        _copy_artifact_file(source_path, artifact_path, output_path)
-        copied_files.append(relative_path)
+        if relative_path.startswith("assets/") and not _is_published_card_asset(relative_path):
+            omitted_raw_eval_assets.append(relative_path)
+            continue
+        if not _is_publishable_artifact_file(relative_path):
+            omitted_unexpected_files.append(relative_path)
+            continue
 
     copied_report_assets = []
     artifact_report_root = artifact_path / "reports"
@@ -449,6 +570,9 @@ def stage_compact_upload_artifact(
         "omitted_raw_eval_asset_count": len(omitted_raw_eval_assets),
         "omitted_raw_eval_assets": omitted_raw_eval_assets[:50],
         "omitted_raw_eval_asset_overflow": max(0, len(omitted_raw_eval_assets) - 50),
+        "omitted_unexpected_file_count": len(omitted_unexpected_files),
+        "omitted_unexpected_files": omitted_unexpected_files[:50],
+        "omitted_unexpected_file_overflow": max(0, len(omitted_unexpected_files) - 50),
         "checksum_refresh": checksum_refresh,
     }
 
@@ -493,6 +617,12 @@ def audit_hf_artifact_repos(
             required_missing = [
                 filename for filename in _REQUIRED_ARTIFACT_FILES if filename not in file_names
             ]
+            forbidden_files = sorted(
+                filename
+                for filename in file_names
+                if not is_ignored_artifact_relative_path(filename)
+                and not _is_publishable_artifact_file(filename)
+            )
             manifest = {}
             manifest_error = None
             if "orbitquant_manifest.json" in file_names:
@@ -537,8 +667,11 @@ def audit_hf_artifact_repos(
                     "asset_count": sum(
                         1
                         for filename in file_names
-                        if filename.startswith("assets/") and filename != "assets/.gitkeep"
+                        if _is_published_card_asset(filename)
                     ),
+                    "forbidden_file_count": len(forbidden_files),
+                    "forbidden_files": forbidden_files[:100],
+                    "forbidden_file_overflow": max(0, len(forbidden_files) - 100),
                     "required_missing": required_missing,
                     "manifest_error": manifest_error,
                     "manifest_mismatches": manifest_mismatches,
@@ -559,6 +692,7 @@ def audit_hf_artifact_repos(
                 and files.get("model.safetensors") is not None
                 and not manifest_error
                 and not manifest_mismatches
+                and not forbidden_files
                 and not sha256sums_error
                 and not remote_checksum_mismatches
             )
@@ -593,6 +727,7 @@ def audit_hf_artifact_repos(
             len(row.get("remote_checksum_mismatches", [])) for row in rows
         )
         + sum(1 for row in rows if row.get("sha256sums_error")),
+        "forbidden_file_count": sum(row.get("forbidden_file_count", 0) for row in rows),
         "rows": rows,
     }
 
@@ -648,14 +783,15 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Missing required metrics: {payload.get('missing_required_metric_count', 0)}",
         f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
         f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
+        f"- Forbidden files: {payload.get('forbidden_file_count', 0)}",
         "",
         "## Artifact Matrix",
         "",
         (
             "| Suite | Bits | Repo | Private | Artifact | Native Smoke | Release Eval | "
-            "SHA | Missing Metrics |"
+            "SHA | Missing Metrics | Forbidden Files |"
         ),
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in payload.get("rows", []):
         repo_id = row.get("repo_id", "")
@@ -677,6 +813,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
                     _markdown_release_eval_status(row),
                     _short_sha(row.get("sha")),
                     missing_metrics,
+                    str(row.get("forbidden_file_count") or ""),
                 ]
             )
             + " |"
@@ -852,12 +989,18 @@ def cleanup_hf_artifact_reports(
     dry_run: bool = False,
     api: HfApi | None = None,
 ) -> dict[str, Any]:
-    """Promote final comparison matrices to assets/ and remove remote reports/ logs."""
+    """Promote final comparison matrices and remove non-publishable remote files."""
 
     api = HfApi() if api is None else api
     info = api.model_info(repo_id, revision=revision, files_metadata=True)
     file_names = {sibling.rfilename for sibling in info.siblings or []}
     report_files = sorted(filename for filename in file_names if _is_report_file(filename))
+    forbidden_files = sorted(
+        filename
+        for filename in file_names
+        if not is_ignored_artifact_relative_path(filename)
+        and not _is_publishable_artifact_file(filename)
+    )
     report_matrix_files = [
         filename for filename in report_files if _is_comparison_matrix_asset(Path(filename))
     ]
@@ -867,11 +1010,11 @@ def cleanup_hf_artifact_reports(
     sha256sums_bytes = _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
 
     manifest = OrbitQuantManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
-    used_paths = set(file_names) - set(report_files)
+    used_paths = set(file_names) - set(forbidden_files)
     promoted_assets: dict[str, bytes] = {}
     for report_matrix in report_matrix_files:
         target_path = _promoted_remote_matrix_path(report_matrix, used_paths)
-        if target_path in file_names and target_path not in report_files:
+        if target_path in file_names and target_path not in forbidden_files:
             continue
         promoted_assets[target_path] = _read_remote_bytes(
             repo_id, report_matrix, revision=revision
@@ -881,7 +1024,7 @@ def cleanup_hf_artifact_reports(
         relative_path: digest
         for relative_path, digest in manifest.checksums.items()
         if not is_ignored_artifact_relative_path(relative_path)
-        and not _is_report_file(relative_path)
+        and _is_publishable_artifact_file(relative_path)
     }
     cleaned_checksums.update(
         {
@@ -897,7 +1040,7 @@ def cleanup_hf_artifact_reports(
         relative_path: digest
         for relative_path, digest in _parse_sha256sums_bytes(sha256sums_bytes).items()
         if not is_ignored_artifact_relative_path(relative_path)
-        and not _is_report_file(relative_path)
+        and _is_publishable_artifact_file(relative_path)
     }
     sha_entries.update(
         {
@@ -937,18 +1080,29 @@ def cleanup_hf_artifact_reports(
         "dry_run": dry_run,
         "report_file_count": len(report_files),
         "report_matrix_count": len(report_matrix_files),
+        "forbidden_file_count": len(forbidden_files),
+        "forbidden_files": forbidden_files[:100],
+        "forbidden_file_overflow": max(0, len(forbidden_files) - 100),
         "promoted_assets": sorted(promoted_assets),
         "changed_files": changed_files,
-        "delete_paths": ["reports"] if report_files else [],
+        "delete_paths": [
+            *[filename for filename in forbidden_files if not _is_report_file(filename)],
+            *(["reports"] if report_files else []),
+        ],
         "commit": None,
     }
-    if dry_run or (not changed_files and not report_files):
+    if dry_run or (not changed_files and not forbidden_files):
         return result
 
     operations: list[Any] = [
         CommitOperationAdd(path_in_repo=filename, path_or_fileobj=file_payloads[filename])
         for filename in changed_files
     ]
+    operations.extend(
+        CommitOperationDelete(path_in_repo=filename, is_folder=False)
+        for filename in forbidden_files
+        if not _is_report_file(filename)
+    )
     if report_files:
         operations.append(CommitOperationDelete(path_in_repo="reports", is_folder=True))
     commit_info = api.create_commit(
@@ -956,7 +1110,7 @@ def cleanup_hf_artifact_reports(
         repo_type="model",
         revision=revision,
         operations=operations,
-        commit_message=commit_message or "Clean OrbitQuant artifact report logs",
+        commit_message=commit_message or "Clean OrbitQuant artifact assets",
     )
     result["commit"] = _commit_info_payload(commit_info)
     return result

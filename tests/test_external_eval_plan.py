@@ -43,6 +43,8 @@ def test_build_external_eval_plan_emits_vbench_import_commands(tmp_path):
     assert "orbitquant export-vbench" in job["export_command"]
     assert "vbench evaluate" in job["eval_command"]
     assert "--mode custom_input" in job["eval_command"]
+    assert "scene" in job["eval_command"]
+    assert "overall_consistency" in job["eval_command"]
     assert "orbitquant summarize-vbench-results" in job["summarize_command"]
     assert "--metric-prefix vbench" in job["import_command"]
     assert "--split orbitquant" in job["import_command"]
@@ -87,4 +89,5 @@ def test_build_external_eval_script_runs_vbench_import_and_report(tmp_path):
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a6'}" in script
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a4'}" in script
     assert f"--output {tmp_path / 'reports'}" in script
+    assert "--fail-on-missing-required" in script
     assert "range" not in script.lower()
