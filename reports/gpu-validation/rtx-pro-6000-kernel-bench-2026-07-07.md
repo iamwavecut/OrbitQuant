@@ -404,6 +404,61 @@ remaining full-model CPU work is mostly orchestration, model loading, artifact
 serialization, checksums, and future fused-kernel packaging work, not a silent
 CPU fallback for the implemented OrbitQuant CUDA stages.
 
+## Native Generation Artifact CPU Follow-Up
+
+Commit `c7efe7d` addresses the checksum side of the CPU-load concern for native
+generation packs. The previous `generate-pack --skip-artifact-checksums` path
+skipped strict checksum validation, but still refreshed manifest/SHA256/README
+metadata after every generated image/video sample. On GenEval-scale runs this
+could make the host CPU and disk look busy even when CUDA generation was active.
+
+The production path now:
+
+- records generated assets and metric rows without per-sample manifest/SHA
+  refresh when `--skip-artifact-checksums` is set;
+- performs one final `refresh_artifact_checksums()` pass at the end of
+  `generate-pack`;
+- returns a `checksum_refresh` summary in CLI JSON output;
+- keeps strict artifact validation passing after the final refresh;
+- stages OrbitQuant rotation/codebook constants on the same real device as the
+  quantized buffers, while preserving CPU constants for Diffusers meta-tensor
+  skeleton load.
+
+Local verification:
+
+```bash
+uv run pytest -q
+uv run ruff check .
+git diff --check
+```
+
+Targeted tests added for this checkpoint:
+
+```bash
+uv run pytest \
+  tests/test_artifact_writer.py::test_deferred_artifact_refresh_rebuilds_manifest_and_sha256sums_once \
+  tests/test_cli.py::test_cli_generate_pack_skip_checksums_refreshes_artifact_once_at_end \
+  tests/test_diffusers_modelmixin_integration.py::test_diffusers_modelmixin_save_pretrained_round_trips_pre_quantized_model \
+  -q
+```
+
+During the already-running FLUX.1-schnell W4A4 native GenEval generation on the
+RTX PRO 6000 pod, the quantized split showed real GPU load:
+
+```text
+split: orbitquant
+original.metrics.jsonl: 554 lines
+orbitquant.metrics.jsonl: 5 lines at sample time
+GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition
+VRAM: 43807 / 97887 MiB
+GPU utilization: 99 %
+power: 508.12 W
+```
+
+That run was intentionally not interrupted; it is still using the previous
+checkout. The checksum refresh improvement applies to subsequent native
+generation runs after the pod checkout is updated to `c7efe7d` or newer.
+
 ## Remaining Kernel Work
 
 The current CUDA path is no longer a CPU fallback path for the quantization
