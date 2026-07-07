@@ -141,8 +141,24 @@ def _contains_any(value: str, tokens: tuple[str, ...]) -> bool:
     return any(token in value for token in tokens)
 
 
-def _policy_rules(config: OrbitQuantConfig) -> PolicyRules:
-    return _POLICY_RULES.get(config.target_policy, _POLICY_RULES["generic_dit"])
+def resolve_target_policy(model: torch.nn.Module, config: OrbitQuantConfig) -> str:
+    if config.target_policy != "auto":
+        return config.target_policy
+
+    class_name = model.__class__.__name__.lower()
+    if "flux2" in class_name:
+        return "flux2"
+    if "zimage" in class_name or "z_image" in class_name:
+        return "z_image"
+    if "wantransformer" in class_name or class_name.startswith("wan"):
+        return "wan"
+    if "flux" in class_name:
+        return "flux"
+    return "generic_dit"
+
+
+def _policy_rules(model: torch.nn.Module, config: OrbitQuantConfig) -> PolicyRules:
+    return _POLICY_RULES.get(resolve_target_policy(model, config), _POLICY_RULES["generic_dit"])
 
 
 def _is_top_level_modulation(lowered: str, rules: PolicyRules) -> bool:
@@ -166,7 +182,7 @@ def classify_linear_modules(
 ) -> dict[str, PolicyDecision]:
     decisions: dict[str, PolicyDecision] = {}
     explicit_skips = tuple(config.modules_to_not_convert)
-    rules = _policy_rules(config)
+    rules = _policy_rules(model, config)
 
     for name, module in model.named_modules():
         if not isinstance(module, torch.nn.Linear):

@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.policies import classify_linear_modules
+from orbitquant.policies import classify_linear_modules, resolve_target_policy
 
 
 class TinyFluxSingleBlock(torch.nn.Module):
@@ -236,6 +236,38 @@ def test_flux_policy_matches_current_diffusers_tiny_module_names():
     assert decisions["proj_out"].action == "bf16_skip"
 
 
+class AutoFluxTransformer2DModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "norm1": torch.nn.ModuleDict(
+                            {"linear": torch.nn.Linear(16, 32)}
+                        ),
+                        "attn": torch.nn.ModuleDict(
+                            {"to_q": torch.nn.Linear(16, 16)}
+                        ),
+                    }
+                )
+            ]
+        )
+        self.proj_out = torch.nn.Linear(16, 8)
+
+
+def test_auto_policy_infers_flux_from_transformer_class_name():
+    model = AutoFluxTransformer2DModel()
+    config = OrbitQuantConfig(target_policy="auto")
+
+    decisions = classify_linear_modules(model, config)
+
+    assert resolve_target_policy(model, config) == "flux"
+    assert decisions["transformer_blocks.0.norm1.linear"].action == "adaln_int4_rtn"
+    assert decisions["transformer_blocks.0.attn.to_q"].action == "orbitquant"
+    assert decisions["proj_out"].action == "bf16_skip"
+
+
 def test_flux2_policy_matches_current_diffusers_tiny_module_names():
     pytest.importorskip("diffusers")
     from diffusers import Flux2Transformer2DModel
@@ -259,6 +291,32 @@ def test_flux2_policy_matches_current_diffusers_tiny_module_names():
     assert decisions["single_transformer_blocks.0.attn.to_qkv_mlp_proj"].action == "orbitquant"
     assert decisions["norm_out.linear"].action == "bf16_skip"
     assert decisions["proj_out"].action == "bf16_skip"
+
+
+class AutoFlux2Transformer2DModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.double_stream_modulation_img = torch.nn.ModuleDict(
+            {"linear": torch.nn.Linear(16, 96)}
+        )
+        self.single_transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {"attn": torch.nn.ModuleDict({"to_qkv_mlp_proj": torch.nn.Linear(16, 96)})}
+                )
+            ]
+        )
+
+
+def test_auto_policy_infers_flux2_from_transformer_class_name():
+    model = AutoFlux2Transformer2DModel()
+    config = OrbitQuantConfig(target_policy="auto")
+
+    decisions = classify_linear_modules(model, config)
+
+    assert resolve_target_policy(model, config) == "flux2"
+    assert decisions["double_stream_modulation_img.linear"].action == "adaln_int4_rtn"
+    assert decisions["single_transformer_blocks.0.attn.to_qkv_mlp_proj"].action == "orbitquant"
 
 
 def test_wan_policy_matches_current_diffusers_tiny_module_names():
@@ -288,3 +346,29 @@ def test_wan_policy_matches_current_diffusers_tiny_module_names():
     assert decisions["blocks.0.ffn.net.0.proj"].action == "orbitquant"
     assert decisions["blocks.0.ffn.net.2"].action == "orbitquant"
     assert decisions["proj_out"].action == "bf16_skip"
+
+
+class AutoZImageTransformer2DModel(TinyZImageNames):
+    pass
+
+
+class AutoWanTransformer3DModel(TinyWanNames):
+    pass
+
+
+def test_auto_policy_infers_z_image_and_wan_from_transformer_class_names():
+    z_image = AutoZImageTransformer2DModel()
+    wan = AutoWanTransformer3DModel()
+
+    assert resolve_target_policy(z_image, OrbitQuantConfig(target_policy="auto")) == "z_image"
+    assert resolve_target_policy(wan, OrbitQuantConfig(target_policy="auto")) == "wan"
+
+    z_decisions = classify_linear_modules(z_image, OrbitQuantConfig(target_policy="auto"))
+    wan_decisions = classify_linear_modules(wan, OrbitQuantConfig(target_policy="auto"))
+
+    assert z_decisions["transformer_blocks.0.adaLN_modulation.0"].action == "adaln_int4_rtn"
+    assert z_decisions["final_layer.linear"].action == "bf16_skip"
+    assert wan_decisions["blocks.0.attn2.to_k"].action == "orbitquant"
+    assert {decision.action for decision in wan_decisions.values()}.isdisjoint(
+        {"adaln_int4_rtn"}
+    )

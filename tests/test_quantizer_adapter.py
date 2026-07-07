@@ -22,6 +22,26 @@ class TinyQuantizerTransformer(torch.nn.Module):
         self.proj_out = torch.nn.Linear(16, 16)
 
 
+class FluxTransformer2DModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "norm1": torch.nn.ModuleDict(
+                            {"linear": torch.nn.Linear(16, 32)}
+                        ),
+                        "attn": torch.nn.ModuleDict(
+                            {"to_q": torch.nn.Linear(16, 16)}
+                        ),
+                    }
+                )
+            ]
+        )
+        self.proj_out = torch.nn.Linear(16, 16)
+
+
 def test_quantizer_adapter_reports_no_calibration_requirement():
     quantizer = OrbitQuantizer(OrbitQuantConfig())
 
@@ -126,6 +146,17 @@ def test_pre_quantized_quantizer_prepares_empty_quantized_module_skeletons():
     assert orbit_layer.row_norms.shape == (16,)
     assert adaln_layer.packed_weight.numel() == 1024
     assert adaln_layer.scales.shape == (32, 1)
+
+
+def test_pre_quantized_quantizer_auto_policy_prepares_flux_adaln_as_rtn():
+    model = FluxTransformer2DModel()
+    quantizer = OrbitQuantizer(OrbitQuantConfig(block_size=8), pre_quantized=True)
+
+    quantizer._process_model_before_weight_loading(model)
+
+    assert isinstance(model.transformer_blocks[0]["norm1"]["linear"], RTNInt4Linear)
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(model.proj_out, torch.nn.Linear)
 
 
 def test_on_the_fly_quantizer_quantizes_after_weight_loading_only():
