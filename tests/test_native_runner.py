@@ -47,7 +47,9 @@ class FakeImagePipeline:
 class FakeTransformer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.transformer_blocks = nn.ModuleList([nn.Linear(4, 4)])
+        self.transformer_blocks = nn.ModuleList(
+            [nn.ModuleDict({"attn": nn.ModuleDict({"to_q": nn.Linear(4, 4)})})]
+        )
 
 
 class FakeQuantPipeline:
@@ -165,8 +167,8 @@ def test_apply_quantization_to_pipeline_targets_transformer_component():
 
     summary = apply_quantization_to_pipeline(pipeline, suite, config)
 
-    assert summary.quantized_modules == ["transformer_blocks.0"]
-    assert isinstance(pipeline.transformer.transformer_blocks[0], OrbitQuantLinear)
+    assert summary.quantized_modules == ["transformer_blocks.0.attn.to_q"]
+    assert isinstance(pipeline.transformer.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
 
 
 def test_extract_video_frames_accepts_numpy_frame_batches():

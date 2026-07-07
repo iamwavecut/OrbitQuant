@@ -18,7 +18,10 @@ class PolicyDecision:
 _HARD_SKIP_TOKENS = (
     "embed",
     "embedding",
+    "embedder",
     "time_text_embed",
+    "time_guidance_embed",
+    "condition_embedder",
     "time_in",
     "time_out",
     "timestep",
@@ -31,7 +34,7 @@ _HARD_SKIP_TOKENS = (
     "safety_checker",
 )
 
-_BOUNDARY_SKIP_TOKENS = ("proj_out", "final", "unpatchify")
+_BOUNDARY_SKIP_TOKENS = ("proj_out", "norm_out", "final", "final_layer", "unpatchify")
 
 _BLOCK_TOKENS = (
     "transformer_blocks",
@@ -45,7 +48,84 @@ _BLOCK_TOKENS = (
     "mlp",
 )
 
-_MODULATION_TOKENS = ("adaln", "modulation", "mod", "norm1_context", "norm1")
+_MODULATION_TOKENS = ("adaln", "modulation", "norm1_context", "norm1", ".norm.linear")
+
+
+@dataclass(frozen=True)
+class PolicyRules:
+    block_tokens: tuple[str, ...] = _BLOCK_TOKENS
+    modulation_tokens: tuple[str, ...] = _MODULATION_TOKENS
+    modulation_scopes: tuple[str, ...] = _BLOCK_TOKENS
+    top_level_modulation_tokens: tuple[str, ...] = ()
+    hard_skip_tokens: tuple[str, ...] = _HARD_SKIP_TOKENS
+    boundary_skip_tokens: tuple[str, ...] = _BOUNDARY_SKIP_TOKENS
+    projection_tokens: tuple[str, ...] = ()
+
+
+_POLICY_RULES: dict[str, PolicyRules] = {
+    "auto": PolicyRules(),
+    "generic_dit": PolicyRules(),
+    "flux": PolicyRules(
+        block_tokens=("transformer_blocks", "single_transformer_blocks"),
+        modulation_scopes=("transformer_blocks", "single_transformer_blocks"),
+        projection_tokens=(
+            "to_q",
+            "to_k",
+            "to_v",
+            "to_out",
+            "add_q_proj",
+            "add_k_proj",
+            "add_v_proj",
+            "to_add_out",
+            "proj_mlp",
+            "proj_out",
+            "ff",
+            "ff_context",
+        ),
+    ),
+    "flux2": PolicyRules(
+        block_tokens=("transformer_blocks", "single_transformer_blocks"),
+        modulation_scopes=("transformer_blocks", "single_transformer_blocks"),
+        top_level_modulation_tokens=(
+            "double_stream_modulation_img",
+            "double_stream_modulation_txt",
+            "single_stream_modulation",
+        ),
+        projection_tokens=(
+            "to_q",
+            "to_k",
+            "to_v",
+            "to_out",
+            "add_q_proj",
+            "add_k_proj",
+            "add_v_proj",
+            "to_add_out",
+            "to_qkv_mlp_proj",
+            "linear_in",
+            "linear_out",
+        ),
+    ),
+    "z_image": PolicyRules(
+        block_tokens=("noise_refiner", "context_refiner", "layers", "transformer_blocks"),
+        modulation_scopes=("noise_refiner", "context_refiner", "layers", "transformer_blocks"),
+        projection_tokens=(
+            "attention",
+            "feed_forward",
+            "to_q",
+            "to_k",
+            "to_v",
+            "to_out",
+            "w1",
+            "w2",
+            "w3",
+        ),
+    ),
+    "wan": PolicyRules(
+        block_tokens=("blocks",),
+        modulation_scopes=("blocks",),
+        projection_tokens=("attn1", "attn2", "ffn", "to_q", "to_k", "to_v", "to_out"),
+    ),
+}
 
 
 def _dtype_override_for_module(name: str, config: OrbitQuantConfig) -> str | None:
@@ -55,17 +135,41 @@ def _dtype_override_for_module(name: str, config: OrbitQuantConfig) -> str | Non
     return None
 
 
+def _contains_any(value: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in value for token in tokens)
+
+
+def _policy_rules(config: OrbitQuantConfig) -> PolicyRules:
+    return _POLICY_RULES.get(config.target_policy, _POLICY_RULES["generic_dit"])
+
+
+def _is_top_level_modulation(lowered: str, rules: PolicyRules) -> bool:
+    return _contains_any(lowered, rules.top_level_modulation_tokens)
+
+
+def _is_scoped_modulation(lowered: str, rules: PolicyRules) -> bool:
+    return _contains_any(lowered, rules.modulation_scopes) and _contains_any(
+        lowered, rules.modulation_tokens
+    )
+
+
+def _is_transformer_projection(lowered: str, rules: PolicyRules) -> bool:
+    if not _contains_any(lowered, rules.block_tokens):
+        return False
+    return not rules.projection_tokens or _contains_any(lowered, rules.projection_tokens)
+
+
 def classify_linear_modules(
     model: torch.nn.Module, config: OrbitQuantConfig
 ) -> dict[str, PolicyDecision]:
     decisions: dict[str, PolicyDecision] = {}
     explicit_skips = tuple(config.modules_to_not_convert)
+    rules = _policy_rules(config)
 
     for name, module in model.named_modules():
         if not isinstance(module, torch.nn.Linear):
             continue
         lowered = name.lower()
-        in_transformer_block = any(token in lowered for token in _BLOCK_TOKENS)
         dtype_override = _dtype_override_for_module(name, config)
         if dtype_override is not None:
             decisions[name] = PolicyDecision(
@@ -76,17 +180,23 @@ def classify_linear_modules(
             )
         elif explicit_skips and any(token in name for token in explicit_skips):
             decisions[name] = PolicyDecision(name, "bf16_skip", "explicit modules_to_not_convert")
-        elif any(token in lowered for token in _HARD_SKIP_TOKENS):
+        elif _contains_any(lowered, rules.hard_skip_tokens):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "embedding, timestep, or non-denoiser module"
             )
-        elif any(token in lowered for token in _MODULATION_TOKENS):
+        elif _contains_any(lowered, rules.boundary_skip_tokens) and not _is_transformer_projection(
+            lowered, rules
+        ):
+            decisions[name] = PolicyDecision(
+                name, "bf16_skip", "non-transformer or boundary module"
+            )
+        elif _is_top_level_modulation(lowered, rules) or _is_scoped_modulation(lowered, rules):
             decisions[name] = PolicyDecision(
                 name, "adaln_int4_rtn", "dynamic modulation projection"
             )
-        elif in_transformer_block:
+        elif _is_transformer_projection(lowered, rules):
             decisions[name] = PolicyDecision(name, "orbitquant", "transformer block linear")
-        elif any(token in lowered for token in _BOUNDARY_SKIP_TOKENS):
+        elif _contains_any(lowered, rules.boundary_skip_tokens):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "non-transformer or boundary module"
             )
