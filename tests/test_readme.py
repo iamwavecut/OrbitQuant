@@ -1,18 +1,17 @@
 from pathlib import Path
 
 
-def test_readme_documents_native_gpu_pod_workflow():
+def test_readme_documents_component_artifact_usage():
     readme = Path("README.md").read_text(encoding="utf-8")
 
-    assert "RTX PRO 6000" in readme
-    assert "orbitquant native-plan" in readme
-    assert "orbitquant native-script" in readme
-    assert "orbitquant kernel-info" in readme
-    assert "orbitquant kernel-bench" in readme
-    assert "lowbit_unpack_optimized" in readme
+    assert "snapshot_download" in readme
+    assert "load_quantized_pipeline_component" in readme
+    assert "Published OrbitQuant model repos are component artifacts" in readme
+    assert "DiffusionPipeline.from_pretrained" in readme
+    assert "orbitquant quantize" in readme
+    assert "orbitquant validate-artifact" in readme
+    assert "Comparison Assets" in readme
+    assert "original_vs_orbitquant" in readme
     assert 'quantization_device="cuda"' in readme
-    assert "--resume" in readme
-    assert "--resume-existing" in readme
-    assert "hf auth whoami" in readme
-    assert "orbitquant validate-generation" in readme
-    assert "orbitquant record-metrics" in readme
+    assert "Small range smoke generations are not used as quality evidence" in readme
+    assert "RunPod" not in readme

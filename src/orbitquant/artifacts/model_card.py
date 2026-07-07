@@ -3,22 +3,124 @@ from __future__ import annotations
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 
 
+def _comparison_assets(checksums: dict[str, str]) -> list[str]:
+    assets = []
+    for path in sorted(checksums):
+        if not path.startswith("assets/"):
+            continue
+        name = path.rsplit("/", maxsplit=1)[-1].lower()
+        if (
+            "comparison_matrix" in name
+            or name.startswith("original_vs_orbitquant_")
+            or name.endswith("_contact_sheet.webp")
+        ):
+            assets.append(path)
+    return assets
+
+
+def _artifact_slug(model_id: str, bits: str) -> str:
+    return f"{model_id.rsplit('/', maxsplit=1)[-1]}-OrbitQuant-{bits}"
+
+
+def _usage_snippet(source_model_id: str, bits: str) -> str:
+    placeholder_repo = f"WaveCut/{_artifact_slug(source_model_id, bits)}"
+    return "\n".join(
+        [
+            "```python",
+            "import torch",
+            "from diffusers import DiffusionPipeline",
+            "from huggingface_hub import snapshot_download",
+            "from orbitquant import load_quantized_pipeline_component",
+            "",
+            f'base_model = "{source_model_id}"',
+            f'artifact_id = "{placeholder_repo}"',
+            "",
+            "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
+            "pipe = DiffusionPipeline.from_pretrained(",
+            "    base_model,",
+            "    torch_dtype=torch.bfloat16,",
+            ")",
+            "load_quantized_pipeline_component(",
+            "    pipe,",
+            "    artifact_dir,",
+            "    component=\"transformer\",",
+            "    device=\"cuda\",",
+            ")",
+            "pipe.to(\"cuda\")",
+            "",
+            "result = pipe(",
+            "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
+            ")",
+            "```",
+        ]
+    )
+
+
 def render_model_card(manifest: OrbitQuantManifest) -> str:
     data = manifest.to_dict()
     bits = f"W{data['weight_bits']}A{data['activation_bits']}"
+    comparison_assets = _comparison_assets(data["checksums"])
+    comparison_lines = []
+    if comparison_assets:
+        comparison_lines.extend(
+            [
+                "## Visual Comparison",
+                "",
+                "The following assets are stored in this artifact and compare the BF16 "
+                "base generation against the OrbitQuant generation with the same prompt "
+                "and seed.",
+                "",
+            ]
+        )
+        for path in comparison_assets[:4]:
+            comparison_lines.append(f"![{path}]({path})")
+            comparison_lines.append("")
+    else:
+        comparison_lines.extend(
+            [
+                "## Visual Comparison",
+                "",
+                "No generation comparison asset is stored in this artifact yet.",
+                "",
+            ]
+        )
+
     return "\n".join(
         [
             "---",
             f"base_model: {data['source_model_id']}",
+            f"license: {data['source_license']}",
             "tags:",
             "- orbitquant",
             "- quantized",
             "- diffusers",
+            "- diffusion-transformer",
             "---",
             "",
             f"# {data['source_model_id']} OrbitQuant {bits}",
             "",
-            "This is an OrbitQuant artifact generated from the source model listed above.",
+            "This repository contains a compact OrbitQuant transformer-component "
+            "artifact for the source Diffusers model listed above. It is intended "
+            "to be loaded into the original pipeline, not used as a standalone "
+            "Diffusers pipeline repository.",
+            "",
+            "OrbitQuant is a calibration-free post-training quantization method "
+            "for image and video diffusion transformers. This artifact keeps the "
+            "text encoders, VAE, embeddings, timestep MLP, and final heads in the "
+            "source precision by default and replaces the transformer linear "
+            "projections with OrbitQuant modules.",
+            "",
+            "## Usage",
+            "",
+            "Install the package from this repository, then load the base pipeline "
+            "and patch its transformer component with this artifact:",
+            "",
+            _usage_snippet(data["source_model_id"], bits),
+            "",
+            "For model-specific pipelines, you may replace `DiffusionPipeline` with "
+            "the matching Diffusers class, such as `FluxPipeline`, "
+            "`Flux2KleinPipeline`, `ZImagePipeline`, or `WanPipeline` when your "
+            "Diffusers version provides it.",
             "",
             "## Quantization",
             "",
@@ -36,9 +138,13 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             f"- Block size policy: `{data['block_size_policy']}`",
             f"- Codebook: `{data['codebook']}`",
             f"- Codebook version: `{data['codebook_version']}`",
+            f"- Quantized transformer modules: `{len(data['quantized_modules'])}`",
+            f"- AdaLN INT4 modules: `{len(data['adaln_modules'])}`",
+            f"- Skipped modules: `{len(data['skipped_modules'])}`",
             "- Calibration data: none",
             "- Text encoders and VAE: left in source precision by default",
             "",
+            *comparison_lines,
             "## Source",
             "",
             f"- Model: `{data['source_model_id']}`",
@@ -46,12 +152,24 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             f"- Source license: `{data['source_license']}`",
             "- OrbitQuant paper: https://arxiv.org/abs/2607.02461",
             "",
+            "## Artifact Files",
+            "",
+            "- `model.safetensors`: packed OrbitQuant/INT4 module tensors.",
+            "- `quantization_config.json`: serialized OrbitQuant runtime settings.",
+            "- `orbitquant_manifest.json`: source provenance, policies, module lists, "
+            "and checksums.",
+            "- `orbitquant_codebooks.safetensors`: Lloyd-Max codebooks.",
+            "- `orbitquant_rotations.safetensors`: deterministic RPBH rotation metadata.",
+            "",
             "## Limitations",
             "",
-            "The initial runtime may dequantize packed weights before BF16 matmul. "
-            "Disk artifacts are compact; current CUDA/MPS kernels optimize selected "
-            "activation codebook lookup/rescale stages and packed weight dequantization; "
-            "full fused low-bit kernels are separate work.",
+            "- This is a transformer-component artifact; load it into the source "
+            "pipeline as shown above.",
+            "- Runtime mode may dequantize packed weights before BF16 matmul. Disk "
+            "artifacts are compact, while runtime VRAM depends on the selected "
+            "backend.",
+            "- Quality depends on the source model and bit setting. Very low-bit "
+            "settings can degrade prompt following or visual detail.",
             "",
         ]
     )
