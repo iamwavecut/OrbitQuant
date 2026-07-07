@@ -330,6 +330,7 @@ def repair_hf_artifact_metadata(
     repo_id: str,
     quantization_device: str,
     weight_quantization_backend: str,
+    quantization_staging_mode: str | None = None,
     revision: str | None = None,
     commit_message: str | None = None,
     dry_run: bool = False,
@@ -368,7 +369,8 @@ def repair_hf_artifact_metadata(
         activation_kernel_backend=manifest.activation_kernel_backend,
         quantization_device=quantization_device,
         weight_quantization_backend=weight_quantization_backend,
-        quantization_staging_mode=manifest.quantization_staging_mode,
+        quantization_staging_mode=quantization_staging_mode
+        or manifest.quantization_staging_mode,
         quantized_modules=manifest.quantized_modules,
         adaln_modules=manifest.adaln_modules,
         skipped_modules=manifest.skipped_modules,
@@ -382,10 +384,10 @@ def repair_hf_artifact_metadata(
 
     model_index["quantization_device"] = quantization_device
     model_index["weight_quantization_backend"] = weight_quantization_backend
-    model_index["quantization_staging_mode"] = manifest.quantization_staging_mode
+    model_index["quantization_staging_mode"] = repaired_manifest.quantization_staging_mode
     benchmark_summary["quantization_device"] = quantization_device
     benchmark_summary["weight_quantization_backend"] = weight_quantization_backend
-    benchmark_summary["quantization_staging_mode"] = manifest.quantization_staging_mode
+    benchmark_summary["quantization_staging_mode"] = repaired_manifest.quantization_staging_mode
 
     next_model_index_bytes = _json_bytes(model_index)
     next_benchmark_bytes = _json_bytes(benchmark_summary)
@@ -440,6 +442,7 @@ def repair_hf_artifact_metadata(
         "updated": {
             "quantization_device": quantization_device,
             "weight_quantization_backend": weight_quantization_backend,
+            "quantization_staging_mode": repaired_manifest.quantization_staging_mode,
         },
         "changed_files": changed_files,
         "preserved_checksum_entries": sorted(
@@ -472,6 +475,7 @@ def repair_hf_artifact_metadata_matrix(
     suites: list[NativeSuite] | None = None,
     quantization_device: str,
     weight_quantization_backend: str,
+    quantization_staging_mode: str | None = None,
     revision: str | None = None,
     commit_message: str | None = None,
     dry_run: bool = False,
@@ -488,6 +492,7 @@ def repair_hf_artifact_metadata_matrix(
                     repo_id=repo_id,
                     quantization_device=quantization_device,
                     weight_quantization_backend=weight_quantization_backend,
+                    quantization_staging_mode=quantization_staging_mode,
                     revision=revision,
                     commit_message=commit_message,
                     dry_run=dry_run,

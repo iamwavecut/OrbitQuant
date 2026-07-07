@@ -267,14 +267,17 @@ def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
     manifest_payload = json.loads(manifest_path.read_text())
     manifest_payload["quantization_device"] = None
     manifest_payload["weight_quantization_backend"] = None
+    manifest_payload["quantization_staging_mode"] = None
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n")
     model_index_payload = json.loads(model_index_path.read_text())
     model_index_payload.pop("quantization_device")
     model_index_payload.pop("weight_quantization_backend")
+    model_index_payload.pop("quantization_staging_mode")
     model_index_path.write_text(json.dumps(model_index_payload, indent=2) + "\n")
     benchmark_payload = json.loads(benchmark_path.read_text())
     benchmark_payload.pop("quantization_device")
     benchmark_payload.pop("weight_quantization_backend")
+    benchmark_payload.pop("quantization_staging_mode")
     benchmark_path.write_text(json.dumps(benchmark_payload, indent=2) + "\n")
     manifest_payload["checksums"]["model_index.json"] = sha256_file(model_index_path)
     manifest_payload["checksums"]["benchmark/summary.json"] = sha256_file(benchmark_path)
@@ -285,6 +288,7 @@ def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
         tmp_path,
         quantization_device="cuda",
         weight_quantization_backend="triton_cuda",
+        quantization_staging_mode="component",
         validate_tensors=False,
     )
 
@@ -298,20 +302,21 @@ def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
     assert result["after"]["quantization_device"] == "cuda"
     assert validation["quantization_device"] == "cuda"
     assert validation["weight_quantization_backend"] == "triton_cuda"
+    assert validation["quantization_staging_mode"] == "component"
     assert manifest["quantization_device"] == "cuda"
     assert manifest["weight_quantization_backend"] == "triton_cuda"
-    assert manifest["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert manifest["quantization_staging_mode"] == "component"
     assert model_index["quantization_device"] == "cuda"
     assert model_index["weight_quantization_backend"] == "triton_cuda"
-    assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert model_index["quantization_staging_mode"] == "component"
     assert benchmark["quantization_device"] == "cuda"
     assert benchmark["weight_quantization_backend"] == "triton_cuda"
-    assert benchmark["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert benchmark["quantization_staging_mode"] == "component"
     assert sha_entries["orbitquant_manifest.json"] == sha256_file(manifest_path)
     assert sha_entries["README.md"] == sha256_file(tmp_path / "README.md")
     assert "- Quantization device: `cuda`" in readme
     assert "- Weight quantization backend: `triton_cuda`" in readme
-    assert f"- Quantization staging: `{summary.quantization_staging_mode}`" in readme
+    assert "- Quantization staging: `component`" in readme
 
 
 def test_validate_orbitquant_artifact_rejects_corrupted_readme_checksum(tmp_path):

@@ -153,11 +153,13 @@ def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
         repo_id=repo_id,
         quantization_device="cuda",
         weight_quantization_backend="triton_cuda",
+        quantization_staging_mode="component",
         dry_run=True,
         api=fake_api,
     )
 
     assert result["dry_run"] is True
+    assert result["updated"]["quantization_staging_mode"] == "component"
     assert result["commit"] is None
     assert "model.safetensors" in result["preserved_checksum_entries"]
     assert old_checksums["model.safetensors"]
@@ -189,6 +191,7 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
         repo_id=repo_id,
         quantization_device="cuda",
         weight_quantization_backend="triton_cuda",
+        quantization_staging_mode="component",
         revision="main",
         commit_message="repair metadata",
         api=fake_api,
@@ -219,6 +222,15 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
     assert sha_entries["model.safetensors"] == old_checksums["model.safetensors"]
     assert sha_entries["orbitquant_manifest.json"] != old_checksums["orbitquant_manifest.json"]
     assert ".cache/huggingface/download/README.md.metadata" not in sha_entries
+    manifest_operation = next(
+        operation
+        for operation in commit_call["operations"]
+        if operation.path_in_repo == "orbitquant_manifest.json"
+    )
+    assert (
+        b'"quantization_staging_mode": "component"'
+        in manifest_operation.path_or_fileobj
+    )
 
 
 def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
@@ -248,6 +260,7 @@ def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
         suites=[suite],
         quantization_device="cuda",
         weight_quantization_backend="triton_cuda",
+        quantization_staging_mode="component",
         dry_run=True,
         api=fake_api,
     )

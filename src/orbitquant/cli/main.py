@@ -248,6 +248,7 @@ def _record_generated_artifact(
             "metadata_path": str(result.metadata_path),
             "asset_paths": [str(asset_path) for asset_path in result.asset_paths],
             "device": result.metadata["device"],
+            "runtime_device": result.metadata.get("runtime_device"),
             "dtype": result.metadata["dtype"],
             "pipeline_class": result.metadata["pipeline_class"],
             "scheduler": result.metadata["scheduler"],
@@ -453,6 +454,10 @@ def main(argv: list[str] | None = None) -> int:
     repair_parser.add_argument("--artifact", required=True)
     repair_parser.add_argument("--quantization-device", required=True)
     repair_parser.add_argument("--weight-quantization-backend", required=True)
+    repair_parser.add_argument(
+        "--quantization-staging-mode",
+        choices=["streaming", "component", "unknown"],
+    )
     repair_parser.add_argument("--skip-tensor-validation", action="store_true")
 
     upload_parser = subparsers.add_parser(
@@ -487,6 +492,10 @@ def main(argv: list[str] | None = None) -> int:
     repair_hf_parser.add_argument("--commit-message")
     repair_hf_parser.add_argument("--quantization-device", required=True)
     repair_hf_parser.add_argument("--weight-quantization-backend", required=True)
+    repair_hf_parser.add_argument(
+        "--quantization-staging-mode",
+        choices=["streaming", "component", "unknown"],
+    )
     repair_hf_parser.add_argument("--dry-run", action="store_true")
 
     validate_generation_parser = subparsers.add_parser(
@@ -853,6 +862,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.artifact,
                     quantization_device=args.quantization_device,
                     weight_quantization_backend=args.weight_quantization_backend,
+                    quantization_staging_mode=args.quantization_staging_mode,
                     validate_tensors=not args.skip_tensor_validation,
                 ),
                 indent=2,
@@ -904,6 +914,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_id=args.repo_id,
                 quantization_device=args.quantization_device,
                 weight_quantization_backend=args.weight_quantization_backend,
+                quantization_staging_mode=args.quantization_staging_mode,
                 revision=args.revision,
                 commit_message=args.commit_message,
                 dry_run=args.dry_run,
@@ -914,6 +925,7 @@ def main(argv: list[str] | None = None) -> int:
                 suites=suites,
                 quantization_device=args.quantization_device,
                 weight_quantization_backend=args.weight_quantization_backend,
+                quantization_staging_mode=args.quantization_staging_mode,
                 revision=args.revision,
                 commit_message=args.commit_message,
                 dry_run=args.dry_run,

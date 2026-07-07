@@ -1859,6 +1859,7 @@ def test_cli_repair_artifact_metadata_wires_provenance_options(
             "updated": {
                 "quantization_device": kwargs["quantization_device"],
                 "weight_quantization_backend": kwargs["weight_quantization_backend"],
+                "quantization_staging_mode": kwargs["quantization_staging_mode"],
             },
         }
 
@@ -1874,6 +1875,8 @@ def test_cli_repair_artifact_metadata_wires_provenance_options(
                 "cuda",
                 "--weight-quantization-backend",
                 "triton_cuda",
+                "--quantization-staging-mode",
+                "component",
                 "--skip-tensor-validation",
             ]
         )
@@ -1883,11 +1886,13 @@ def test_cli_repair_artifact_metadata_wires_provenance_options(
     output = json.loads(capsys.readouterr().out)
     assert output["updated"]["quantization_device"] == "cuda"
     assert output["updated"]["weight_quantization_backend"] == "triton_cuda"
+    assert output["updated"]["quantization_staging_mode"] == "component"
     assert seen == {
         "artifact": str(tmp_path),
         "kwargs": {
             "quantization_device": "cuda",
             "weight_quantization_backend": "triton_cuda",
+            "quantization_staging_mode": "component",
             "validate_tensors": False,
         },
     }
@@ -1979,6 +1984,8 @@ def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monke
                 "cuda",
                 "--weight-quantization-backend",
                 "triton_cuda",
+                "--quantization-staging-mode",
+                "component",
                 "--dry-run",
             ]
         )
@@ -1992,6 +1999,7 @@ def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monke
         "repo_id": "WaveCut/example-orbitquant",
         "quantization_device": "cuda",
         "weight_quantization_backend": "triton_cuda",
+        "quantization_staging_mode": "component",
         "revision": "main",
         "commit_message": "repair metadata",
         "dry_run": True,

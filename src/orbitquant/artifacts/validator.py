@@ -76,6 +76,11 @@ def _validate_model_index(
         or "weight_quantization_backend" in model_index
     ):
         expected["weight_quantization_backend"] = manifest.weight_quantization_backend
+    if (
+        manifest.quantization_staging_mode != "unknown"
+        or "quantization_staging_mode" in model_index
+    ):
+        expected["quantization_staging_mode"] = manifest.quantization_staging_mode
     mismatches = [
         mismatch
         for key, value in expected.items()
@@ -142,6 +147,7 @@ def validate_orbitquant_artifact(
         "activation_kernel_backend": config.activation_kernel_backend,
         "quantization_device": manifest.quantization_device,
         "weight_quantization_backend": manifest.weight_quantization_backend,
+        "quantization_staging_mode": manifest.quantization_staging_mode,
         "tensor_count": len(expected_shapes),
         "tensor_validation": "checked" if validate_tensors else "skipped",
         "checksum_validation": "checked" if validate_checksums_enabled else "skipped",

@@ -244,6 +244,9 @@ def test_run_native_generation_saves_image_and_metadata(tmp_path):
     assert metadata["wall_time_seconds"] == result.metadata["wall_time_seconds"]
     assert metadata["peak_vram_bytes"] is None
     assert metadata["device"] == "cpu"
+    assert metadata["runtime_device"]["requested_device"] == "cpu"
+    assert metadata["runtime_device"]["resolved_device_type"] == "cpu"
+    assert metadata["runtime_device"]["cuda_active"] is False
     assert metadata["dtype"] == "float32"
     assert metadata["pipeline_class"] == "FakeImagePipeline"
     assert metadata["scheduler"] == {

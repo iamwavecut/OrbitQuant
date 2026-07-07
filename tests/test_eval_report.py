@@ -1,6 +1,7 @@
 import json
 
 import torch
+from PIL import Image
 
 from orbitquant.artifacts import record_artifact_metrics, save_orbitquant_artifact
 from orbitquant.config import OrbitQuantConfig
@@ -29,11 +30,21 @@ def _write_artifact(path, *, source_model_id: str, target_policy: str):
         source_license="apache-2.0",
         summary=summary,
     )
+    original_path = path / "assets" / "flux2-native_seed1_original_simple-object.png"
+    orbitquant_path = path / "assets" / "flux2-native_seed1_W4A4_simple-object.png"
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (16, 16), "red").save(original_path)
+    Image.new("RGB", (16, 16), "blue").save(orbitquant_path)
     record_artifact_metrics(
         path,
         split="original",
         metrics={"geneval_overall": 0.74, "wall_time_seconds": 12.0},
-        metadata={"suite": "flux2-native", "seed": 1},
+        metadata={
+            "suite": "flux2-native",
+            "seed": 1,
+            "output_path": str(original_path),
+            "prompt_record": {"id": "simple-object"},
+        },
     )
     record_artifact_metrics(
         path,
@@ -43,7 +54,8 @@ def _write_artifact(path, *, source_model_id: str, target_policy: str):
             "suite": "flux2-native",
             "seed": 1,
             "bit_setting": "W4A4",
-            "output_path": str(path / "assets" / "flux2-native_seed1_W4A4.png"),
+            "output_path": str(orbitquant_path),
+            "prompt_record": {"id": "simple-object"},
             "asset_paths": [
                 str(path / "assets" / "original_vs_orbitquant_flux2-native_seed1_W4A4.webp")
             ],
@@ -73,6 +85,7 @@ def test_generate_native_eval_report_writes_markdown_and_tables(tmp_path):
     assert (report_dir / "tables" / "perf.csv").is_file()
     assert (report_dir / "tables" / "assets.csv").is_file()
     assert (report_dir / "tables" / "missing_required_metrics.csv").is_file()
+    assert (report_dir / "assets" / "image_generation_comparison_matrix.webp").is_file()
 
     report = result.report_path.read_text()
     image_table = (report_dir / "tables" / "image_geneval.csv").read_text()
@@ -85,15 +98,20 @@ def test_generate_native_eval_report_writes_markdown_and_tables(tmp_path):
     assert "W4A4" in report
     assert "geneval_overall" in report
     assert "Generated Assets" in report
+    assert "Visual Comparison Matrices" in report
+    assert "image_generation_comparison_matrix.webp" in report
     assert "No required paper-target metrics are missing." in report
     assert "0.71" in image_table
     assert "8.5" in perf_table
     assert "output" in assets_table
     assert "comparison" in assets_table
-    assert "flux2-native_seed1_W4A4.png" in assets_table
+    assert "flux2-native_seed1_W4A4_simple-object.png" in assets_table
     assert "original_vs_orbitquant_flux2-native_seed1_W4A4.webp" in assets_table
     assert missing_table == "target_group,model_id,bits,split,suite,metric,artifact_dir\n"
     assert result.table_paths["assets"] == report_dir / "tables" / "assets.csv"
+    assert result.comparison_asset_paths == {
+        "image": report_dir / "assets" / "image_generation_comparison_matrix.webp"
+    }
     assert (
         result.table_paths["missing_required_metrics"]
         == report_dir / "tables" / "missing_required_metrics.csv"

@@ -52,6 +52,34 @@ def _peak_vram_bytes(device: str | torch.device) -> int | None:
     return int(torch.cuda.max_memory_allocated(device_index))
 
 
+def _runtime_device_metadata(device: str | torch.device) -> dict[str, Any]:
+    torch_device = torch.device(device)
+    payload: dict[str, Any] = {
+        "requested_device": str(device),
+        "resolved_device_type": torch_device.type,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_active": False,
+    }
+    device_index = _cuda_device_index(device)
+    if device_index is None:
+        return payload
+    capability = torch.cuda.get_device_capability(device_index)
+    payload.update(
+        {
+            "cuda_active": True,
+            "cuda_device_index": int(device_index),
+            "cuda_device_name": torch.cuda.get_device_name(device_index),
+            "cuda_device_capability": [int(capability[0]), int(capability[1])],
+            "cuda_memory_allocated_bytes": int(torch.cuda.memory_allocated(device_index)),
+            "cuda_memory_reserved_bytes": int(torch.cuda.memory_reserved(device_index)),
+            "cuda_peak_memory_allocated_bytes": int(
+                torch.cuda.max_memory_allocated(device_index)
+            ),
+        }
+    )
+    return payload
+
+
 def build_pipeline_kwargs(
     suite: NativeSuite,
     *,
@@ -379,6 +407,7 @@ def run_native_generation(
         "guidance": suite.guidance,
         "bit_settings": suite.bit_settings,
         "device": str(device),
+        "runtime_device": _runtime_device_metadata(device),
         "dtype": runtime_dtype,
         "pipeline_class": pipeline.__class__.__name__,
         "scheduler": _scheduler_metadata(pipeline),

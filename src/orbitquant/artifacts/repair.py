@@ -28,6 +28,7 @@ def repair_artifact_metadata(
     *,
     quantization_device: str | None = None,
     weight_quantization_backend: str | None = None,
+    quantization_staging_mode: str | None = None,
     validate_tensors: bool = True,
 ) -> dict[str, Any]:
     """Refresh metadata-only files after schema/provenance changes.
@@ -55,7 +56,7 @@ def repair_artifact_metadata(
 
     next_quantization_device = quantization_device or manifest.quantization_device
     next_weight_backend = weight_quantization_backend or manifest.weight_quantization_backend
-    next_staging_mode = manifest.quantization_staging_mode
+    next_staging_mode = quantization_staging_mode or manifest.quantization_staging_mode
 
     manifest = OrbitQuantManifest(
         source_model_id=manifest.source_model_id,
