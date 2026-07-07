@@ -193,6 +193,35 @@ def test_orbit_linear_cuda_weight_dequant_dispatches_to_triton_without_cpu_unpac
     ]
 
 
+def test_orbit_linear_triton_packed_matmul_runtime_rejects_non_cuda_before_quantization(
+    monkeypatch,
+):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="triton_packed_matmul",
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    x = torch.randn(2, 5, 16)
+
+    def fail_activation_quantization(*args, **kwargs):
+        raise AssertionError("device validation should run before activation quantization")
+
+    monkeypatch.setattr(
+        layers_module,
+        "quantize_activations_kernel",
+        fail_activation_quantization,
+    )
+
+    with pytest.raises(RuntimeError, match="requires CUDA input tensors"):
+        quantized(x)
+
+
 def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(monkeypatch):
     torch.manual_seed(5)
     source = torch.nn.Linear(16, 7)
@@ -241,6 +270,7 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
         )
 
     monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_activation_kernel)
+    monkeypatch.setattr(quantized, "_validate_triton_packed_matmul_input", lambda x: None)
     monkeypatch.setitem(
         sys.modules,
         "orbitquant.kernels.triton_cuda",

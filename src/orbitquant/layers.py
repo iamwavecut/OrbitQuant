@@ -292,6 +292,13 @@ class OrbitQuantLinear(nn.Module):
             ),
         }
 
+    def _validate_triton_packed_matmul_input(self, x: torch.Tensor) -> None:
+        if x.device.type != "cuda":
+            raise RuntimeError(
+                "triton_packed_matmul runtime requires CUDA input tensors; "
+                f"got {x.device.type}."
+            )
+
     def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         cache_key = (str(device), dtype)
         if (
@@ -364,6 +371,9 @@ class OrbitQuantLinear(nn.Module):
         return dequantized
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.runtime_mode == "triton_packed_matmul":
+            self._validate_triton_packed_matmul_input(x)
+
         if self.runtime_mode == "debug_no_quant":
             rotated_x = self.rotation.apply_to_activations(x.to(torch.float32)).to(x.dtype)
         elif self.runtime_mode == "debug_no_activation_quant":
