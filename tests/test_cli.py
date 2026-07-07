@@ -1417,6 +1417,53 @@ def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path
     assert output["quantized_module_count"] == 1
 
 
+def test_cli_repair_artifact_metadata_wires_provenance_options(
+    capsys, tmp_path, monkeypatch
+):
+    seen = {}
+
+    def fake_repair_artifact_metadata(artifact, **kwargs):
+        seen["artifact"] = artifact
+        seen["kwargs"] = kwargs
+        return {
+            "artifact_dir": artifact,
+            "updated": {
+                "quantization_device": kwargs["quantization_device"],
+                "weight_quantization_backend": kwargs["weight_quantization_backend"],
+            },
+        }
+
+    monkeypatch.setattr(cli_main, "repair_artifact_metadata", fake_repair_artifact_metadata)
+
+    assert (
+        main(
+            [
+                "repair-artifact-metadata",
+                "--artifact",
+                str(tmp_path),
+                "--quantization-device",
+                "cuda",
+                "--weight-quantization-backend",
+                "triton_cuda",
+                "--skip-tensor-validation",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["updated"]["quantization_device"] == "cuda"
+    assert output["updated"]["weight_quantization_backend"] == "triton_cuda"
+    assert seen == {
+        "artifact": str(tmp_path),
+        "kwargs": {
+            "quantization_device": "cuda",
+            "weight_quantization_backend": "triton_cuda",
+            "validate_tensors": False,
+        },
+    }
+
+
 def test_cli_upload_artifact_wires_validation_and_hf_options(capsys, tmp_path, monkeypatch):
     seen = {}
 

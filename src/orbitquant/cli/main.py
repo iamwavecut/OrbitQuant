@@ -12,6 +12,7 @@ from orbitquant.artifacts import (
     create_artifact_image_comparisons,
     record_artifact_asset,
     record_artifact_metrics,
+    repair_artifact_metadata,
     save_orbitquant_artifact,
     validate_orbitquant_artifact,
 )
@@ -315,6 +316,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     validate_parser.add_argument("--artifact", required=True)
 
+    repair_parser = subparsers.add_parser(
+        "repair-artifact-metadata",
+        help="refresh metadata-only artifact provenance and checksums",
+    )
+    repair_parser.add_argument("--artifact", required=True)
+    repair_parser.add_argument("--quantization-device", required=True)
+    repair_parser.add_argument("--weight-quantization-backend", required=True)
+    repair_parser.add_argument("--skip-tensor-validation", action="store_true")
+
     upload_parser = subparsers.add_parser(
         "upload-artifact", help="validate and upload an OrbitQuant artifact to HF Hub"
     )
@@ -597,6 +607,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate-artifact":
         print(json.dumps(validate_orbitquant_artifact(args.artifact)))
+        return 0
+    if args.command == "repair-artifact-metadata":
+        print(
+            json.dumps(
+                repair_artifact_metadata(
+                    args.artifact,
+                    quantization_device=args.quantization_device,
+                    weight_quantization_backend=args.weight_quantization_backend,
+                    validate_tensors=not args.skip_tensor_validation,
+                ),
+                indent=2,
+            )
+        )
         return 0
     if args.command == "upload-artifact":
         print(

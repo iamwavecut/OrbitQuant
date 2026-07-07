@@ -53,7 +53,7 @@ def write_sha256sums_from_manifest(
     if manifest_path.is_file():
         entries["orbitquant_manifest.json"] = sha256_file(manifest_path)
     readme_path = root_path / "README.md"
-    if readme_path.is_file() and "README.md" not in entries:
+    if readme_path.is_file():
         entries["README.md"] = sha256_file(readme_path)
 
     entries = {

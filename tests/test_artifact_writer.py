@@ -9,11 +9,12 @@ from orbitquant.artifacts import (
     load_orbitquant_artifact,
     record_artifact_asset,
     record_artifact_metrics,
+    repair_artifact_metadata,
     save_orbitquant_artifact,
     sha256_file,
     validate_orbitquant_artifact,
 )
-from orbitquant.artifacts.checksums import write_sha256sums_from_manifest
+from orbitquant.artifacts.checksums import read_sha256sums, write_sha256sums_from_manifest
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import quantize_linear_modules
@@ -198,6 +199,68 @@ def test_validate_orbitquant_artifact_can_skip_heavy_checksum_and_tensor_passes(
     assert result["checksum_validation"] == "skipped"
     assert result["sha256sums_validation"] == "skipped"
     assert result["tensor_validation"] == "skipped"
+
+
+def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config, quantization_device=None)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    model_index_path = tmp_path / "model_index.json"
+    benchmark_path = tmp_path / "benchmark" / "summary.json"
+    manifest_payload = json.loads(manifest_path.read_text())
+    manifest_payload["quantization_device"] = None
+    manifest_payload["weight_quantization_backend"] = None
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n")
+    model_index_payload = json.loads(model_index_path.read_text())
+    model_index_payload.pop("quantization_device")
+    model_index_payload.pop("weight_quantization_backend")
+    model_index_path.write_text(json.dumps(model_index_payload, indent=2) + "\n")
+    benchmark_payload = json.loads(benchmark_path.read_text())
+    benchmark_payload.pop("quantization_device")
+    benchmark_payload.pop("weight_quantization_backend")
+    benchmark_path.write_text(json.dumps(benchmark_payload, indent=2) + "\n")
+    manifest_payload["checksums"]["model_index.json"] = sha256_file(model_index_path)
+    manifest_payload["checksums"]["benchmark/summary.json"] = sha256_file(benchmark_path)
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest_payload["checksums"])
+
+    result = repair_artifact_metadata(
+        tmp_path,
+        quantization_device="cuda",
+        weight_quantization_backend="triton_cuda",
+        validate_tensors=False,
+    )
+
+    validation = validate_orbitquant_artifact(tmp_path, validate_tensors=False)
+    manifest = json.loads(manifest_path.read_text())
+    model_index = json.loads(model_index_path.read_text())
+    benchmark = json.loads(benchmark_path.read_text())
+    sha_entries = read_sha256sums(tmp_path / "SHA256SUMS")
+    readme = (tmp_path / "README.md").read_text()
+    assert result["before"]["quantization_device"] is None
+    assert result["after"]["quantization_device"] == "cuda"
+    assert validation["quantization_device"] == "cuda"
+    assert validation["weight_quantization_backend"] == "triton_cuda"
+    assert manifest["quantization_device"] == "cuda"
+    assert manifest["weight_quantization_backend"] == "triton_cuda"
+    assert model_index["quantization_device"] == "cuda"
+    assert model_index["weight_quantization_backend"] == "triton_cuda"
+    assert benchmark["quantization_device"] == "cuda"
+    assert benchmark["weight_quantization_backend"] == "triton_cuda"
+    assert sha_entries["orbitquant_manifest.json"] == sha256_file(manifest_path)
+    assert sha_entries["README.md"] == sha256_file(tmp_path / "README.md")
+    assert "- Quantization device: `cuda`" in readme
+    assert "- Weight quantization backend: `triton_cuda`" in readme
 
 
 def test_validate_orbitquant_artifact_rejects_corrupted_readme_checksum(tmp_path):

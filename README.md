@@ -83,6 +83,20 @@ paper-target required metrics. It reports `artifact_ready`,
 `native_smoke_ready`, and `release_eval_ready` separately so visual smoke
 artifacts are not confused with GenEval/VBench completion.
 
+Repair metadata-only provenance on an existing local artifact without rewriting
+packed weights:
+
+```bash
+orbitquant repair-artifact-metadata \
+  --artifact ./artifacts/flux2-klein-w4a4 \
+  --quantization-device cuda \
+  --weight-quantization-backend triton_cuda
+```
+
+This refreshes `orbitquant_manifest.json`, `model_index.json`,
+`benchmark/summary.json`, `README.md`, and `SHA256SUMS`. Use it for schema or
+provenance fixes before re-running `upload-artifact`.
+
 Prepare a native GPU run on an RTX PRO 6000 96GB pod:
 
 ```bash
