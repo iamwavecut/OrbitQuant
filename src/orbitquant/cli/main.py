@@ -196,6 +196,25 @@ def _expected_generation_output_path(
     )
 
 
+def _policy_inventory_summary(payload: dict[str, Any], output_path: Path) -> dict[str, Any]:
+    return {
+        "source_model_id": payload["source_model_id"],
+        "source_revision": payload["source_revision"],
+        "suite": payload["suite"],
+        "component": payload["component"],
+        "load_mode": payload["load_mode"],
+        "pipeline_class": payload["pipeline_class"],
+        "component_class": payload["component_class"],
+        "target_policy": payload["target_policy"],
+        "linear_module_count": payload["linear_module_count"],
+        "action_counts": payload["action_counts"],
+        "quantized_module_count": len(payload["quantized_modules"]),
+        "adaln_module_count": len(payload["adaln_modules"]),
+        "skipped_module_count": len(payload["skipped_modules"]),
+        "output": str(output_path),
+    }
+
+
 def _record_generated_artifact(
     artifact_path: Path,
     result: Any,
@@ -784,7 +803,7 @@ def main(argv: list[str] | None = None) -> int:
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            payload["output"] = str(output_path)
+            payload = _policy_inventory_summary(payload, output_path)
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "native-suites":

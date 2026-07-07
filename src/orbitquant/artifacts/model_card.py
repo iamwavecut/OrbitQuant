@@ -11,7 +11,14 @@ def _comparison_assets(checksums: dict[str, str]) -> list[str]:
         name = path.rsplit("/", maxsplit=1)[-1].lower()
         if name.endswith("_generation_comparison_matrix.webp"):
             assets.append(path)
-    return sorted(assets)
+    assets = sorted(assets)
+    for preferred in (
+        "assets/image_generation_comparison_matrix.webp",
+        "assets/video_generation_comparison_matrix.webp",
+    ):
+        if preferred in assets:
+            return [preferred]
+    return assets[:1]
 
 
 def _artifact_slug(model_id: str, bits: str) -> str:
@@ -305,7 +312,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
                 "",
             ]
         )
-        for path in comparison_assets[:4]:
+        for path in comparison_assets:
             comparison_lines.append(f"![{path}]({path})")
             comparison_lines.append("")
     else:

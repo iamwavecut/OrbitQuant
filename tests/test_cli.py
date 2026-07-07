@@ -1999,6 +1999,11 @@ def test_cli_inspect_policy_with_suite_writes_module_inventory(monkeypatch, caps
     saved = json.loads(output_path.read_text())
 
     assert output["output"] == str(output_path)
+    assert output["linear_module_count"] == 2
+    assert output["quantized_module_count"] == 1
+    assert output["adaln_module_count"] == 1
+    assert output["skipped_module_count"] == 0
+    assert "modules" not in output
     assert saved["source_model_id"] == "black-forest-labs/FLUX.2-klein-4B"
     assert saved["suite"] == "flux2-native"
     assert saved["component"] == "transformer"

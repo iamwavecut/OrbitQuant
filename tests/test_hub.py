@@ -231,7 +231,7 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
     assert result["validation"]["valid"] is True
     assert result["omitted_raw_eval_asset_count"] == 10
     assert result["omitted_report_file_count"] == 2
-    assert result["copied_report_asset_count"] == 2
+    assert result["copied_report_asset_count"] == 1
     assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
     assert not (stage_dir / raw_eval_metadata.relative_to(tmp_path)).exists()
     assert not (stage_dir / visual_asset.relative_to(tmp_path)).exists()
@@ -245,14 +245,49 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
         stage_dir / "assets" / f"{report_dir.name}_image_generation_comparison_matrix.webp"
     )
     assert staged_report.is_file()
-    assert staged_collision_report.is_file()
+    assert staged_report.read_bytes() == b"in artifact report matrix"
+    assert not staged_collision_report.exists()
     assert raw_eval_asset.relative_to(tmp_path).as_posix() not in staged_checksums
     assert visual_asset.relative_to(tmp_path).as_posix() not in staged_checksums
     assert comparison_asset.relative_to(tmp_path).as_posix() not in staged_checksums
     assert raw_video_asset.relative_to(tmp_path).as_posix() not in staged_checksums
     assert not any(path.startswith("reports/") for path in staged_checksums)
     assert staged_report.relative_to(stage_dir).as_posix() in staged_checksums
-    assert staged_collision_report.relative_to(stage_dir).as_posix() in staged_checksums
+
+
+def test_stage_compact_upload_artifact_keeps_one_direct_comparison_matrix(tmp_path):
+    _write_artifact(tmp_path)
+    image_matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    video_matrix = tmp_path / "assets" / "video_generation_comparison_matrix.webp"
+    image_matrix.write_bytes(b"image matrix")
+    video_matrix.write_bytes(b"video matrix")
+    report_matrix = (
+        tmp_path
+        / "reports"
+        / "native"
+        / "flux2-w4a4"
+        / "assets"
+        / "image_generation_comparison_matrix.webp"
+    )
+    report_matrix.parent.mkdir(parents=True)
+    report_matrix.write_bytes(b"report matrix")
+    refresh_artifact_checksums(tmp_path)
+
+    stage_dir = tmp_path.parent / f"{tmp_path.name}-stage"
+    result = stage_compact_upload_artifact(
+        tmp_path,
+        stage_dir,
+        validate_tensors=False,
+    )
+
+    staged_checksums = read_sha256sums(stage_dir / "SHA256SUMS")
+    assert result["copied_report_asset_count"] == 0
+    assert (stage_dir / "assets" / "image_generation_comparison_matrix.webp").read_bytes() == (
+        b"image matrix"
+    )
+    assert not (stage_dir / "assets" / "video_generation_comparison_matrix.webp").exists()
+    assert "assets/image_generation_comparison_matrix.webp" in staged_checksums
+    assert "assets/video_generation_comparison_matrix.webp" not in staged_checksums
 
 
 def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
@@ -449,6 +484,60 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
     assert "assets/image_generation_comparison_matrix.webp" in next_sha
     assert "benchmark/original.metrics.jsonl" not in next_sha
     assert "reports/native" not in next_sha
+
+
+def test_cleanup_hf_artifact_reports_deletes_extra_comparison_matrix_assets(
+    tmp_path,
+    monkeypatch,
+):
+    repo_id = "WaveCut/example-orbitquant"
+    _write_artifact(tmp_path)
+    image_matrix = tmp_path / "assets" / "image_generation_comparison_matrix.webp"
+    video_matrix = tmp_path / "assets" / "video_generation_comparison_matrix.webp"
+    image_matrix.write_bytes(b"image matrix")
+    video_matrix.write_bytes(b"video matrix")
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_path(tmp_path, filename))
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = cleanup_hf_artifact_reports(
+        repo_id=repo_id,
+        commit_message="cleanup extra matrix",
+        api=fake_api,
+    )
+
+    assert result["promoted_assets"] == []
+    assert result["forbidden_files"] == [
+        "assets/video_generation_comparison_matrix.webp",
+        "benchmark/orbitquant.metrics.csv",
+        "benchmark/orbitquant.metrics.jsonl",
+        "benchmark/original.metrics.csv",
+        "benchmark/original.metrics.jsonl",
+    ]
+    assert "assets/video_generation_comparison_matrix.webp" in result["delete_paths"]
+    commit_call = fake_api.create_commit_calls[0]
+    operations = commit_call["operations"]
+    added = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in operations
+        if isinstance(operation, CommitOperationAdd)
+    }
+    deleted_paths = {
+        operation.path_in_repo
+        for operation in operations
+        if isinstance(operation, CommitOperationDelete)
+    }
+    assert "assets/video_generation_comparison_matrix.webp" in deleted_paths
+    next_manifest = json.loads(added["orbitquant_manifest.json"].decode("utf-8"))
+    next_readme = added.get("README.md", (tmp_path / "README.md").read_bytes()).decode("utf-8")
+    assert "assets/image_generation_comparison_matrix.webp" in next_manifest["checksums"]
+    assert "assets/video_generation_comparison_matrix.webp" not in next_manifest["checksums"]
+    assert "assets/image_generation_comparison_matrix.webp" in next_readme
+    assert "assets/video_generation_comparison_matrix.webp" not in next_readme
 
 
 def test_cleanup_hf_artifact_reports_matrix_cleans_expected_suite_repo(
@@ -879,6 +968,71 @@ def test_audit_hf_artifact_repos_flags_native_smoke_ready_but_missing_release_me
         {"split": "original", "metric": "geneval_overall"},
         {"split": "orbitquant", "metric": "geneval_overall"},
     ]
+
+
+def test_audit_hf_artifact_repos_flags_extra_comparison_matrix_assets(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+            "assets/video_generation_comparison_matrix.webp": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux2",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": ["block.modulation"],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text('{"metrics": {}}\n')
+    file_map = {
+        (repo_id, "orbitquant_manifest.json"): manifest_path,
+        (repo_id, "SHA256SUMS"): sha256sums_path,
+        (repo_id, "benchmark/summary.json"): summary_path,
+    }
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+
+    assert result["artifact_ready_count"] == 0
+    assert result["forbidden_file_count"] == 1
+    row = result["rows"][0]
+    assert row["artifact_ready"] is False
+    assert row["asset_count"] == 2
+    assert row["forbidden_files"] == ["assets/video_generation_comparison_matrix.webp"]
 
 
 def test_audit_hf_artifact_repos_rejects_lfs_checksum_mismatch(tmp_path, monkeypatch):

@@ -486,6 +486,28 @@ def _is_published_card_asset(relative_path: str) -> bool:
     return Path(relative_path).name.lower().endswith("_generation_comparison_matrix.webp")
 
 
+def _published_card_assets(relative_paths: set[str] | list[str]) -> list[str]:
+    return sorted(path for path in relative_paths if _is_published_card_asset(path))
+
+
+def _preferred_published_card_asset(relative_paths: set[str] | list[str]) -> str | None:
+    assets = _published_card_assets(relative_paths)
+    if not assets:
+        return None
+    for preferred in (
+        "assets/image_generation_comparison_matrix.webp",
+        "assets/video_generation_comparison_matrix.webp",
+    ):
+        if preferred in assets:
+            return preferred
+    return assets[0]
+
+
+def _extra_published_card_assets(relative_paths: set[str] | list[str]) -> list[str]:
+    selected = _preferred_published_card_asset(relative_paths)
+    return [path for path in _published_card_assets(relative_paths) if path != selected]
+
+
 def _is_publishable_artifact_file(relative_path: str) -> bool:
     return relative_path in _PUBLISHED_CORE_ARTIFACT_FILES or _is_published_card_asset(
         relative_path
@@ -513,19 +535,19 @@ def _comparison_matrix_target_path(
     return output_path / "assets" / f"{report_dir.name}_{source_path.name}"
 
 
-def _copy_report_comparison_assets(
-    report_dir: Path, output_path: Path
+def _copy_first_report_comparison_asset(
+    report_dirs: list[Path], output_path: Path
 ) -> list[str]:
-    copied = []
-    report_dir = report_dir.resolve()
-    for source_path in sorted(report_dir.rglob("*")):
-        if not source_path.is_file() or not _is_comparison_matrix_asset(source_path):
-            continue
-        target_path = _comparison_matrix_target_path(source_path, report_dir, output_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, target_path)
-        copied.append(target_path.relative_to(output_path).as_posix())
-    return copied
+    for report_dir in report_dirs:
+        report_dir = report_dir.resolve()
+        for source_path in sorted(report_dir.rglob("*")):
+            if not source_path.is_file() or not _is_comparison_matrix_asset(source_path):
+                continue
+            target_path = _comparison_matrix_target_path(source_path, report_dir, output_path)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+            return [target_path.relative_to(output_path).as_posix()]
+    return []
 
 
 def _report_matrix_name_prefix(relative_path: str) -> str:
@@ -582,9 +604,16 @@ def stage_compact_upload_artifact(
     omitted_raw_eval_assets = []
     omitted_report_files = []
     omitted_unexpected_files = []
-    for source_path in sorted(artifact_path.rglob("*")):
-        if not source_path.is_file():
-            continue
+    source_files = [
+        source_path
+        for source_path in sorted(artifact_path.rglob("*"))
+        if source_path.is_file()
+    ]
+    source_relative_paths = [
+        source_path.relative_to(artifact_path).as_posix() for source_path in source_files
+    ]
+    selected_card_asset = _preferred_published_card_asset(source_relative_paths)
+    for source_path in source_files:
         relative_path = source_path.relative_to(artifact_path).as_posix()
         if is_ignored_artifact_relative_path(relative_path):
             continue
@@ -597,6 +626,9 @@ def stage_compact_upload_artifact(
         if relative_path == "benchmark/summary.json":
             _copy_compact_benchmark_summary(source_path, artifact_path, output_path)
             copied_files.append(relative_path)
+            continue
+        if _is_published_card_asset(relative_path) and relative_path != selected_card_asset:
+            omitted_raw_eval_assets.append(relative_path)
             continue
         if _is_publishable_artifact_file(relative_path):
             _copy_artifact_file(source_path, artifact_path, output_path)
@@ -613,16 +645,19 @@ def stage_compact_upload_artifact(
             continue
 
     copied_report_assets = []
+    report_paths = []
     artifact_report_root = artifact_path / "reports"
     if artifact_report_root.is_dir():
-        copied_report_assets.extend(
-            _copy_report_comparison_assets(artifact_report_root, output_path)
-        )
+        report_paths.append(artifact_report_root)
     for report_dir in report_dirs or []:
         path = Path(report_dir)
         if not path.is_dir():
             raise RuntimeError(f"report directory missing: {path}")
-        copied_report_assets.extend(_copy_report_comparison_assets(path, output_path))
+        report_paths.append(path)
+    if selected_card_asset is None:
+        copied_report_assets.extend(
+            _copy_first_report_comparison_asset(report_paths, output_path)
+        )
 
     checksum_refresh = refresh_artifact_checksums(output_path)
     staged_validation = validate_orbitquant_artifact(
@@ -693,10 +728,13 @@ def audit_hf_artifact_repos(
                 filename for filename in _REQUIRED_ARTIFACT_FILES if filename not in file_names
             ]
             forbidden_files = sorted(
-                filename
-                for filename in file_names
-                if not is_ignored_artifact_relative_path(filename)
-                and not _is_publishable_artifact_file(filename)
+                {
+                    filename
+                    for filename in file_names
+                    if not is_ignored_artifact_relative_path(filename)
+                    and not _is_publishable_artifact_file(filename)
+                }
+                | set(_extra_published_card_assets(file_names))
             )
             manifest = {}
             manifest_error = None
@@ -1071,10 +1109,13 @@ def cleanup_hf_artifact_reports(
     file_names = {sibling.rfilename for sibling in info.siblings or []}
     report_files = sorted(filename for filename in file_names if _is_report_file(filename))
     forbidden_files = sorted(
-        filename
-        for filename in file_names
-        if not is_ignored_artifact_relative_path(filename)
-        and not _is_publishable_artifact_file(filename)
+        {
+            filename
+            for filename in file_names
+            if not is_ignored_artifact_relative_path(filename)
+            and not _is_publishable_artifact_file(filename)
+        }
+        | set(_extra_published_card_assets(file_names))
     )
     report_matrix_files = [
         filename for filename in report_files if _is_comparison_matrix_asset(Path(filename))
@@ -1089,7 +1130,9 @@ def cleanup_hf_artifact_reports(
     next_benchmark_bytes = _compact_benchmark_summary_bytes_from_remote(benchmark_bytes)
     used_paths = set(file_names) - set(forbidden_files)
     promoted_assets: dict[str, bytes] = {}
-    for report_matrix in report_matrix_files:
+    existing_card_asset = _preferred_published_card_asset(file_names)
+    report_matrices_to_promote = report_matrix_files[:1] if existing_card_asset is None else []
+    for report_matrix in report_matrices_to_promote:
         target_path = _promoted_remote_matrix_path(report_matrix, used_paths)
         if target_path in file_names and target_path not in forbidden_files:
             continue
@@ -1102,6 +1145,7 @@ def cleanup_hf_artifact_reports(
         for relative_path, digest in manifest.checksums.items()
         if not is_ignored_artifact_relative_path(relative_path)
         and _is_publishable_artifact_file(relative_path)
+        and relative_path not in forbidden_files
     }
     cleaned_checksums.update(
         {
@@ -1119,6 +1163,7 @@ def cleanup_hf_artifact_reports(
         for relative_path, digest in _parse_sha256sums_bytes(sha256sums_bytes).items()
         if not is_ignored_artifact_relative_path(relative_path)
         and _is_publishable_artifact_file(relative_path)
+        and relative_path not in forbidden_files
     }
     sha_entries.update(
         {

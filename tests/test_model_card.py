@@ -105,6 +105,24 @@ def test_model_card_embeds_only_promoted_comparison_matrix_assets():
     assert "reports/native" not in card
 
 
+def test_model_card_embeds_only_one_comparison_matrix_asset():
+    card = render_model_card(
+        _manifest_for_model(
+            "black-forest-labs/FLUX.1-schnell",
+            checksums={
+                "assets/image_generation_comparison_matrix.webp": "0" * 64,
+                "assets/video_generation_comparison_matrix.webp": "1" * 64,
+            },
+        )
+    )
+
+    assert (
+        "![assets/image_generation_comparison_matrix.webp]"
+        "(assets/image_generation_comparison_matrix.webp)"
+    ) in card
+    assert "![assets/video_generation_comparison_matrix.webp]" not in card
+
+
 def test_model_card_ignores_contact_sheets_for_published_artifacts():
     contact_sheet = "assets/flux1_schnell_contact_sheet.webp"
     single_sample = "assets/original_vs_orbitquant_seed0.webp"
