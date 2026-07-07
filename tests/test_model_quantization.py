@@ -3,7 +3,11 @@ import torch
 import orbitquant.modeling as modeling_module
 from orbitquant import OrbitQuantConfig, OrbitQuantLinear
 from orbitquant.adaln import RTNInt4Linear
-from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
+from orbitquant.modeling import (
+    inspect_linear_module_policy,
+    prewarm_quantized_linear_modules,
+    quantize_linear_modules,
+)
 
 
 class TinyPipelineTransformer(torch.nn.Module):
@@ -45,6 +49,37 @@ def test_quantize_linear_modules_replaces_orbit_and_adaln_targets_only():
     assert summary.module_device_transfer_count >= 0
     assert summary.source_linear_device_counts
     assert summary.quantized_buffer_device_counts
+
+
+def test_inspect_linear_module_policy_reports_inventory_without_mutating_model():
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+
+    inventory = inspect_linear_module_policy(model, config)
+
+    assert inventory["target_policy"] == "auto"
+    assert inventory["linear_module_count"] == 3
+    assert inventory["action_counts"] == {
+        "orbitquant": 1,
+        "adaln_int4_rtn": 1,
+        "bf16_skip": 1,
+    }
+    assert inventory["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
+    assert inventory["adaln_modules"] == ["transformer_blocks.0.modulation"]
+    assert inventory["skipped_modules"] == ["proj_out"]
+    assert inventory["modules"][0] == {
+        "name": "transformer_blocks.0.attn.to_q",
+        "action": "orbitquant",
+        "reason": "transformer block linear",
+        "dtype": None,
+        "in_features": 16,
+        "out_features": 16,
+        "bias": True,
+        "weight_dtype": "float32",
+        "weight_device": "cpu",
+    }
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], torch.nn.Linear)
+    assert isinstance(model.transformer_blocks[0]["modulation"], torch.nn.Linear)
 
 
 def test_quantize_linear_modules_keeps_dtype_overridden_modules_unquantized():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 
@@ -47,6 +48,48 @@ class QuantizationPrewarmSummary:
     elapsed_seconds: float
     device: str
     dtype: str
+
+
+def inspect_linear_module_policy(
+    model: torch.nn.Module,
+    config: OrbitQuantConfig,
+) -> dict[str, Any]:
+    decisions = classify_linear_modules(model, config)
+    modules: list[dict[str, Any]] = []
+    by_action: dict[str, list[str]] = {
+        "orbitquant": [],
+        "adaln_int4_rtn": [],
+        "bf16_skip": [],
+    }
+
+    for name, decision in decisions.items():
+        module = model.get_submodule(name)
+        if not isinstance(module, torch.nn.Linear):
+            continue
+        by_action.setdefault(decision.action, []).append(name)
+        modules.append(
+            {
+                "name": name,
+                "action": decision.action,
+                "reason": decision.reason,
+                "dtype": decision.dtype,
+                "in_features": int(module.in_features),
+                "out_features": int(module.out_features),
+                "bias": module.bias is not None,
+                "weight_dtype": str(module.weight.dtype).removeprefix("torch."),
+                "weight_device": str(module.weight.device),
+            }
+        )
+
+    return {
+        "target_policy": config.target_policy,
+        "linear_module_count": len(modules),
+        "action_counts": {action: len(names) for action, names in by_action.items()},
+        "quantized_modules": by_action.get("orbitquant", []),
+        "adaln_modules": by_action.get("adaln_int4_rtn", []),
+        "skipped_modules": by_action.get("bf16_skip", []),
+        "modules": modules,
+    }
 
 
 def _parent_and_child(model: torch.nn.Module, module_name: str) -> tuple[torch.nn.Module, str]:

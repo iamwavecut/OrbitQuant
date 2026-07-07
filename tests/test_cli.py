@@ -1933,6 +1933,95 @@ def test_cli_quantize_with_suite_uses_named_native_pipeline(monkeypatch, capsys,
     assert quantization_config["target_policy"] == "flux2"
 
 
+def test_cli_inspect_policy_with_suite_writes_module_inventory(monkeypatch, capsys, tmp_path):
+    calls = []
+
+    class FakeFlux2Transformer2DModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.transformer = torch.nn.Module()
+            self.double_stream_modulation_img = torch.nn.ModuleDict(
+                {"linear": torch.nn.Linear(8, 16)}
+            )
+            self.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        @classmethod
+        def load_config(cls, model_id, **kwargs):
+            assert model_id == "black-forest-labs/FLUX.2-klein-4B"
+            assert kwargs["subfolder"] == "transformer"
+            assert kwargs["local_files_only"] is False
+            calls.append({"method": "load_config", "kwargs": kwargs})
+            return {"hidden_size": 8}
+
+        @classmethod
+        def from_config(cls, config):
+            assert config == {"hidden_size": 8}
+            calls.append({"method": "from_config"})
+            return cls()
+
+    class WrongDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            raise AssertionError("inspect-policy default must not load full pipeline weights")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(
+            Flux2Transformer2DModel=FakeFlux2Transformer2DModel,
+            DiffusionPipeline=WrongDiffusionPipeline,
+        ),
+    )
+    output_path = tmp_path / "flux2-policy-inventory.json"
+
+    assert (
+        main(
+            [
+                "inspect-policy",
+                "--suite",
+                "flux2-native",
+                "--dtype",
+                "float32",
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(output_path.read_text())
+
+    assert output["output"] == str(output_path)
+    assert saved["source_model_id"] == "black-forest-labs/FLUX.2-klein-4B"
+    assert saved["suite"] == "flux2-native"
+    assert saved["component"] == "transformer"
+    assert saved["load_mode"] == "config"
+    assert saved["pipeline_class"] is None
+    assert saved["component_class"] == "FakeFlux2Transformer2DModel"
+    assert saved["target_policy"] == "flux2"
+    assert saved["action_counts"] == {
+        "orbitquant": 1,
+        "adaln_int4_rtn": 1,
+        "bf16_skip": 0,
+    }
+    assert saved["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
+    assert saved["adaln_modules"] == ["double_stream_modulation_img.linear"]
+    assert calls == [
+        {
+            "method": "load_config",
+            "kwargs": {"subfolder": "transformer", "local_files_only": False},
+        },
+        {"method": "from_config"},
+    ]
+
+
 def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(

@@ -155,6 +155,22 @@ orbitquant quantize \
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
 
+## Inspect A Policy Inventory
+
+Use `inspect-policy` to produce a JSON inventory of every linear module in a
+pipeline component and the action selected by the current OrbitQuant policy.
+For native suites this uses the transformer config and an empty-weight skeleton
+by default, so it does not download or instantiate full model weights. This is
+the lightweight audit artifact used to verify model-specific coverage before
+quantization or generation:
+
+```bash
+orbitquant inspect-policy \
+  --suite flux2-native \
+  --dtype bfloat16 \
+  --output ./reports/inventories/flux2-klein-policy.json
+```
+
 ## Published Artifact Settings
 
 The current target matrix follows the agreed native settings:

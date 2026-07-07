@@ -159,6 +159,47 @@ def load_pipeline_for_suite(
     )
 
 
+def load_component_skeleton_for_suite(
+    suite: NativeSuite,
+    *,
+    component: str = "transformer",
+    model_id: str | None = None,
+    revision: str | None = None,
+    local_files_only: bool = False,
+) -> torch.nn.Module:
+    if component != "transformer":
+        raise ValueError("config-only skeleton loading is only defined for transformer components")
+    if suite.transformer_class is None:
+        raise ValueError(f"native suite {suite.name!r} does not define a transformer class")
+    try:
+        import diffusers
+    except Exception as exc:
+        raise RuntimeError("diffusers is required to load native component skeletons") from exc
+    try:
+        from accelerate import init_empty_weights
+    except Exception as exc:
+        raise RuntimeError("accelerate is required to load native component skeletons") from exc
+
+    transformer_cls = getattr(diffusers, suite.transformer_class, None)
+    if transformer_cls is None:
+        raise RuntimeError(f"diffusers has no class {suite.transformer_class!r}")
+    load_kwargs: dict[str, Any] = {
+        "subfolder": component,
+        "local_files_only": local_files_only,
+    }
+    if revision is not None:
+        load_kwargs["revision"] = revision
+    config = transformer_cls.load_config(
+        suite.model_id if model_id is None else model_id,
+        **load_kwargs,
+    )
+    with init_empty_weights():
+        skeleton = transformer_cls.from_config(config)
+    if not isinstance(skeleton, torch.nn.Module):
+        raise TypeError(f"{suite.transformer_class} did not produce a torch.nn.Module")
+    return skeleton
+
+
 def apply_quantization_to_pipeline(
     pipeline: Any, suite: NativeSuite, config: OrbitQuantConfig
 ) -> QuantizationSummary:

@@ -35,6 +35,7 @@ from orbitquant.eval.native_runner import (
     apply_quantization_to_pipeline,
     build_pipeline_kwargs,
     build_quantization_config_for_suite,
+    load_component_skeleton_for_suite,
     load_pipeline_for_suite,
     output_path_for_suite,
     run_native_generation,
@@ -62,7 +63,11 @@ from orbitquant.hub import (
     upload_orbitquant_artifact,
 )
 from orbitquant.kernels import backend_capabilities
-from orbitquant.modeling import prewarm_quantized_linear_modules, quantize_linear_modules
+from orbitquant.modeling import (
+    inspect_linear_module_policy,
+    prewarm_quantized_linear_modules,
+    quantize_linear_modules,
+)
 from orbitquant.pipeline import load_quantized_pipeline_component
 
 
@@ -280,6 +285,29 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser = subparsers.add_parser("inspect", help="inspect Hugging Face model metadata")
     inspect_parser.add_argument("--model-id", required=True)
     inspect_parser.add_argument("--revision")
+    inspect_policy_parser = subparsers.add_parser(
+        "inspect-policy",
+        help="load a Diffusers pipeline component and emit OrbitQuant policy inventory",
+    )
+    inspect_policy_parser.add_argument("--suite")
+    inspect_policy_parser.add_argument("--model-id")
+    inspect_policy_parser.add_argument("--revision")
+    inspect_policy_parser.add_argument("--component", default="transformer")
+    inspect_policy_parser.add_argument("--target-policy", default="auto")
+    inspect_policy_parser.add_argument(
+        "--load-mode",
+        default="config",
+        choices=["config", "pipeline"],
+        help=(
+            "config loads a component skeleton without model weights for native suites; "
+            "pipeline loads the full Diffusers pipeline"
+        ),
+    )
+    inspect_policy_parser.add_argument("--local-files-only", action="store_true")
+    inspect_policy_parser.add_argument(
+        "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
+    )
+    inspect_policy_parser.add_argument("--output")
     subparsers.add_parser("native-suites", help="list native eval suites")
     subparsers.add_parser("kernel-info", help="print activation kernel backend capabilities")
     kernel_bench_parser = subparsers.add_parser(
@@ -703,6 +731,61 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "inspect":
         print(json.dumps(inspect_model_metadata(args.model_id, revision=args.revision), indent=2))
+        return 0
+    if args.command == "inspect-policy":
+        suite = None if args.suite is None else get_native_suite(args.suite)
+        model_id = args.model_id
+        if model_id is None:
+            if suite is None:
+                raise ValueError("inspect-policy requires --model-id unless --suite is provided")
+            model_id = suite.model_id
+        target_policy = args.target_policy
+        if target_policy == "auto" and suite is not None:
+            target_policy = target_policy_for_suite(suite)
+        config = OrbitQuantConfig(target_policy=target_policy)
+        if args.load_mode == "config":
+            if suite is None:
+                raise ValueError("inspect-policy --load-mode config requires --suite")
+            component = load_component_skeleton_for_suite(
+                suite,
+                component=args.component,
+                model_id=model_id,
+                revision=args.revision,
+                local_files_only=args.local_files_only,
+            )
+            pipeline_class = None
+            component_class = type(component).__name__
+        else:
+            load_kwargs = {"torch_dtype": _torch_dtype(args.dtype)}
+            if args.revision is not None:
+                load_kwargs["revision"] = args.revision
+            if args.local_files_only:
+                load_kwargs["local_files_only"] = True
+            if suite is None:
+                from diffusers import DiffusionPipeline
+
+                pipeline = DiffusionPipeline.from_pretrained(model_id, **load_kwargs)
+            else:
+                pipeline = load_pipeline_for_suite(suite, model_id=model_id, **load_kwargs)
+            component = _pipeline_component(pipeline, args.component)
+            pipeline_class = type(pipeline).__name__
+            component_class = type(component).__name__
+        payload = {
+            "source_model_id": model_id,
+            "source_revision": args.revision,
+            "suite": None if suite is None else suite.name,
+            "component": args.component,
+            "load_mode": args.load_mode,
+            "pipeline_class": pipeline_class,
+            "component_class": component_class,
+            **inspect_linear_module_policy(component, config),
+        }
+        if args.output is not None:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            payload["output"] = str(output_path)
+        print(json.dumps(payload, indent=2))
         return 0
     if args.command == "native-suites":
         payload = [suite.__dict__ for suite in list_native_suites()]

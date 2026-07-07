@@ -9,6 +9,8 @@ def test_readme_documents_component_artifact_usage():
     assert "Published OrbitQuant model repos are component artifacts" in readme
     assert "DiffusionPipeline.from_pretrained" in readme
     assert "orbitquant quantize" in readme
+    assert "orbitquant inspect-policy" in readme
+    assert "empty-weight skeleton" in readme
     assert "orbitquant validate-artifact" in readme
     assert "Comparison Assets" in readme
     assert "assets/*_generation_comparison_matrix.webp" in readme
