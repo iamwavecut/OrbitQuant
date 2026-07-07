@@ -400,7 +400,7 @@ def _release_eval_applicable(suite_name: str) -> bool:
 
 
 def _native_smoke_expected_settings(suite: NativeSuite) -> dict[str, Any]:
-    return {
+    settings = {
         "suite": suite.name,
         "height": suite.height,
         "width": suite.width,
@@ -408,6 +408,9 @@ def _native_smoke_expected_settings(suite: NativeSuite) -> dict[str, Any]:
         "steps": suite.steps,
         "guidance": suite.guidance,
     }
+    if suite.export_fps is not None:
+        settings["export_fps"] = suite.export_fps
+    return settings
 
 
 def _native_smoke_proof_status(
@@ -797,7 +800,7 @@ def _local_output_is_nonempty(artifact_path: Path, value: Any) -> bool:
 
 
 def _native_settings_from_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    return {
+    settings = {
         "suite": metadata.get("suite"),
         "height": metadata.get("height"),
         "width": metadata.get("width"),
@@ -805,6 +808,9 @@ def _native_settings_from_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "steps": metadata.get("steps"),
         "guidance": metadata.get("guidance"),
     }
+    if metadata.get("export_fps") is not None:
+        settings["export_fps"] = metadata.get("export_fps")
+    return settings
 
 
 def _native_smoke_split_summary(

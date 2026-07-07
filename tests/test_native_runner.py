@@ -188,7 +188,10 @@ def test_extract_video_frames_accepts_numpy_frame_batches():
 def test_run_native_generation_saves_video_contact_sheet_and_metadata(
     monkeypatch, tmp_path
 ):
-    def fake_export_to_video(frames, path):
+    export_calls = []
+
+    def fake_export_to_video(frames, path, **kwargs):
+        export_calls.append(kwargs)
         Path(path).write_bytes(b"fake mp4")
 
     monkeypatch.setitem(
@@ -213,6 +216,8 @@ def test_run_native_generation_saves_video_contact_sheet_and_metadata(
     assert result.output_path == tmp_path / "wan-native_seed7_W4A4.mp4"
     assert result.output_path.is_file()
     assert contact_sheet_path.is_file()
+    assert export_calls == [{"fps": 16}]
+    assert metadata["export_fps"] == 16
     assert metadata["contact_sheet_path"] == str(contact_sheet_path)
     assert result.asset_paths == [contact_sheet_path]
     with Image.open(contact_sheet_path) as sheet:
@@ -281,6 +286,7 @@ def test_validate_native_generation_output_accepts_native_metadata(tmp_path):
                 "height": suite.height,
                 "width": suite.width,
                 "frames": suite.frames,
+                "export_fps": suite.export_fps,
                 "steps": suite.steps,
                 "guidance": suite.guidance,
                 "quantization": {
@@ -322,6 +328,7 @@ def test_validate_native_generation_output_rejects_wrong_native_settings(tmp_pat
                 "height": 512,
                 "width": suite.width,
                 "frames": suite.frames,
+                "export_fps": suite.export_fps,
                 "steps": suite.steps,
                 "guidance": suite.guidance,
                 "quantization": {

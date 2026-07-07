@@ -274,6 +274,7 @@ def _record_generated_artifact(
             "height": suite.height,
             "width": suite.width,
             "frames": suite.frames,
+            "export_fps": suite.export_fps,
             "steps": suite.steps,
             "guidance": suite.guidance,
             "bit_setting": bit_setting,

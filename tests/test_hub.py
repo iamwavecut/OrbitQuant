@@ -209,14 +209,7 @@ def _native_smoke_summary(
     weight_quantization_backend="unknown",
     quantization_staging_mode="unknown",
 ):
-    native_settings = {
-        "suite": suite.name,
-        "height": suite.height,
-        "width": suite.width,
-        "frames": suite.frames,
-        "steps": suite.steps,
-        "guidance": suite.guidance,
-    }
+    native_settings = hub_module._native_smoke_expected_settings(suite)
     generated_frames = 0 if suite.frames is None else suite.frames
     metrics = {"generated_samples": 1}
     if generated_frames:
@@ -285,6 +278,34 @@ def _legacy_compact_summary_without_native_smoke(
     )
 
 
+def test_native_smoke_expected_settings_include_video_export_fps_only_when_defined():
+    image_suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    video_suite = NativeSuite(
+        name="wan-native",
+        model_id="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        pipeline="WanPipeline",
+        width=832,
+        height=480,
+        frames=81,
+        export_fps=16,
+        steps=50,
+        guidance=5.0,
+        bit_settings=["W4A4"],
+    )
+
+    assert "export_fps" not in hub_module._native_smoke_expected_settings(image_suite)
+    assert hub_module._native_smoke_expected_settings(video_suite)["export_fps"] == 16
+
+
 def _write_native_smoke_backup(
     backup_root,
     *,
@@ -326,6 +347,8 @@ def _write_native_smoke_backup(
                 "guidance": suite.guidance,
                 "quantization": quantization,
             }
+            if suite.export_fps is not None:
+                metadata["export_fps"] = suite.export_fps
             (media_path.with_suffix(media_path.suffix + ".json")).write_text(
                 json.dumps(metadata, indent=2) + "\n",
                 encoding="utf-8",
@@ -1309,14 +1332,7 @@ def test_repair_hf_native_smoke_proof_restores_from_local_backup_without_raw_upl
     assert proof["splits"]["original"]["nonempty_output_count"] == 2
     assert proof["splits"]["orbitquant"]["nonempty_output_count"] == 2
     assert proof["splits"]["original"]["native_settings"] == [
-        {
-            "suite": suite.name,
-            "height": suite.height,
-            "width": suite.width,
-            "frames": suite.frames,
-            "steps": suite.steps,
-            "guidance": suite.guidance,
-        }
+        hub_module._native_smoke_expected_settings(suite)
     ]
     assert "## Native Validation Proof" in operation_by_path["README.md"].decode("utf-8")
 

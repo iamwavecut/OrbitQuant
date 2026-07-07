@@ -335,6 +335,7 @@ def validate_native_generation_output(
             _metadata_mismatch("height", suite.height, metadata.get("height")),
             _metadata_mismatch("width", suite.width, metadata.get("width")),
             _metadata_mismatch("frames", suite.frames, metadata.get("frames")),
+            _metadata_mismatch("export_fps", suite.export_fps, metadata.get("export_fps")),
             _metadata_mismatch("steps", suite.steps, metadata.get("steps")),
             _metadata_mismatch("guidance", suite.guidance, metadata.get("guidance")),
             None
@@ -420,7 +421,8 @@ def run_native_generation(
                 "diffusers video export utilities are required for video suites"
             ) from exc
         frames = extract_video_frames(output)
-        export_to_video(frames, str(output_path))
+        export_kwargs = {} if suite.export_fps is None else {"fps": suite.export_fps}
+        export_to_video(frames, str(output_path), **export_kwargs)
         from orbitquant.eval.assets import create_video_contact_sheet
 
         contact_sheet_path = _contact_sheet_path(output_path)
@@ -444,6 +446,7 @@ def run_native_generation(
         "height": suite.height,
         "width": suite.width,
         "frames": suite.frames,
+        "export_fps": suite.export_fps,
         "steps": suite.steps,
         "guidance": suite.guidance,
         "bit_settings": suite.bit_settings,

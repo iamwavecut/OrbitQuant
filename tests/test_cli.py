@@ -1088,7 +1088,10 @@ def test_cli_generate_with_video_artifact_records_contact_sheet_asset(
             self.kwargs = kwargs
             return SimpleNamespace(frames=np.zeros((1, 2, 8, 8, 3), dtype=np.uint8))
 
-    def fake_export_to_video(frames, path):
+    export_calls = []
+
+    def fake_export_to_video(frames, path, **kwargs):
+        export_calls.append(kwargs)
         with open(path, "wb") as output:
             output.write(b"fake mp4")
 
@@ -1143,7 +1146,12 @@ def test_cli_generate_with_video_artifact_records_contact_sheet_asset(
 
     output = json.loads(capsys.readouterr().out)
     manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
+    metrics_record = json.loads((tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text())
+    metadata = json.loads((tmp_path / "assets" / "wan-native_seed2_W4A4.mp4.json").read_text())
     assert output["output_path"].endswith("wan-native_seed2_W4A4.mp4")
+    assert export_calls == [{"fps": 16}]
+    assert metadata["export_fps"] == 16
+    assert metrics_record["metadata"]["export_fps"] == 16
     assert "assets/wan-native_seed2_W4A4.mp4" in manifest["checksums"]
     assert "assets/wan-native_seed2_W4A4.mp4.json" in manifest["checksums"]
     assert "assets/wan-native_seed2_W4A4_contact_sheet.webp" in manifest["checksums"]
