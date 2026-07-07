@@ -2210,7 +2210,7 @@ def test_render_hf_artifact_audit_markdown_summarizes_ready_and_metric_gaps():
     assert "## Readiness Semantics" in markdown
     assert "no forbidden raw files" in markdown
     assert "it is not a GenEval or VBench result" in markdown
-    assert "Metadata complete means activation norm clamp" in markdown
+    assert "Metadata complete means activation normalization epsilon" in markdown
     assert "paper metric or reproduction claims" in markdown
     assert "Missing required metrics" not in markdown
     assert (

@@ -35,7 +35,7 @@ def test_orbit_quant_config_supports_hf_json_helpers():
     assert restored.activation_bits == 3
 
 
-def test_orbit_quant_config_default_epsilon_matches_paper_clamp():
+def test_orbit_quant_config_default_epsilon_matches_paper_equation():
     config = OrbitQuantConfig()
 
     assert config.activation_eps == 1e-10

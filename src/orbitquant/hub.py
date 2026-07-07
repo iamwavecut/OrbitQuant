@@ -1284,7 +1284,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
             "GenEval or VBench result."
         ),
         (
-            "- Metadata complete means activation norm clamp, quantization device, "
+            "- Metadata complete means activation normalization epsilon, quantization device, "
             "weight quantization backend, and staging mode are recorded."
         ),
         (
