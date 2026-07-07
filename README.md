@@ -40,6 +40,18 @@ For runtime-only use from a checked-out package:
 pip install -e ".[hf]"
 ```
 
+On managed CUDA images that already ship a vendor-matched PyTorch/Triton stack,
+keep the image-provided `torch` instead of resolving a replacement wheel. For
+kernel validation on those hosts, use:
+
+```bash
+scripts/run_cuda_kernel_checks.sh
+```
+
+The script creates a `--system-site-packages` venv, installs OrbitQuant without
+dependencies, installs only the lightweight test/runtime packages that are
+missing, and emits `REMOTE_STAGE` markers around each long step.
+
 ## Load A Published Artifact
 
 Published OrbitQuant model repos are component artifacts. Load the source
@@ -185,11 +197,21 @@ Each artifact is intentionally inspectable without executing code:
 
 ## Kernels
 
-The correctness path works with BF16 matmul after low-bit dequantization.
-CUDA/Triton and CPU helpers are present for activation quantization and packed
-weight dequantization, with further fused kernels planned after the artifact and
-native-eval path is stable. Runtime memory and latency should be reported
-separately from disk compression.
+The default correctness runtime still uses BF16 PyTorch matmul after low-bit
+dequantization, so disk compression and runtime VRAM/latency are reported
+separately. The CUDA/Triton backend currently covers the heavy OrbitQuant
+stages around that matmul:
+
+- runtime activation norm, RPBH/FWHT rotation, codebook lookup, and rescale;
+- packed weight dequantization;
+- low-bit pack/unpack helpers;
+- offline weight RPBH/FWHT codebook indexing with direct low-bit packing;
+- AdaLN INT4 RTN quantize/pack/dequant.
+
+Run `orbitquant kernel-info` to inspect the active backend and
+`scripts/run_cuda_kernel_checks.sh` to run the CUDA kernel test and benchmark
+gate on a GPU host. Fully fused low-bit matmul is not enabled in the current
+runtime mode.
 
 ## License
 
