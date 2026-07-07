@@ -182,9 +182,7 @@ def save_orbitquant_artifact(
     orbitquant_metrics_jsonl_path.write_text("", encoding="utf-8")
     original_metrics_csv_path.write_text("metric,value\n", encoding="utf-8")
     orbitquant_metrics_csv_path.write_text("metric,value\n", encoding="utf-8")
-    assets_marker_path = output_path / "assets" / ".gitkeep"
-    assets_marker_path.parent.mkdir(parents=True, exist_ok=True)
-    assets_marker_path.write_text("", encoding="utf-8")
+    (output_path / "assets").mkdir(parents=True, exist_ok=True)
 
     skipped = _summary_list(summary, "skipped_modules")
     checksums = {
@@ -199,7 +197,6 @@ def save_orbitquant_artifact(
         "benchmark/orbitquant.metrics.jsonl": sha256_file(orbitquant_metrics_jsonl_path),
         "benchmark/original.metrics.csv": sha256_file(original_metrics_csv_path),
         "benchmark/orbitquant.metrics.csv": sha256_file(orbitquant_metrics_csv_path),
-        "assets/.gitkeep": sha256_file(assets_marker_path),
     }
     manifest = OrbitQuantManifest.from_config(
         config,

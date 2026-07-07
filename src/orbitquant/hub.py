@@ -54,11 +54,6 @@ _REQUIRED_ARTIFACT_FILES = (
     "orbitquant_rotations.safetensors",
     "prompts.json",
     "benchmark/summary.json",
-    "benchmark/original.metrics.jsonl",
-    "benchmark/orbitquant.metrics.jsonl",
-    "benchmark/original.metrics.csv",
-    "benchmark/orbitquant.metrics.csv",
-    "assets/.gitkeep",
 )
 _REQUIRED_METRICS_BY_SUITE = {
     "flux1-schnell-native": ("geneval_overall",),
@@ -77,6 +72,12 @@ _REQUIRED_METRICS_BY_SUITE = {
 _COMPACT_RAW_EVAL_ASSET_MARKERS = ("_geneval-", "_vbench-")
 _COMPACT_REPORT_ROOT = "reports/"
 _PUBLISHED_CORE_ARTIFACT_FILES = set(_REQUIRED_ARTIFACT_FILES)
+_LOCAL_BENCHMARK_FILES = {
+    "benchmark/original.metrics.jsonl",
+    "benchmark/orbitquant.metrics.jsonl",
+    "benchmark/original.metrics.csv",
+    "benchmark/orbitquant.metrics.csv",
+}
 
 
 def inspect_model_metadata(model_id: str, *, revision: str | None = None) -> dict[str, Any]:
@@ -255,6 +256,20 @@ def _metrics_by_split(
     revision: str | None,
 ) -> dict[str, dict[str, Any]]:
     payload: dict[str, dict[str, Any]] = {"original": {}, "orbitquant": {}}
+    if "benchmark/summary.json" in file_names:
+        summary = _read_remote_json(repo_id, "benchmark/summary.json", revision=revision)
+        for split, split_payload in (summary.get("metrics") or {}).items():
+            if split not in payload or not isinstance(split_payload, dict):
+                continue
+            latest_metrics = split_payload.get("latest_metrics")
+            if latest_metrics is None:
+                latest = split_payload.get("latest")
+                if isinstance(latest, dict):
+                    latest_metrics = latest.get("metrics")
+            if isinstance(latest_metrics, dict):
+                payload[split].update(latest_metrics)
+            elif split_payload.get("records") and "generated_samples" not in payload[split]:
+                payload[split]["generated_samples"] = split_payload["records"]
     for split in payload:
         filename = f"benchmark/{split}.metrics.jsonl"
         if filename not in file_names:
@@ -409,6 +424,55 @@ def _copy_artifact_file(source_path: Path, artifact_path: Path, output_path: Pat
     shutil.copy2(source_path, target_path)
 
 
+def _summary_latest_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    for split, payload in (summary.get("metrics") or {}).items():
+        if not isinstance(payload, dict):
+            continue
+        latest = payload.get("latest")
+        latest_metrics = latest.get("metrics", {}) if isinstance(latest, dict) else {}
+        clean[str(split)] = {
+            "records": payload.get("records", 0),
+            "latest_metrics": latest_metrics if isinstance(latest_metrics, dict) else {},
+        }
+    return clean
+
+
+def _compact_benchmark_summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    clean = {
+        key: value
+        for key, value in payload.items()
+        if key
+        not in {
+            "metrics",
+            "source_linear_device_counts",
+            "quantized_buffer_device_counts",
+        }
+    }
+    clean["metrics"] = _summary_latest_metrics(payload)
+    clean["published_summary"] = "compact"
+    clean["raw_generation_records"] = "local-only"
+    return clean
+
+
+def _compact_benchmark_summary_bytes(source_path: Path) -> bytes:
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    return _json_bytes(_compact_benchmark_summary_payload(payload))
+
+
+def _compact_benchmark_summary_bytes_from_remote(payload: bytes) -> bytes:
+    return _json_bytes(_compact_benchmark_summary_payload(json.loads(payload.decode("utf-8"))))
+
+
+def _copy_compact_benchmark_summary(
+    source_path: Path, artifact_path: Path, output_path: Path
+) -> None:
+    relative_path = source_path.relative_to(artifact_path)
+    target_path = output_path / relative_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(_compact_benchmark_summary_bytes(source_path))
+
+
 def _is_raw_eval_asset(relative_path: str) -> bool:
     if not relative_path.startswith("assets/"):
         return False
@@ -426,6 +490,10 @@ def _is_publishable_artifact_file(relative_path: str) -> bool:
     return relative_path in _PUBLISHED_CORE_ARTIFACT_FILES or _is_published_card_asset(
         relative_path
     )
+
+
+def _is_local_benchmark_file(relative_path: str) -> bool:
+    return relative_path in _LOCAL_BENCHMARK_FILES
 
 
 def _is_report_file(relative_path: str) -> bool:
@@ -522,6 +590,13 @@ def stage_compact_upload_artifact(
             continue
         if _is_report_file(relative_path):
             omitted_report_files.append(relative_path)
+            continue
+        if _is_local_benchmark_file(relative_path):
+            omitted_raw_eval_assets.append(relative_path)
+            continue
+        if relative_path == "benchmark/summary.json":
+            _copy_compact_benchmark_summary(source_path, artifact_path, output_path)
+            copied_files.append(relative_path)
             continue
         if _is_publishable_artifact_file(relative_path):
             _copy_artifact_file(source_path, artifact_path, output_path)
@@ -1007,9 +1082,11 @@ def cleanup_hf_artifact_reports(
 
     manifest_bytes = _read_remote_bytes(repo_id, "orbitquant_manifest.json", revision=revision)
     readme_bytes = _read_remote_bytes(repo_id, "README.md", revision=revision)
+    benchmark_bytes = _read_remote_bytes(repo_id, "benchmark/summary.json", revision=revision)
     sha256sums_bytes = _read_remote_bytes(repo_id, "SHA256SUMS", revision=revision)
 
     manifest = OrbitQuantManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
+    next_benchmark_bytes = _compact_benchmark_summary_bytes_from_remote(benchmark_bytes)
     used_paths = set(file_names) - set(forbidden_files)
     promoted_assets: dict[str, bytes] = {}
     for report_matrix in report_matrix_files:
@@ -1032,6 +1109,7 @@ def cleanup_hf_artifact_reports(
             for relative_path, payload in promoted_assets.items()
         }
     )
+    cleaned_checksums["benchmark/summary.json"] = _sha256_bytes(next_benchmark_bytes)
     cleaned_manifest = replace(manifest, checksums=cleaned_checksums)
     next_manifest_bytes = _json_bytes(cleaned_manifest.to_dict())
     next_readme_bytes = render_model_card(cleaned_manifest).encode("utf-8")
@@ -1052,6 +1130,7 @@ def cleanup_hf_artifact_reports(
         {
             "orbitquant_manifest.json": _sha256_bytes(next_manifest_bytes),
             "README.md": _sha256_bytes(next_readme_bytes),
+            "benchmark/summary.json": _sha256_bytes(next_benchmark_bytes),
         }
     )
     sha_entries.pop("SHA256SUMS", None)
@@ -1059,12 +1138,14 @@ def cleanup_hf_artifact_reports(
 
     file_payloads: dict[str, bytes] = {
         "orbitquant_manifest.json": next_manifest_bytes,
+        "benchmark/summary.json": next_benchmark_bytes,
         "README.md": next_readme_bytes,
         "SHA256SUMS": next_sha256sums_bytes,
         **promoted_assets,
     }
     original_payloads = {
         "orbitquant_manifest.json": manifest_bytes,
+        "benchmark/summary.json": benchmark_bytes,
         "README.md": readme_bytes,
         "SHA256SUMS": sha256sums_bytes,
     }

@@ -263,11 +263,36 @@ def _native_settings_section(source_model_id: str) -> list[str]:
     return lines
 
 
+def _validation_status_section(source_model_id: str) -> list[str]:
+    release_metric = {
+        "black-forest-labs/FLUX.1-schnell": "GenEval",
+        "Tongyi-MAI/Z-Image-Turbo": "GenEval",
+        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": "VBench",
+    }.get(source_model_id)
+    release_line = (
+        f"- Release-grade {release_metric} metrics: not included in this artifact yet."
+        if release_metric
+        else "- Release-grade paper metrics: not applicable to this extra target."
+    )
+    return [
+        "## Validation Status",
+        "",
+        "- Native BF16-vs-OrbitQuant comparison: included when the visual matrix "
+        "below is present.",
+        release_line,
+        "- The model card reports artifact-level validation status only; raw "
+        "generation media and runner logs are kept outside the published model "
+        "repository.",
+        "",
+    ]
+
+
 def render_model_card(manifest: OrbitQuantManifest) -> str:
     data = manifest.to_dict()
     bits = f"W{data['weight_bits']}A{data['activation_bits']}"
     comparison_assets = _comparison_assets(data["checksums"])
     native_settings_lines = _native_settings_section(data["source_model_id"])
+    validation_status_lines = _validation_status_section(data["source_model_id"])
     comparison_lines = []
     if comparison_assets:
         comparison_lines.extend(
@@ -331,6 +356,7 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             _usage_snippet(data["source_model_id"], bits),
             "",
             *native_settings_lines,
+            *validation_status_lines,
             "## Quantization",
             "",
             f"- Method: `{data['quant_method']}`",

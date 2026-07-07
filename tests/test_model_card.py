@@ -67,6 +67,8 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     assert "- Target policy: `z_image`" in card
     assert "- Quantized transformer modules: `1`" in card
     assert "## Native Settings" in card
+    assert "## Validation Status" in card
+    assert "Release-grade GenEval metrics: not included in this artifact yet." in card
     assert "## Visual Comparison" in card
     assert (
         "![assets/image_generation_comparison_matrix.webp]"
@@ -160,6 +162,7 @@ def test_model_card_uses_flux2_native_code_example():
     assert "| Resolution | `1024x1024` |" in card
     assert "| Guidance scale | `1.0` |" in card
     assert "| Scope | extra target; not an OrbitQuant paper reproduction model |" in card
+    assert "Release-grade paper metrics: not applicable to this extra target." in card
 
 
 def test_model_card_uses_flux1_schnell_native_code_example():
@@ -175,6 +178,7 @@ def test_model_card_uses_flux1_schnell_native_code_example():
     assert "| Inference steps | `4` |" in card
     assert "| Guidance scale | `0.0` |" in card
     assert "| Scope | paper image target |" in card
+    assert "Release-grade GenEval metrics: not included in this artifact yet." in card
 
 
 def test_model_card_uses_z_image_native_code_example():
@@ -190,6 +194,7 @@ def test_model_card_uses_z_image_native_code_example():
     assert "| Inference steps | `10` |" in card
     assert "| Guidance scale | `0.0` |" in card
     assert "| Scope | paper image target |" in card
+    assert "Release-grade GenEval metrics: not included in this artifact yet." in card
 
 
 def test_model_card_uses_wan_native_code_example():
@@ -210,3 +215,4 @@ def test_model_card_uses_wan_native_code_example():
     assert "| Frames | `81` |" in card
     assert "| Export FPS | `16` |" in card
     assert "| Scope | paper video target |" in card
+    assert "Release-grade VBench metrics: not included in this artifact yet." in card

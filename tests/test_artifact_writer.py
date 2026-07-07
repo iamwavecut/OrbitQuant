@@ -90,12 +90,13 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").is_file()
     assert (tmp_path / "benchmark" / "original.metrics.csv").is_file()
     assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").is_file()
-    assert (tmp_path / "assets" / ".gitkeep").is_file()
+    assert (tmp_path / "assets").is_dir()
+    assert not (tmp_path / "assets" / ".gitkeep").exists()
     assert "benchmark/original.metrics.jsonl" in manifest["checksums"]
     assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
     assert "benchmark/original.metrics.csv" in manifest["checksums"]
     assert "benchmark/orbitquant.metrics.csv" in manifest["checksums"]
-    assert "assets/.gitkeep" in manifest["checksums"]
+    assert "assets/.gitkeep" not in manifest["checksums"]
     prompts = json.loads((tmp_path / "prompts.json").read_text())
     benchmark_summary = json.loads((tmp_path / "benchmark" / "summary.json").read_text())
     codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
@@ -210,11 +211,11 @@ def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path
 
     result = validate_orbitquant_artifact(tmp_path)
 
-    assert "benchmark/original.metrics.jsonl" in result["required_files"]
-    assert "benchmark/orbitquant.metrics.jsonl" in result["required_files"]
-    assert "benchmark/original.metrics.csv" in result["required_files"]
-    assert "benchmark/orbitquant.metrics.csv" in result["required_files"]
-    assert "assets/.gitkeep" in result["required_files"]
+    assert "benchmark/original.metrics.jsonl" not in result["required_files"]
+    assert "benchmark/orbitquant.metrics.jsonl" not in result["required_files"]
+    assert "benchmark/original.metrics.csv" not in result["required_files"]
+    assert "benchmark/orbitquant.metrics.csv" not in result["required_files"]
+    assert "assets/.gitkeep" not in result["required_files"]
     assert "model_index.json" in result["required_files"]
     assert result["checksum_validation"] == "checked"
     assert result["sha256sums_validation"] == "checked"
