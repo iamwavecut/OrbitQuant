@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from orbitquant.artifacts.checksums import sha256_file, write_sha256sums_from_manifest
+from orbitquant.artifacts.checksums import (
+    is_ignored_artifact_relative_path,
+    sha256_file,
+    write_sha256sums_from_manifest,
+)
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.artifacts.validator import validate_orbitquant_artifact
@@ -71,7 +75,11 @@ def repair_artifact_metadata(
         adaln_modules=manifest.adaln_modules,
         skipped_modules=manifest.skipped_modules,
         module_shapes=manifest.module_shapes,
-        checksums=dict(manifest.checksums),
+        checksums={
+            relative_path: digest
+            for relative_path, digest in manifest.checksums.items()
+            if not is_ignored_artifact_relative_path(relative_path)
+        },
     )
 
     model_index["quantization_device"] = next_quantization_device

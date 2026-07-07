@@ -14,7 +14,12 @@ from orbitquant.artifacts import (
     sha256_file,
     validate_orbitquant_artifact,
 )
-from orbitquant.artifacts.checksums import read_sha256sums, write_sha256sums_from_manifest
+from orbitquant.artifacts.checksums import (
+    read_sha256sums,
+    validate_sha256sums,
+    write_sha256sums,
+    write_sha256sums_from_manifest,
+)
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import quantize_linear_modules
@@ -119,6 +124,36 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").read_text() == "metric,value\n"
     assert any(name.endswith(".centroids") for name in codebook_tensors)
     assert any(name.endswith(".permutation") for name in rotation_tensors)
+
+
+def test_sha256sums_ignore_huggingface_local_dir_cache_metadata(tmp_path):
+    artifact_cache = tmp_path / ".cache" / "huggingface" / "download"
+    artifact_cache.mkdir(parents=True)
+    cache_metadata = artifact_cache / ".gitattributes.metadata"
+    cache_metadata.write_text("transient hub metadata", encoding="utf-8")
+    payload = tmp_path / "model.safetensors"
+    payload.write_bytes(b"model")
+
+    write_sha256sums(tmp_path)
+    entries = read_sha256sums(tmp_path / "SHA256SUMS")
+
+    assert "model.safetensors" in entries
+    assert ".cache/huggingface/download/.gitattributes.metadata" not in entries
+
+    stale_sums = tmp_path / "SHA256SUMS"
+    stale_sums.write_text(
+        "\n".join(
+            [
+                f"{entries['model.safetensors']}  model.safetensors",
+                "0" * 64 + "  .cache/huggingface/download/.gitattributes.metadata",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    validated = validate_sha256sums(tmp_path)
+    assert validated[".cache/huggingface/download/.gitattributes.metadata"] == "0" * 64
 
 
 def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model(tmp_path):

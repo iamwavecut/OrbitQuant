@@ -9,6 +9,7 @@ from typing import Any
 from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 from orbitquant.artifacts import validate_orbitquant_artifact
+from orbitquant.artifacts.checksums import is_ignored_artifact_relative_path
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.eval import list_native_suites
@@ -18,6 +19,10 @@ from orbitquant.eval.native_settings import NativeSuite
 _DEFAULT_IGNORE_PATTERNS = [
     ".DS_Store",
     "*/.DS_Store",
+    ".cache/*",
+    ".cache/**",
+    "*/.cache/*",
+    "*/.cache/**",
     "__pycache__/*",
     "*/__pycache__/*",
     ".pytest_cache/*",
@@ -189,6 +194,7 @@ def _sha256sums_bytes(entries: dict[str, str]) -> bytes:
         relative_path: digest
         for relative_path, digest in entries.items()
         if relative_path != "SHA256SUMS"
+        and not is_ignored_artifact_relative_path(relative_path)
     }
     return (
         "\n".join(
@@ -361,7 +367,11 @@ def repair_hf_artifact_metadata(
         adaln_modules=manifest.adaln_modules,
         skipped_modules=manifest.skipped_modules,
         module_shapes=manifest.module_shapes,
-        checksums=dict(manifest.checksums),
+        checksums={
+            relative_path: digest
+            for relative_path, digest in manifest.checksums.items()
+            if not is_ignored_artifact_relative_path(relative_path)
+        },
     )
 
     model_index["quantization_device"] = quantization_device

@@ -170,6 +170,13 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
 ):
     repo_id = "WaveCut/example-orbitquant"
     _write_artifact(tmp_path)
+    stale_cache_metadata = tmp_path / ".cache" / "huggingface" / "download" / "README.md.metadata"
+    stale_cache_metadata.parent.mkdir(parents=True)
+    stale_cache_metadata.write_text("transient hub metadata", encoding="utf-8")
+    with (tmp_path / "SHA256SUMS").open("a", encoding="utf-8") as handle:
+        handle.write(
+            "0" * 64 + "  .cache/huggingface/download/README.md.metadata\n"
+        )
     old_checksums = read_sha256sums(tmp_path / "SHA256SUMS")
 
     def fake_download(repo, filename, **kwargs):
@@ -211,6 +218,7 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
     sha_entries = hub_module._parse_sha256sums_bytes(sha_operation.path_or_fileobj)
     assert sha_entries["model.safetensors"] == old_checksums["model.safetensors"]
     assert sha_entries["orbitquant_manifest.json"] != old_checksums["orbitquant_manifest.json"]
+    assert ".cache/huggingface/download/README.md.metadata" not in sha_entries
 
 
 def test_repair_hf_artifact_metadata_matrix_repairs_expected_suite_repo(
@@ -282,6 +290,8 @@ def test_upload_orbitquant_artifact_creates_uploads_and_audits_model_repo(tmp_pa
     assert upload_call["revision"] == "main"
     assert upload_call["commit_message"] == "upload test artifact"
     assert upload_call["delete_patterns"] == "*"
+    assert ".cache/**" in upload_call["ignore_patterns"]
+    assert "*/.cache/**" in upload_call["ignore_patterns"]
     assert result["upload"]["commit_oid"] == "uploaded-sha"
     assert result["upload"]["commit_url"].endswith("/commit/uploaded-sha")
     assert result["uploaded_repo"] == {

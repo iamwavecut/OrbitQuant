@@ -3,6 +3,17 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+_IGNORED_ARTIFACT_PATH_PARTS = {
+    ".cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+}
+
+
+def is_ignored_artifact_relative_path(relative_path: str | Path) -> bool:
+    return any(part in _IGNORED_ARTIFACT_PATH_PARTS for part in Path(relative_path).parts)
+
 
 def sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
@@ -20,6 +31,8 @@ def write_sha256sums(root: str | Path, output: str | Path | None = None) -> Path
         if not path.is_file() or path == output_path:
             continue
         rel = path.relative_to(root_path)
+        if is_ignored_artifact_relative_path(rel):
+            continue
         lines.append(f"{sha256_file(path)}  {rel.as_posix()}")
     output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return output_path
@@ -59,7 +72,9 @@ def write_sha256sums_from_manifest(
     entries = {
         relative_path: digest
         for relative_path, digest in entries.items()
-        if relative_path != "SHA256SUMS" and (root_path / relative_path).is_file()
+        if relative_path != "SHA256SUMS"
+        and not is_ignored_artifact_relative_path(relative_path)
+        and (root_path / relative_path).is_file()
     }
     output_path.write_text(
         "\n".join(f"{digest}  {relative_path}" for relative_path, digest in sorted(entries.items()))
@@ -72,6 +87,8 @@ def write_sha256sums_from_manifest(
 def validate_checksums(root: str | Path, checksums: dict[str, str]) -> None:
     root_path = Path(root)
     for relative_path, expected in checksums.items():
+        if is_ignored_artifact_relative_path(relative_path):
+            continue
         path = root_path / relative_path
         if not path.is_file():
             raise RuntimeError(f"artifact checksum target missing: {relative_path}")
@@ -98,6 +115,8 @@ def validate_sha256sums(
     if missing_entries:
         raise RuntimeError(f"SHA256SUMS missing entries: {missing_entries}")
     for relative_path, expected in entries.items():
+        if is_ignored_artifact_relative_path(relative_path):
+            continue
         if relative_path == "SHA256SUMS":
             raise RuntimeError("SHA256SUMS must not include itself")
         path = root_path / relative_path
