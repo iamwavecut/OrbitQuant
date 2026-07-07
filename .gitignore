@@ -3,6 +3,7 @@
 .ruff_cache/
 .mypy_cache/
 .venv/
+.venvs/
 __pycache__/
 *.py[cod]
 dist/

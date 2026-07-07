@@ -32,7 +32,10 @@ URL, or signed-off audit note.
   reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
   The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
 - [ ] Compatibility is verified against the latest published releases and dev
-  branches of Diffusers and Transformers.
+  branches of Diffusers and Transformers with
+  `scripts/run_hf_compat_checks.sh --mode all`. This gate uses registration,
+  pipeline quantization config, and mini integration tests; it does not download
+  model weights or generate samples.
 - [ ] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, and artifact metadata behavior.
 - [ ] Checkpoint and model repositories are published with artifact-focused

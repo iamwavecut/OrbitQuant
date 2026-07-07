@@ -13,10 +13,7 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "uv sync --extra dev --extra hf --extra eval" in text
     assert "uv run ruff check ." in text
     assert "HF integration tests" in text
-    assert "import diffusers, transformers" in text
-    assert "tests/test_diffusers_modelmixin_integration.py" in text
-    assert "tests/test_transformers_pretrained_integration.py" in text
-    assert "tests/test_quantizer_adapter.py" in text
+    assert "scripts/run_hf_compat_checks.sh --mode current" in text
     assert "uv run pytest" in text
     assert "uv build" in text
     assert "uv pip install --python" in text
@@ -33,3 +30,21 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
         text = script.read_text(encoding="utf-8")
         assert "REMOTE_STAGE" in text
         assert "orbitquant kernel-info" in text
+
+
+def test_hf_compatibility_script_is_executable_and_release_dev_aware():
+    script = Path("scripts/run_hf_compat_checks.sh")
+
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+
+    text = script.read_text(encoding="utf-8")
+    assert "HF_COMPAT_STAGE" in text
+    assert "--mode current|release|dev|all" in text
+    assert "git+https://github.com/huggingface/diffusers.git" in text
+    assert "git+https://github.com/huggingface/transformers.git" in text
+    assert "build_diffusers_pipeline_quantization_config" in text
+    assert "tests/test_quantizer_adapter.py" in text
+    assert "tests/test_pipeline_helpers.py" in text
+    assert "tests/test_diffusers_modelmixin_integration.py" in text
+    assert "tests/test_transformers_pretrained_integration.py" in text
