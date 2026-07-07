@@ -734,7 +734,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         rendered = json.dumps(payload, indent=2)
         if args.output is not None:
-            Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(rendered + "\n", encoding="utf-8")
         print(rendered)
         return 0
     if args.command == "repair-hf-artifact-metadata":

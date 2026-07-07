@@ -1603,7 +1603,7 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
         }
 
     monkeypatch.setattr(cli_main, "audit_hf_artifact_repos", fake_audit_hf_artifacts)
-    output_path = tmp_path / "audit.json"
+    output_path = tmp_path / "reports" / "native" / "audit.json"
 
     assert (
         main(
@@ -1624,6 +1624,7 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
 
     output = json.loads(capsys.readouterr().out)
     written = json.loads(output_path.read_text())
+    assert output_path.parent.is_dir()
     assert output == written
     assert output["repo_count"] == 1
     assert seen == {
