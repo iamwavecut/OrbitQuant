@@ -47,6 +47,8 @@ def _quantize_weight_indices(
         )
 
     rotated_weight = rotation.apply_to_weight(weight)
+    # RPBH is norm-preserving, so rotating first and dividing by the original
+    # row norm is equivalent to rotating the unit direction from the paper.
     unit_weight = rotated_weight / row_norms[:, None]
     return codebook.quantize_indices(unit_weight)
 

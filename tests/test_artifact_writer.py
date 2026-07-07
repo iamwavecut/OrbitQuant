@@ -66,6 +66,8 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert manifest["quantization_device"] == summary.quantization_device
     assert manifest["weight_quantization_backend"] == summary.weight_quantization_backend
     assert manifest["quantization_staging_mode"] == summary.quantization_staging_mode
+    assert manifest["adaln_group_size"] == 64
+    assert manifest["adaln_policy"] == "int4_rtn_group64_bf16_activation"
     assert model_index["quantization_device"] == summary.quantization_device
     assert model_index["weight_quantization_backend"] == summary.weight_quantization_backend
     assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
@@ -197,7 +199,7 @@ def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model
 
 def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path):
     source = TinyArtifactModel()
-    config = OrbitQuantConfig(block_size=4)
+    config = OrbitQuantConfig(block_size=4, adaln_group_size=32)
     summary = quantize_linear_modules(source, config)
     save_orbitquant_artifact(
         source,
@@ -221,6 +223,7 @@ def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path
     assert result["sha256sums_validation"] == "checked"
     assert result["sha256sums_entry_count"] > result["tensor_count"]
     assert result["tensor_validation"] == "checked"
+    assert result["adaln_group_size"] == 32
 
 
 def test_validate_orbitquant_artifact_can_skip_heavy_checksum_and_tensor_passes(tmp_path):

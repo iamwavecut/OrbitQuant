@@ -46,6 +46,29 @@ def test_orbit_linear_quantized_forward_is_finite_and_shape_preserving():
     assert "_activation_codebook_centroids" not in quantized.state_dict()
 
 
+def test_orbit_linear_weight_indices_quantize_rotated_unit_directions():
+    torch.manual_seed(2)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+
+    assert quantized.row_norms is not None
+    assert quantized.row_norms.dtype == torch.bfloat16
+
+    weight = source.weight.detach().to(torch.float32)
+    row_norms = weight.norm(dim=-1).clamp_min(config.activation_eps)
+    rotated_after_normalize = quantized.rotation.apply_to_weight(weight / row_norms[:, None])
+    expected_indices = quantized.weight_codebook.quantize_indices(rotated_after_normalize)
+    actual_indices = layers_module.unpack_lowbit(
+        quantized.packed_weight_indices,
+        bits=quantized.weight_bits,
+        length=quantized.out_features * quantized.in_features,
+    ).reshape(quantized.out_features, quantized.in_features)
+
+    assert torch.equal(actual_indices, expected_indices)
+
+
 def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):
     torch.manual_seed(2)
     source = torch.nn.Linear(16, 7)

@@ -3,6 +3,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
@@ -2051,6 +2052,106 @@ def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path
     assert output["source_model_id"] == "example/model"
     assert output["tensor_count"] > 0
     assert output["quantized_module_count"] == 1
+
+
+def test_cli_validate_artifact_checks_policy_inventory(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    inventory_path = tmp_path / "policy-inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "source_model_id": "example/model",
+                "target_policy": "generic_dit",
+                "component": "transformer",
+                "load_mode": "config",
+                "linear_module_count": 1,
+                "action_counts": {
+                    "orbitquant": 1,
+                    "adaln_int4_rtn": 0,
+                    "bf16_skip": 0,
+                },
+                "quantized_modules": summary.quantized_modules,
+                "adaln_modules": summary.adaln_modules,
+                "skipped_modules": summary.skipped_modules,
+            }
+        )
+        + "\n"
+    )
+
+    assert (
+        main(
+            [
+                "validate-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--policy-inventory",
+                str(inventory_path),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    policy_validation = output["policy_inventory_validation"]
+    assert policy_validation["valid"] is True
+    assert policy_validation["quantized_module_count"] == 1
+    assert policy_validation["inventory_path"] == str(inventory_path)
+
+
+def test_cli_validate_artifact_rejects_policy_inventory_mismatch(tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    inventory_path = tmp_path / "policy-inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "source_model_id": "example/model",
+                "target_policy": "generic_dit",
+                "quantized_modules": ["transformer_blocks.0.attn.to_k"],
+                "adaln_modules": [],
+                "skipped_modules": [],
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(RuntimeError, match="policy inventory mismatch"):
+        main(
+            [
+                "validate-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--policy-inventory",
+                str(inventory_path),
+            ]
+        )
 
 
 def test_cli_repair_artifact_metadata_wires_provenance_options(

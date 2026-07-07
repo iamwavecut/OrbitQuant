@@ -140,6 +140,7 @@ def validate_orbitquant_artifact(
         "component": model_index["component"],
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
+        "adaln_group_size": manifest.adaln_group_size,
         "quantization_device": manifest.quantization_device,
         "weight_quantization_backend": manifest.weight_quantization_backend,
         "quantization_staging_mode": manifest.quantization_staging_mode,
@@ -153,4 +154,83 @@ def validate_orbitquant_artifact(
         "skipped_module_count": len(manifest.skipped_modules),
         "required_files": list(_REQUIRED_ARTIFACT_FILES),
         "checksums": manifest.checksums,
+    }
+
+
+def _module_list_mismatch(
+    name: str, expected: list[str], actual: list[str]
+) -> dict[str, Any] | None:
+    expected_set = set(expected)
+    actual_set = set(actual)
+    missing = sorted(expected_set - actual_set)
+    unexpected = sorted(actual_set - expected_set)
+    if not missing and not unexpected and len(expected) == len(actual):
+        return None
+    return {
+        "name": name,
+        "expected_count": len(expected),
+        "actual_count": len(actual),
+        "missing": missing,
+        "unexpected": unexpected,
+    }
+
+
+def validate_artifact_policy_inventory(
+    artifact_dir: str | Path,
+    inventory_path: str | Path,
+) -> dict[str, Any]:
+    artifact_path = Path(artifact_dir)
+    inventory_file = Path(inventory_path)
+    manifest = OrbitQuantManifest.from_dict(
+        json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
+    )
+    inventory = json.loads(inventory_file.read_text(encoding="utf-8"))
+    scalar_mismatches = [
+        mismatch
+        for key, expected, actual in (
+            ("source_model_id", manifest.source_model_id, inventory.get("source_model_id")),
+            ("target_policy", manifest.target_policy, inventory.get("target_policy")),
+        )
+        if (mismatch := _mismatch(key, expected, actual)) is not None
+    ]
+    module_mismatches = [
+        mismatch
+        for mismatch in (
+            _module_list_mismatch(
+                "quantized_modules",
+                list(inventory.get("quantized_modules", [])),
+                manifest.quantized_modules,
+            ),
+            _module_list_mismatch(
+                "adaln_modules",
+                list(inventory.get("adaln_modules", [])),
+                manifest.adaln_modules,
+            ),
+            _module_list_mismatch(
+                "skipped_modules",
+                list(inventory.get("skipped_modules", [])),
+                manifest.skipped_modules,
+            ),
+        )
+        if mismatch is not None
+    ]
+    if scalar_mismatches or module_mismatches:
+        raise RuntimeError(
+            "artifact policy inventory mismatch: "
+            f"scalars={scalar_mismatches}, modules={module_mismatches}"
+        )
+    action_counts = inventory.get("action_counts") or {}
+    return {
+        "valid": True,
+        "artifact_dir": str(artifact_path),
+        "inventory_path": str(inventory_file),
+        "source_model_id": manifest.source_model_id,
+        "target_policy": manifest.target_policy,
+        "component": inventory.get("component"),
+        "load_mode": inventory.get("load_mode"),
+        "linear_module_count": inventory.get("linear_module_count"),
+        "action_counts": action_counts,
+        "quantized_module_count": len(manifest.quantized_modules),
+        "adaln_module_count": len(manifest.adaln_modules),
+        "skipped_module_count": len(manifest.skipped_modules),
     }

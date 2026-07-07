@@ -20,6 +20,7 @@ class OrbitQuantManifest:
     target_policy: str
     runtime_mode: str
     activation_kernel_backend: str
+    adaln_group_size: int = 64
     quantization_device: str = "unknown"
     weight_quantization_backend: str = "unknown"
     quantization_staging_mode: str = "unknown"
@@ -61,6 +62,7 @@ class OrbitQuantManifest:
             target_policy=config.target_policy,
             runtime_mode=config.runtime_mode,
             activation_kernel_backend=config.activation_kernel_backend,
+            adaln_group_size=config.adaln_group_size,
             quantization_device=quantization_device,
             weight_quantization_backend=weight_quantization_backend,
             quantization_staging_mode=quantization_staging_mode,
@@ -90,11 +92,12 @@ class OrbitQuantManifest:
             "row_norm_dtype": "bfloat16",
             "runtime_mode": self.runtime_mode,
             "activation_kernel_backend": self.activation_kernel_backend,
+            "adaln_group_size": self.adaln_group_size,
             "quantization_device": self.quantization_device,
             "weight_quantization_backend": self.weight_quantization_backend,
             "quantization_staging_mode": self.quantization_staging_mode,
             "target_policy": self.target_policy,
-            "adaln_policy": "int4_rtn_group64_bf16_activation",
+            "adaln_policy": f"int4_rtn_group{self.adaln_group_size}_bf16_activation",
             "quantized_modules": self.quantized_modules,
             "adaln_modules": self.adaln_modules,
             "skipped_modules": self.skipped_modules,
@@ -119,6 +122,7 @@ class OrbitQuantManifest:
             target_policy=data.get("target_policy", "auto"),
             runtime_mode=data.get("runtime_mode", "dequant_bf16"),
             activation_kernel_backend=data.get("activation_kernel_backend", "auto"),
+            adaln_group_size=int(data.get("adaln_group_size", 64)),
             quantization_device=data.get("quantization_device", "unknown"),
             weight_quantization_backend=data.get("weight_quantization_backend", "unknown"),
             quantization_staging_mode=data.get("quantization_staging_mode", "unknown"),

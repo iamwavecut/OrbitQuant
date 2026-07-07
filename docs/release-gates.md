@@ -21,8 +21,10 @@ URL, or signed-off audit note.
   dimensions. Missing release metrics block only those metric/reproduction
   claims, not ordinary compact artifact development.
 - [ ] Full-model module classification inventories are captured for FLUX.2
-  Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1, proving quantized, AdaLN
-  INT4, and skipped modules match the paper policy.
+  Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON can stay
+  local under ignored `reports/`, but each published artifact manifest must be
+  cross-checked against the captured summary for quantized, AdaLN INT4, and
+  skipped modules.
 - [ ] Optimized kernel audit and benchmarks are complete for the supported or
   targeted backends: CUDA/Triton, CPU, Metal/MPS, ROCm, and XPU. Unsupported
   backends have an explicit exclusion note instead of a silent gap.

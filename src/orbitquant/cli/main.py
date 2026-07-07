@@ -18,6 +18,7 @@ from orbitquant.artifacts import (
     refresh_artifact_checksums,
     repair_artifact_metadata,
     save_orbitquant_artifact,
+    validate_artifact_policy_inventory,
     validate_orbitquant_artifact,
 )
 from orbitquant.benchmarks import benchmark_model_quantization, benchmark_orbit_linear
@@ -523,6 +524,13 @@ def main(argv: list[str] | None = None) -> int:
         "validate-artifact", help="validate an OrbitQuant artifact"
     )
     validate_parser.add_argument("--artifact", required=True)
+    validate_parser.add_argument(
+        "--policy-inventory",
+        help=(
+            "optional inspect-policy JSON used to verify manifest module lists "
+            "against the captured policy inventory"
+        ),
+    )
 
     repair_parser = subparsers.add_parser(
         "repair-artifact-metadata",
@@ -1045,7 +1053,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "validate-artifact":
-        print(json.dumps(validate_orbitquant_artifact(args.artifact)))
+        payload = validate_orbitquant_artifact(args.artifact)
+        if args.policy_inventory is not None:
+            payload["policy_inventory_validation"] = validate_artifact_policy_inventory(
+                args.artifact,
+                args.policy_inventory,
+            )
+        print(json.dumps(payload))
         return 0
     if args.command == "repair-artifact-metadata":
         print(

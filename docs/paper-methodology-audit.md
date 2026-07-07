@@ -55,9 +55,9 @@ Status legend:
 | Weight direction coordinates are quantized with the Lloyd-Max codebook and packed into low-bit indices. | Pass | `src/orbitquant/layers.py`, `src/orbitquant/packing/bitpack.py`, `tests/test_bitpack.py`, `tests/test_kernels.py` | Bit packing covers 2, 3, 4, and 6 bit paths. |
 | Runtime activations compute per-token norm, normalize, apply RPBH, nearest-centroid quantize, and rescale by the token norm. | Pass | `src/orbitquant/functional.py`, `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `tests/test_orbit_linear.py`, `tests/test_kernels.py` | Arbitrary leading dimensions are preserved; the final feature dimension is the rotation dimension. |
 | The only input-dependent runtime scalar is the per-token norm. | Pass | `src/orbitquant/functional.py` | Codebook, rotation, centroids, boundaries, signs, and permutation are fixed after construction. |
-| AdaLN modulation projections use INT4 weight-only RTN with group size 64 and BF16 activations. | Pass | `src/orbitquant/adaln.py`, `src/orbitquant/config.py`, `tests/test_adaln_rtn.py` | AdaLN wrappers do not call OrbitQuant activation rotation. Default `adaln_group_size` is 64. |
-| Transformer-block linear projections are quantized through OrbitQuant. | Partial | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py` | Tiny current Diffusers classes are covered for FLUX, FLUX.2, Z-Image, and Wan. Full checkpoint inventories still need to be saved before broad release claims. |
-| Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Partial | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py` | Covered in policy tests and helper-level pipeline scope. Full checkpoint inventories remain the release evidence gate. |
+| AdaLN modulation projections use INT4 weight-only RTN with group size 64 and BF16 activations. | Pass | `src/orbitquant/adaln.py`, `src/orbitquant/config.py`, `src/orbitquant/artifacts/manifest.py`, `tests/test_adaln_rtn.py` | AdaLN wrappers do not call OrbitQuant activation rotation. Default `adaln_group_size` is 64, and artifacts record the actual group size so non-default artifacts are labeled. |
+| Transformer-block linear projections are quantized through OrbitQuant. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; local inventory summary below | Current Diffusers transformer configs are covered for FLUX.1, FLUX.2, Z-Image, and Wan. Artifact manifests still need per-artifact cross-checks before final publication. |
+| Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; local inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
 | Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Full metric runs are not required for development, but are required before metric-table or paper-reproduction claims. |
 | FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py`, `docs/release-gates.md` | It is treated as an additional target using paper-style native settings. |
 | Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py` | CUDA/Triton covers several quant/dequant stages and optional packed matmul. Default runtime remains BF16 PyTorch matmul after dequantization. |
@@ -66,7 +66,11 @@ Status legend:
 ## Model Policy Evidence
 
 Current policy coverage is pattern-based and intentionally scoped to Diffusers
-transformer components.
+transformer components. Full config-derived inventories were generated locally
+under ignored `reports/native/module-inventories/` on 2026-07-07 using
+`orbitquant inspect-policy --suite ... --load-mode config --dtype bfloat16
+--output ...`; raw inventories are kept out of Git because they are audit
+artifacts, not package source.
 
 | Model family | Quantized patterns | AdaLN/INT4 patterns | Default skips | Evidence |
 | --- | --- | --- | --- | --- |
@@ -75,11 +79,20 @@ transformer components.
 | Z-Image-Turbo | `noise_refiner`, `context_refiner`, and `layers` attention projections and FFN `w1`, `w2`, `w3`. | Refiner and main-layer `adaLN_modulation`. | `all_x_embedder`, `t_embedder`, `cap_embedder`, final layer and final AdaLN modulation. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `ZImageTransformer2DModel`. |
 | Wan 2.1 | `blocks.*.attn1`, `blocks.*.attn2`, and `blocks.*.ffn` projections. | None expected for Wan 2.1-1.3B. | `condition_embedder`, time/text embedders, final `proj_out`, text encoder, VAE. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `WanTransformer3DModel`. |
 
-Required before broad release:
+Inventory summary:
 
-- Save `orbitquant inspect` module inventories for the full target checkpoints.
+| Suite | Component class | Linear modules | OrbitQuant | AdaLN INT4 | BF16 skip |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `flux2-native` | `Flux2Transformer2DModel` | 109 | 100 | 3 | 6 |
+| `flux1-schnell-native` | `FluxTransformer2DModel` | 502 | 418 | 76 | 8 |
+| `z-image-native` | `ZImageTransformer2DModel` | 276 | 238 | 32 | 6 |
+| `wan-native` | `WanTransformer3DModel` | 306 | 300 | 0 | 6 |
+
+Required before final publication:
+
 - Verify the manifest `quantized_modules`, `adaln_modules`, and
-  `skipped_modules` lists against those inventories.
+  `skipped_modules` lists for each published artifact against the corresponding
+  inventory summary with `orbitquant validate-artifact --policy-inventory`.
 - Treat access failures for gated models as model-access blockers only, not as
   method blockers.
 
@@ -95,9 +108,9 @@ Required before broad release:
 
 Known kernel follow-up:
 
-- `runtime_mode="triton_packed_matmul"` is CUDA-only. The config currently
-  allows it generally, and non-CUDA failure happens in the runtime path. Add a
-  fail-fast validation before advertising this mode broadly.
+- `runtime_mode="triton_packed_matmul"` is CUDA-only and now fails before
+  activation quantization when the input tensor is non-CUDA. It remains an
+  opt-in experimental path until full-model CUDA benchmarks are complete.
 
 ## Native Eval And Claim Policy
 
@@ -119,21 +132,19 @@ the paper's GenEval or VBench numbers.
 | Item | Status | Rationale |
 | --- | --- | --- |
 | Default runtime uses dequantized BF16 matmul. | Accepted limitation | The paper's latency/memory analysis also evaluates fake quantization with BF16 matmul. Do not claim realized native low-bit tensor-core speedup for this default path. |
-| Optional `triton_packed_matmul` exists but is not the default. | Accepted experimental path | It materially advances the kernel objective, but needs fail-fast device validation and more full-model benchmarking. |
-| Full checkpoint inventories are not yet committed as audit artifacts. | Release blocker for broad policy claims | Tiny current Diffusers class tests are useful but not a substitute for full model inventories. |
+| Optional `triton_packed_matmul` exists but is not the default. | Accepted experimental path | It materially advances the kernel objective, but needs more full-model CUDA benchmarking before broad acceleration claims. |
+| Full config-derived inventories are local ignored audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON remains under ignored `reports/` to avoid turning the repository into an artifact store. |
 | Release-grade GenEval/VBench metrics are not mandatory during development. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
 
 ## Next Audit Actions
 
-1. Generate and save full module inventories for FLUX.2 Klein, FLUX.1-schnell,
-   Z-Image-Turbo, and Wan2.1-T2V-1.3B.
-2. Add fail-fast validation for `runtime_mode="triton_packed_matmul"` on
-   non-CUDA devices.
-3. Run the targeted native comparison pack for each published artifact when
+1. Cross-check each published artifact manifest against the matching inventory
+   summary before public release.
+2. Run the targeted native comparison pack for each published artifact when
    refreshing cards, without promoting full GenEval/VBench to a development
    blocker.
-4. Run full GenEval/VBench only before paper-reproduction or metric-table
+3. Run full GenEval/VBench only before paper-reproduction or metric-table
    claims.
-5. Complete backend-specific release notes for CUDA, CPU, MPS/Metal, ROCm, and
+4. Complete backend-specific release notes for CUDA, CPU, MPS/Metal, ROCm, and
    XPU before public release.

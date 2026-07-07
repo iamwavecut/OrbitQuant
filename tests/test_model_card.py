@@ -123,6 +123,31 @@ def test_model_card_embeds_only_one_comparison_matrix_asset():
     assert "![assets/video_generation_comparison_matrix.webp]" not in card
 
 
+def test_model_card_reports_non_default_adaln_group_size():
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        target_policy="flux",
+        adaln_group_size=32,
+    )
+    manifest = OrbitQuantManifest.from_config(
+        config,
+        source_model_id="black-forest-labs/FLUX.1-schnell",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        quantized_modules=["transformer_blocks.0.attn.to_q"],
+        adaln_modules=["transformer_blocks.0.norm1.linear"],
+        skipped_modules=["proj_out"],
+        checksums={"assets/image_generation_comparison_matrix.webp": "0" * 64},
+    )
+
+    card = render_model_card(manifest)
+
+    assert "- AdaLN policy: `int4_rtn_group32_bf16_activation`" in card
+    assert "- AdaLN group size: `32`" in card
+    assert "- AdaLN group-size note: non-paper-default setting." in card
+
+
 def test_model_card_ignores_contact_sheets_for_published_artifacts():
     contact_sheet = "assets/flux1_schnell_contact_sheet.webp"
     single_sample = "assets/original_vs_orbitquant_seed0.webp"

@@ -300,6 +300,12 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
     comparison_assets = _comparison_assets(data["checksums"])
     native_settings_lines = _native_settings_section(data["source_model_id"])
     validation_status_lines = _validation_status_section(data["source_model_id"])
+    adaln_group_size = int(data.get("adaln_group_size", 64))
+    adaln_default_note = (
+        "- AdaLN group-size note: paper default."
+        if adaln_group_size == 64
+        else "- AdaLN group-size note: non-paper-default setting."
+    )
     comparison_lines = []
     if comparison_assets:
         comparison_lines.extend(
@@ -374,6 +380,9 @@ def render_model_card(manifest: OrbitQuantManifest) -> str:
             f"- Quantization device: `{data['quantization_device']}`",
             f"- Weight quantization backend: `{data['weight_quantization_backend']}`",
             f"- Target policy: `{data['target_policy']}`",
+            f"- AdaLN policy: `{data['adaln_policy']}`",
+            f"- AdaLN group size: `{adaln_group_size}`",
+            adaln_default_note,
             f"- Rotation: `{data['rotation']}`",
             f"- Rotation seed: `{data['rotation_seed']}`",
             f"- Block size: `{data['block_size']}`",

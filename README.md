@@ -171,6 +171,14 @@ orbitquant inspect-policy \
   --output ./reports/inventories/flux2-klein-policy.json
 ```
 
+Use the saved inventory as a release check for a compact artifact manifest:
+
+```bash
+orbitquant validate-artifact \
+  --artifact ./artifacts/flux2-klein-w4a4 \
+  --policy-inventory ./reports/inventories/flux2-klein-policy.json
+```
+
 ## Published Artifact Settings
 
 The current target matrix follows the agreed native settings:
