@@ -187,14 +187,6 @@ def save_orbitquant_artifact(
         ),
     }
     benchmark_path.write_text(json.dumps(benchmark_summary, indent=2) + "\n", encoding="utf-8")
-    original_metrics_jsonl_path = output_path / "benchmark" / "original.metrics.jsonl"
-    orbitquant_metrics_jsonl_path = output_path / "benchmark" / "orbitquant.metrics.jsonl"
-    original_metrics_csv_path = output_path / "benchmark" / "original.metrics.csv"
-    orbitquant_metrics_csv_path = output_path / "benchmark" / "orbitquant.metrics.csv"
-    original_metrics_jsonl_path.write_text("", encoding="utf-8")
-    orbitquant_metrics_jsonl_path.write_text("", encoding="utf-8")
-    original_metrics_csv_path.write_text("metric,value\n", encoding="utf-8")
-    orbitquant_metrics_csv_path.write_text("metric,value\n", encoding="utf-8")
     (output_path / "assets").mkdir(parents=True, exist_ok=True)
 
     skipped = _summary_list(summary, "skipped_modules")
@@ -206,10 +198,6 @@ def save_orbitquant_artifact(
         "model_index.json": sha256_file(model_index_path),
         "prompts.json": sha256_file(prompts_path),
         "benchmark/summary.json": sha256_file(benchmark_path),
-        "benchmark/original.metrics.jsonl": sha256_file(original_metrics_jsonl_path),
-        "benchmark/orbitquant.metrics.jsonl": sha256_file(orbitquant_metrics_jsonl_path),
-        "benchmark/original.metrics.csv": sha256_file(original_metrics_csv_path),
-        "benchmark/orbitquant.metrics.csv": sha256_file(orbitquant_metrics_csv_path),
     }
     manifest = OrbitQuantManifest.from_config(
         config,

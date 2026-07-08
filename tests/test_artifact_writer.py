@@ -126,16 +126,16 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert "model_index.json" in manifest["checksums"]
     assert "prompts.json" in manifest["checksums"]
     assert "benchmark/summary.json" in manifest["checksums"]
-    assert (tmp_path / "benchmark" / "original.metrics.jsonl").is_file()
-    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").is_file()
-    assert (tmp_path / "benchmark" / "original.metrics.csv").is_file()
-    assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").is_file()
+    assert not (tmp_path / "benchmark" / "original.metrics.jsonl").exists()
+    assert not (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").exists()
+    assert not (tmp_path / "benchmark" / "original.metrics.csv").exists()
+    assert not (tmp_path / "benchmark" / "orbitquant.metrics.csv").exists()
     assert (tmp_path / "assets").is_dir()
     assert not (tmp_path / "assets" / ".gitkeep").exists()
-    assert "benchmark/original.metrics.jsonl" in manifest["checksums"]
-    assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
-    assert "benchmark/original.metrics.csv" in manifest["checksums"]
-    assert "benchmark/orbitquant.metrics.csv" in manifest["checksums"]
+    assert "benchmark/original.metrics.jsonl" not in manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.jsonl" not in manifest["checksums"]
+    assert "benchmark/original.metrics.csv" not in manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.csv" not in manifest["checksums"]
     assert "assets/.gitkeep" not in manifest["checksums"]
     prompts = json.loads((tmp_path / "prompts.json").read_text())
     benchmark_summary = json.loads((tmp_path / "benchmark" / "summary.json").read_text())
@@ -167,10 +167,10 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert benchmark_summary["device_transfer_seconds"] >= 0.0
     assert benchmark_summary["module_device_transfer_count"] >= 0
     assert benchmark_summary["source_linear_device_counts"]
-    assert (tmp_path / "benchmark" / "original.metrics.jsonl").read_text() == ""
-    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
-    assert (tmp_path / "benchmark" / "original.metrics.csv").read_text() == "metric,value\n"
-    assert (tmp_path / "benchmark" / "orbitquant.metrics.csv").read_text() == "metric,value\n"
+    assert not (tmp_path / "benchmark" / "original.metrics.jsonl").exists()
+    assert not (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").exists()
+    assert not (tmp_path / "benchmark" / "original.metrics.csv").exists()
+    assert not (tmp_path / "benchmark" / "orbitquant.metrics.csv").exists()
     assert any(name.endswith(".centroids") for name in codebook_tensors)
     assert any(name.endswith(".permutation") for name in rotation_tensors)
 
@@ -733,7 +733,7 @@ def test_record_artifact_metrics_rejects_corrupted_artifact_before_refreshing_ch
 
     manifest = json.loads((tmp_path / "orbitquant_manifest.json").read_text())
     assert manifest == original_manifest
-    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
+    assert not (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").exists()
 
 
 def test_record_artifact_metrics_can_skip_heavy_checksum_preflight(tmp_path):
@@ -814,10 +814,8 @@ def test_deferred_artifact_refresh_rebuilds_manifest_and_sha256sums_once(tmp_pat
     stale_sha = read_sha256sums(tmp_path / "SHA256SUMS")
     assert relative_asset == "assets/flux2-native_seed7_W4A4_simple-object.png"
     assert relative_asset not in stale_manifest["checksums"]
-    assert "benchmark/orbitquant.metrics.jsonl" in stale_manifest["checksums"]
-    assert stale_sha["benchmark/orbitquant.metrics.jsonl"] != sha256_file(
-        tmp_path / "benchmark" / "orbitquant.metrics.jsonl"
-    )
+    assert "benchmark/orbitquant.metrics.jsonl" not in stale_manifest["checksums"]
+    assert "benchmark/orbitquant.metrics.jsonl" not in stale_sha
 
     result = refresh_artifact_checksums(tmp_path)
 

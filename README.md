@@ -98,6 +98,38 @@ OrbitQuant integrates with Hugging Face configuration and quantization
 mechanisms, but the published FLUX, Z-Image, and Wan artifacts are Diffusers
 transformer-component artifacts and should be loaded through Diffusers.
 
+## Hugging Face Native Loaders
+
+For `transformers.PreTrainedModel` or `diffusers.ModelMixin` classes that own
+their transformer linears directly, importing `orbitquant` registers the
+`orbitquant` backend with the installed Hugging Face libraries:
+
+```python
+import torch
+import orbitquant
+from orbitquant import OrbitQuantConfig
+from transformers import AutoModel
+
+config = OrbitQuantConfig(
+    weight_bits=4,
+    activation_bits=4,
+    target_policy="generic_dit",
+)
+
+model = AutoModel.from_pretrained(
+    "./source-pretrained-model",
+    torch_dtype=torch.bfloat16,
+    quantization_config=config,
+)
+model.save_pretrained("./source-pretrained-model-orbitquant-w4a4")
+
+restored = AutoModel.from_pretrained("./source-pretrained-model-orbitquant-w4a4")
+```
+
+This path is for Hugging Face-native model repositories. Published FLUX,
+Z-Image, and Wan artifacts remain Diffusers pipeline-component artifacts and
+use the component loader shown above.
+
 ## Quantize A Pipeline Component
 
 ```python
@@ -244,7 +276,7 @@ low-resolution checks are not accepted as published quality evidence.
 
 Full GenEval and VBench runs are release evidence for paper reproduction,
 metric-table, or leaderboard-style claims. Compact artifact readiness is tracked
-separately through native comparison assets, the `native_smoke` proof block,
+separately through native comparison assets, native validation evidence,
 manifests, and checksums.
 
 For release-grade metric claims, import metrics from the upstream metric

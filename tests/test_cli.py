@@ -985,7 +985,7 @@ def test_cli_generate_with_artifact_original_split_skips_quantized_component(
     assert output["output_path"].endswith("flux2-native_seed3_original.png")
     assert record["split"] == "original"
     assert record["metadata"]["bit_setting"] == "original"
-    assert (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").read_text() == ""
+    assert not (tmp_path / "benchmark" / "orbitquant.metrics.jsonl").exists()
 
 
 def test_cli_generate_creates_comparison_when_original_pair_exists(
@@ -2590,7 +2590,7 @@ def test_cli_upload_artifact_defaults_to_compact_profile(capsys, tmp_path, monke
     assert seen["kwargs"]["staging_dir"] is None
 
 
-def test_cli_upload_artifact_can_disable_default_remote_file_replacement(
+def test_cli_upload_artifact_rejects_disabling_remote_file_replacement(
     capsys, tmp_path, monkeypatch
 ):
     seen = {}
@@ -2608,7 +2608,7 @@ def test_cli_upload_artifact_can_disable_default_remote_file_replacement(
 
     monkeypatch.setattr(cli_main, "upload_orbitquant_artifact", fake_upload_artifact)
 
-    assert (
+    with pytest.raises(SystemExit):
         main(
             [
                 "upload-artifact",
@@ -2620,12 +2620,9 @@ def test_cli_upload_artifact_can_disable_default_remote_file_replacement(
                 "--dry-run",
             ]
         )
-        == 0
-    )
 
-    output = json.loads(capsys.readouterr().out)
-    assert output["repo_id"] == "WaveCut/example-orbitquant"
-    assert seen["kwargs"]["replace_repo_files"] is False
+    assert seen == {}
+    assert "unrecognized arguments: --no-replace-repo-files" in capsys.readouterr().err
 
 
 def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monkeypatch):

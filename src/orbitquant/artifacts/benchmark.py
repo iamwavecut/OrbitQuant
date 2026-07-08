@@ -102,8 +102,11 @@ def record_artifact_metrics(
     with jsonl_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, separators=(",", ":")) + "\n")
 
+    write_csv_header = not csv_path.exists()
     with csv_path.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
+        if write_csv_header:
+            writer.writerow(["metric", "value"])
         for metric, value in record["metrics"].items():
             writer.writerow([metric, _csv_value(value)])
 

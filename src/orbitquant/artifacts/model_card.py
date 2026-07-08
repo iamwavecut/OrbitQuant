@@ -334,11 +334,11 @@ def _native_validation_proof_section(
         return []
 
     lines = [
-        "## Native Validation Proof",
+        "## Native Validation Evidence",
         "",
         "The compact benchmark summary records native BF16-vs-OrbitQuant "
-        "evidence for the comparison matrix below. Raw generation records are "
-        "kept local-only and are not part of this published artifact.",
+        "evidence for the comparison matrix below. Detailed per-sample generation "
+        "records are retained outside this compact artifact.",
         "",
         "| Evidence | Value |",
         "| --- | --- |",

@@ -562,7 +562,7 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
 
     staged_checksums = read_sha256sums(stage_dir / "SHA256SUMS")
     assert result["validation"]["valid"] is True
-    assert result["omitted_raw_eval_asset_count"] == 10
+    assert result["omitted_raw_eval_asset_count"] == 6
     assert result["omitted_report_file_count"] == 2
     assert result["copied_report_asset_count"] == 1
     assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
@@ -747,7 +747,7 @@ def test_stage_compact_upload_artifact_writes_native_smoke_proof(tmp_path):
     staged_readme = (stage_dir / "README.md").read_text(encoding="utf-8")
     assert staged_summary["raw_generation_records"] == "local-only"
     assert "latest" not in staged_summary["metrics"]["original"]
-    assert "## Native Validation Proof" in staged_readme
+    assert "## Native Validation Evidence" in staged_readme
     assert "| Comparison matrix | `assets/image_generation_comparison_matrix.webp` |" in (
         staged_readme
     )
@@ -940,15 +940,11 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
 
     assert result["report_file_count"] == 2
     assert result["report_matrix_count"] == 1
-    assert result["forbidden_file_count"] == 8
+    assert result["forbidden_file_count"] == 4
     assert result["promoted_assets"] == ["assets/image_generation_comparison_matrix.webp"]
     assert result["delete_paths"] == [
         "assets/flux2-native_seed0_W4A4_simple-object.png",
         "assets/flux2-native_seed0_W4A4_simple-object.png.json",
-        "benchmark/orbitquant.metrics.csv",
-        "benchmark/orbitquant.metrics.jsonl",
-        "benchmark/original.metrics.csv",
-        "benchmark/original.metrics.jsonl",
         "reports",
     ]
     assert result["commit"]["commit_oid"] == "repair-sha"
@@ -969,15 +965,11 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
     ]
     assert "model.safetensors" not in added
     assert added["assets/image_generation_comparison_matrix.webp"] == b"report matrix"
-    assert len(deleted) == 7
+    assert len(deleted) == 3
     deleted_paths = {operation.path_in_repo: operation.is_folder for operation in deleted}
     assert deleted_paths == {
         "assets/flux2-native_seed0_W4A4_simple-object.png": False,
         "assets/flux2-native_seed0_W4A4_simple-object.png.json": False,
-        "benchmark/orbitquant.metrics.csv": False,
-        "benchmark/orbitquant.metrics.jsonl": False,
-        "benchmark/original.metrics.csv": False,
-        "benchmark/original.metrics.jsonl": False,
         "reports": True,
     }
 
@@ -1027,10 +1019,6 @@ def test_cleanup_hf_artifact_reports_deletes_extra_comparison_matrix_assets(
     assert result["promoted_assets"] == []
     assert result["forbidden_files"] == [
         "assets/video_generation_comparison_matrix.webp",
-        "benchmark/orbitquant.metrics.csv",
-        "benchmark/orbitquant.metrics.jsonl",
-        "benchmark/original.metrics.csv",
-        "benchmark/original.metrics.jsonl",
     ]
     assert "assets/video_generation_comparison_matrix.webp" in result["delete_paths"]
     commit_call = fake_api.create_commit_calls[0]
@@ -1334,7 +1322,7 @@ def test_repair_hf_native_smoke_proof_restores_from_local_backup_without_raw_upl
     assert proof["splits"]["original"]["native_settings"] == [
         hub_module._native_smoke_expected_settings(suite)
     ]
-    assert "## Native Validation Proof" in operation_by_path["README.md"].decode("utf-8")
+    assert "## Native Validation Evidence" in operation_by_path["README.md"].decode("utf-8")
 
 
 def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
@@ -1385,7 +1373,7 @@ def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
         for operation in fake_api.create_commit_calls[0]["operations"]
     }
     repaired_readme = operation_by_path["README.md"].decode("utf-8")
-    assert "## Native Validation Proof" in repaired_readme
+    assert "## Native Validation Evidence" in repaired_readme
     assert "| Paired prompt/seed count | `1` |" in repaired_readme
 
 
@@ -1590,7 +1578,7 @@ def test_upload_orbitquant_artifact_can_upload_compact_staged_copy(tmp_path):
 
     assert result["upload_profile"] == "compact"
     assert result["staging"]["enabled"] is True
-    assert result["staging"]["omitted_raw_eval_asset_count"] == 6
+    assert result["staging"]["omitted_raw_eval_asset_count"] == 2
     assert len(fake_api.upload_folder_calls) == 1
     assert fake_api.upload_folder_calls[0]["folder_path"] == str(stage_dir)
     assert not (stage_dir / raw_eval_asset.relative_to(tmp_path)).exists()
@@ -1624,14 +1612,10 @@ def test_upload_orbitquant_artifact_defaults_to_compact_staged_copy(tmp_path):
     assert result["replace_repo_files"] is True
     assert result["upload_kwargs"]["delete_patterns"] == "*"
     assert result["staging"]["enabled"] is True
-    assert result["staging"]["omitted_raw_eval_asset_count"] == 6
+    assert result["staging"]["omitted_raw_eval_asset_count"] == 2
     assert set(result["staging"]["omitted_raw_eval_assets"]) == {
         "assets/flux2-native_seed0_W4A4_geneval-00000.png",
         "assets/flux2-native_seed0_W4A4_simple-object.png",
-        "benchmark/orbitquant.metrics.csv",
-        "benchmark/orbitquant.metrics.jsonl",
-        "benchmark/original.metrics.csv",
-        "benchmark/original.metrics.jsonl",
     }
     upload_path = Path(fake_api.upload_folder_calls[0]["folder_path"])
     assert upload_path != tmp_path

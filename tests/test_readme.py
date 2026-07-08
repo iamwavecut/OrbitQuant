@@ -37,6 +37,11 @@ def test_readme_documents_component_artifact_usage():
     assert "uploads\nonly the compact artifact files required for use" in readme
     assert "Existing remote files are replaced by default" in readme
     assert "These diffusion artifacts are not standalone `transformers.AutoModel` repos" in readme
+    assert "## Hugging Face Native Loaders" in readme
+    assert "from transformers import AutoModel" in readme
+    assert "quantization_config=config" in readme
+    assert 'model.save_pretrained("./source-pretrained-model-orbitquant-w4a4")' in readme
+    assert "This path is for Hugging Face-native model repositories" in readme
     assert 'quantization_device="cuda"' in readme
     assert "not accepted as published quality evidence" in readme
     assert "Local validation outputs may include raw `benchmark/*.jsonl`" in readme
@@ -45,7 +50,7 @@ def test_readme_documents_component_artifact_usage():
     assert "## Release Metrics" in readme
     assert "Full GenEval and VBench runs are release evidence" in readme
     assert "Compact artifact readiness is tracked\nseparately" in readme
-    assert "`native_smoke` proof block" in readme
+    assert "native validation evidence" in readme
     assert "orbitquant fetch-hf-artifacts" in readme
     assert "orbitquant native-script" in readme
     assert "--prompt-metadata-jsonl /path/to/GenEval/evaluation_metadata.jsonl" in readme

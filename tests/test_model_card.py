@@ -76,7 +76,7 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     ) in card
 
 
-def test_model_card_renders_native_smoke_proof_without_raw_records():
+def test_model_card_renders_native_validation_evidence_without_raw_records():
     manifest = _manifest_for_model("black-forest-labs/FLUX.1-schnell")
     benchmark_summary = {
         "published_summary": "compact",
@@ -106,12 +106,12 @@ def test_model_card_renders_native_smoke_proof_without_raw_records():
 
     card = render_model_card(manifest, benchmark_summary=benchmark_summary)
 
-    assert "## Native Validation Proof" in card
+    assert "## Native Validation Evidence" in card
     assert "| Comparison matrix | `assets/image_generation_comparison_matrix.webp` |" in card
     assert "| Paired prompt/seed count | `2` |" in card
     assert "| BF16 source generated samples | `2` |" in card
     assert "| OrbitQuant nonempty outputs | `2` |" in card
-    assert "Raw generation records are kept local-only" in card
+    assert "Detailed per-sample generation records are retained outside" in card
     assert "paired_prompt_seed_keys" not in card
     assert "original.metrics.jsonl" not in card
 
