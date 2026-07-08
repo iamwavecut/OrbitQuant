@@ -17,6 +17,7 @@ WARMUP="${ORBITQUANT_BENCH_WARMUP:-1}"
 ITERATIONS="${ORBITQUANT_BENCH_ITERATIONS:-3}"
 
 cd "$ROOT_DIR"
+export LOCAL_KERNELS="${LOCAL_KERNELS:-WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul}"
 
 stage env-start
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
