@@ -65,7 +65,9 @@ URL, or signed-off audit note.
   `build/torch29-cxx11-cu130-x86_64-linux` variant failed to load on that CUDA
   12.8 host with `ImportError: libcudart.so.13`, so a CUDA 12.8-compatible
   kernel-builder variant or approved Hugging Face Kernel Hub upload is still
-  required before closing this gate.
+  required before closing this gate. The CUDA gate now builds and loads the
+  exact `redistributable.<runtime-variant>` path instead of selecting ignored
+  local `build/` artifacts.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is

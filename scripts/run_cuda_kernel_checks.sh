@@ -24,17 +24,14 @@ RUN_NATIVE_KERNEL_PACKAGE_CI="${ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI:-1}"
 NATIVE_KERNEL_REPO_ID="WaveCut/orbitquant-packed-matmul"
 NATIVE_KERNEL_SOURCE_DIR="$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
 
-native_kernel_variant_dir() {
-  python - "$NATIVE_KERNEL_SOURCE_DIR" <<'PY'
-import json
+native_kernel_runtime_variant_name() {
+  python - <<'PY'
 import platform
 import re
 import sys
-from pathlib import Path
 
 import torch
 
-source_dir = Path(sys.argv[1])
 torch_match = re.match(r"^(\d+)\.(\d+)", torch.__version__)
 if torch_match is None:
     raise SystemExit(f"could not parse torch version from {torch.__version__!r}")
@@ -50,25 +47,52 @@ expected_variant = (
     f"torch{torch_match.group(1)}{torch_match.group(2)}-cxx11-"
     f"cu{torch.version.cuda.replace('.', '')}-{machine}-linux"
 )
-available = []
-for metadata_path in sorted((source_dir / "build").glob("*/metadata.json")):
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    if metadata.get("backend", {}).get("type") == "cuda":
-        available.append(metadata_path.parent.name)
-        if metadata_path.parent.name == expected_variant:
-            print(metadata_path.parent)
-            raise SystemExit(0)
+print(expected_variant)
+PY
+}
 
-if not available:
+native_kernel_build_variant_dir() {
+  local variant="$1"
+  local output_path
+  local variants_json
+
+  variants_json="$(nix --option sandbox relaxed eval --json .#variants)"
+  python - "$variant" "$variants_json" <<'PY'
+import json
+import sys
+
+expected = sys.argv[1]
+variants = json.loads(sys.argv[2])
+if expected not in variants:
     raise SystemExit(
-        f"no built CUDA kernel variant with metadata.json under {source_dir / 'build'}"
+        f"native kernel runtime variant is not exported by this flake: {expected}; "
+        f"available variants for this host: {', '.join(variants)}"
     )
+PY
 
-raise SystemExit(
-    "no runtime-compatible CUDA kernel variant found under "
-    f"{source_dir / 'build'}; expected {expected_variant}; "
-    f"available CUDA variants: {', '.join(available)}"
-)
+  output_path="$(
+    nix --option sandbox relaxed build --no-link --json ".#redistributable.$variant" |
+      python -c 'import json, sys; print(json.load(sys.stdin)[0]["outputs"]["out"])'
+  )"
+  printf '%s/%s\n' "$output_path" "$variant"
+}
+
+assert_native_kernel_variant_dir() {
+  local variant_dir="$1"
+
+  python - "$variant_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+variant_dir = Path(sys.argv[1])
+metadata_path = variant_dir / "metadata.json"
+if not metadata_path.is_file():
+    raise SystemExit(f"native kernel variant metadata is missing: {metadata_path}")
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+if metadata.get("backend", {}).get("type") != "cuda":
+    raise SystemExit(f"native kernel variant is not CUDA: {variant_dir}")
+print("native-packed-matmul-variant-ok", variant_dir.name)
 PY
 }
 
@@ -181,11 +205,19 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
       >&2
     exit 1
   fi
-  (
+  native_kernel_variant="$(native_kernel_runtime_variant_name)"
+  stage "native-kernel-package-build-start variant=$native_kernel_variant"
+  native_kernel_variant_dir="$(
     cd "$NATIVE_KERNEL_SOURCE_DIR"
-    nix --option sandbox relaxed run .#ci-test -L
-  )
-  export LOCAL_KERNELS="$NATIVE_KERNEL_REPO_ID=$(native_kernel_variant_dir)"
+    native_kernel_build_variant_dir "$native_kernel_variant"
+  )"
+  assert_native_kernel_variant_dir "$native_kernel_variant_dir"
+  export LOCAL_KERNELS="$NATIVE_KERNEL_REPO_ID=$native_kernel_variant_dir"
+  stage "native-kernel-package-build-done variant=$native_kernel_variant"
+  stage native-kernel-package-tests-start
+  PYTHONPATH="$native_kernel_variant_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    pytest "$NATIVE_KERNEL_SOURCE_DIR/tests/test_packed_matmul.py" -q
+  stage native-kernel-package-tests-done
   stage native-packed-matmul-load-start
   python - <<'PY'
 from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel

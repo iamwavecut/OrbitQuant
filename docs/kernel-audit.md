@@ -20,12 +20,14 @@ for the current artifact format and runtime modes.
   package; `optimized_stage` is populated only when that backend is active in
   the current environment.
 - `scripts/run_cuda_kernel_checks.sh` is the CUDA correctness and benchmark
-  gate for GPU hosts. By default it also runs
-  `native-kernels/orbitquant-packed-matmul` kernel-builder CI so the native
-  packed matmul package is validated together with the Python/Triton CUDA path.
-  The gate loads that native package through Hugging Face `kernels` and
-  benchmarks `native_packed_matmul` explicitly, matching the `auto_fused`
-  runtime priority.
+  gate for GPU hosts. By default it builds the exact
+  `native-kernels/orbitquant-packed-matmul` kernel-builder redistributable
+  variant matching the runtime Torch/CUDA/platform tuple, loads that native
+  package through Hugging Face `kernels` via `LOCAL_KERNELS`, runs the native
+  package tests, and benchmarks `native_packed_matmul` explicitly, matching the
+  `auto_fused` runtime priority. If the current kernel-builder matrix has no
+  matching variant, the gate fails explicitly instead of loading an
+  incompatible local build.
 - `scripts/runpod_ssh_health.sh` is the preflight for RunPod basic SSH hosts.
   It checks actual SSH authentication and remote command execution with
   `ssh -F /dev/null -tt`, ignoring local SSH config and ControlMaster state.
@@ -98,7 +100,9 @@ for the current artifact format and runtime modes.
   `ImportError: libcudart.so.13`, proving that artifact is a CUDA 13 build and
   cannot close the CUDA 12.8 native-package gate. A CUDA 12.8-compatible
   kernel-builder variant or approved Hugging Face Kernel Hub upload is still
-  required before claiming native CUDA package coverage.
+  required before claiming native CUDA package coverage. Current local checks
+  build exact `redistributable.<runtime-variant>` outputs instead of selecting
+  ignored `build/` artifacts.
 
 ## Packaging Boundary
 
