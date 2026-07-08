@@ -442,11 +442,13 @@ Run `orbitquant kernel-info` to inspect backend capabilities. In that output,
 `implemented_stage` is the code present in the package, while `optimized_stage`
 is populated only when the backend is active in the current environment.
 `scripts/run_cuda_kernel_checks.sh` runs the CUDA kernel test and benchmark gate
-on a GPU host. Use `scripts/run_mps_kernel_checks.sh` for the equivalent short
-MPS/Metal gate on Apple Silicon. Full-model speedup claims still require
-backend-specific benchmark artifacts for the target model and native settings.
-See [docs/kernel-audit.md](docs/kernel-audit.md) for the release claim
-boundary.
+on a GPU host. It validates the native `orbitquant-packed-matmul` kernel package
+with kernel-builder, loads that local build through Hugging Face `kernels`, and
+benchmarks `native_packed_matmul` explicitly. Use
+`scripts/run_mps_kernel_checks.sh` for the equivalent short MPS/Metal gate on
+Apple Silicon. Full-model speedup claims still require backend-specific
+benchmark artifacts for the target model and native settings. See
+[docs/kernel-audit.md](docs/kernel-audit.md) for the release claim boundary.
 
 ## License
 

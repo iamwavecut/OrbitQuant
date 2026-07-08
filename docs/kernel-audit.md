@@ -23,6 +23,9 @@ for the current artifact format and runtime modes.
   gate for GPU hosts. By default it also runs
   `native-kernels/orbitquant-packed-matmul` kernel-builder CI so the native
   packed matmul package is validated together with the Python/Triton CUDA path.
+  The gate loads that native package through Hugging Face `kernels` and
+  benchmarks `native_packed_matmul` explicitly, matching the `auto_fused`
+  runtime priority.
 - `scripts/run_mps_kernel_checks.sh` is the MPS/Metal correctness and smoke
   benchmark gate for Apple Silicon hosts.
 - Full-model speedup claims require backend-specific benchmark artifacts from

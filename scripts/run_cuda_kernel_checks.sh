@@ -36,10 +36,10 @@ fi
 . "$VENV_DIR/bin/activate"
 
 if command -v uv >/dev/null 2>&1; then
-  uv pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff
+  uv pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff "kernels>=0.16"
   uv pip install --no-deps -e .
 else
-  python -m pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff
+  python -m pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff "kernels>=0.16"
   python -m pip install --no-deps -e .
 fi
 
@@ -62,7 +62,7 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
   if ! command -v nix >/dev/null 2>&1; then
     printf '%s\n' \
       "native kernel package CI requires nix for kernel-builder." \
-      "Install nix or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only for Triton-only diagnostics." \
+      "Install nix, use a GPU image with nix, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when a compatible native packed-matmul kernel is already loadable through Hugging Face kernels or an importable package." \
       >&2
     exit 1
   fi
@@ -70,6 +70,17 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
     cd native-kernels/orbitquant-packed-matmul
     nix --option sandbox relaxed run .#ci-test -L
   )
+  export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
+  stage native-packed-matmul-load-start
+  python - <<'PY'
+from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
+kernel = load_native_packed_matmul_kernel()
+if not hasattr(kernel, "matmul_packed_weight"):
+    raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
+print("native-packed-matmul-kernel-ok", kernel)
+PY
+  stage native-packed-matmul-load-done
   stage native-kernel-package-ci-done
 fi
 
@@ -124,7 +135,7 @@ orbitquant kernel-bench \
   --iterations "$ITERATIONS"
 stage kernel-bench-done
 
-stage packed-matmul-bench-start
+stage native-packed-matmul-bench-start
 orbitquant kernel-bench \
   --tokens "$TOKENS" \
   --in-features "$IN_FEATURES" \
@@ -133,7 +144,7 @@ orbitquant kernel-bench \
   --activation-bits 4 \
   --block-size "$BLOCK_SIZE" \
   --activation-kernel-backend triton_cuda \
-  --runtime-mode triton_packed_matmul \
+  --runtime-mode native_packed_matmul \
   --packed-matmul-block-m "$PACKED_MATMUL_BLOCK_M" \
   --packed-matmul-block-n "$PACKED_MATMUL_BLOCK_N" \
   --packed-matmul-block-k "$PACKED_MATMUL_BLOCK_K" \
@@ -142,7 +153,7 @@ orbitquant kernel-bench \
   --dtype bfloat16 \
   --warmup "$WARMUP" \
   --iterations "$ITERATIONS"
-stage packed-matmul-bench-done
+stage native-packed-matmul-bench-done
 
 stage quantize-bench-start
 orbitquant quantize-bench \

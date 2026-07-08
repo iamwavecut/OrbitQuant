@@ -38,6 +38,10 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "triton-cuda-kernel-contract-ok" in cuda_script
     assert "native-kernel-package-ci-start" in cuda_script
     assert "nix --option sandbox relaxed run .#ci-test -L" in cuda_script
+    assert "kernels>=0.16" in cuda_script
+    assert "LOCAL_KERNELS=\"WaveCut/orbitquant-packed-matmul=" in cuda_script
+    assert "native-packed-matmul-kernel-ok" in cuda_script
+    assert "--runtime-mode native_packed_matmul" in cuda_script
     assert "activation_norm_rpbh_quant_rescale" in cuda_script
     assert "packed_weight_matmul" in cuda_script
     assert "hf_kernel_builder_compliant" in cuda_script
