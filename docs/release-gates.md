@@ -21,9 +21,15 @@ URL, or signed-off audit note.
   codebook, RPBH, OrbitQuantLinear, AdaLN INT4, target-policy, native-setting,
   and config-inventory checks for FLUX.2 Klein, FLUX.1-schnell, Z-Image-Turbo,
   and Wan2.1.
-- [ ] Release wording separates the paper-aligned subset from extra targets:
+- [x] Release wording separates the paper-aligned subset from extra targets:
   FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 are paper targets; FLUX.2 Klein is
   an additional target unless the paper scope is expanded.
+  Evidence: `README.md` separates paper-aligned artifacts from extra target
+  artifacts, `src/orbitquant/artifacts/model_card.py` renders FLUX.2 Klein as
+  `extra target; not an OrbitQuant paper reproduction model`, and
+  `tests/test_readme.py` plus `tests/test_model_card.py` guard this wording.
+  The 2026-07-08T16:00Z HF artifact audit reported `readme_mismatch_count=0`
+  across all 14 published private artifact repos.
 - [x] Native artifact validation is complete for every advertised release
   artifact. At minimum this includes native-resolution BF16-vs-OrbitQuant
   comparison assets, load validation, finite-output checks, manifests, and
@@ -54,13 +60,17 @@ URL, or signed-off audit note.
   Evidence: passed on 2026-07-08T15:47Z with Torch 2.12.1, current/release
   Diffusers 0.39.0 and Transformers 5.13.0, and dev Diffusers 0.40.0.dev0 plus
   Transformers 5.14.0.dev0.
-- [ ] Checkpoint and model repositories are published with artifact-focused
+- [x] Checkpoint and model repositories are published with artifact-focused
   model cards, complete file manifests, checksums where applicable, and native
   comparison assets for the advertised targets. Cards must describe the
   artifact and usage, not host logs, raw eval dumps, or terminal transcripts.
   HF artifact audits must report `metadata_complete_ready` for every released
   artifact, proving quantization device, weight quantization backend, and
   staging mode provenance are present.
+  Evidence: the 2026-07-08T16:00Z HF artifact audit passed with
+  `repo_count=14`, `artifact_ready_count=14`, `metadata_complete_ready_count=14`,
+  `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
+  `readme_mismatch_count=0`, and `forbidden_file_count=0`.
 - [ ] The GitHub repository is public, tagged, and includes the release docs,
   license, source distribution expectations, and reproducible verification
   commands.

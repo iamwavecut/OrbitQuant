@@ -10,8 +10,15 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`scripts/run_paper_methodology_checks.sh`" in release_gates
     assert "- [x] Final paper conformance audit" in release_gates
     assert "passed on 2026-07-08T15:49Z against arXiv 2607.02461v1" in release_gates
+    assert "- [x] Release wording separates" in release_gates
     assert "paper-aligned subset" in release_gates
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
+    assert "README.md` separates paper-aligned artifacts from extra target" in (
+        release_gates
+    )
+    assert "extra target; not an OrbitQuant paper reproduction model" in release_gates
+    assert "`tests/test_readme.py` plus `tests/test_model_card.py`" in release_gates
+    assert "`readme_mismatch_count=0`" in release_gates
     assert "- [x] Native artifact validation" in release_gates
     assert "native-resolution BF16-vs-OrbitQuant\n  comparison assets" in release_gates
     assert "finite-output checks" in release_gates
@@ -67,6 +74,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "finite forward execution through the restored `OrbitQuantLinear`" in (
         release_gates
     )
+    assert "- [x] Checkpoint and model repositories are published" in release_gates
     assert "artifact-focused\n  model cards" in release_gates
     assert "native\n  comparison assets" in release_gates
     assert "`metadata_complete_ready`" in release_gates
@@ -74,6 +82,12 @@ def test_release_gates_document_final_acceptance_checklist():
         "quantization device, weight quantization backend, and\n  staging mode provenance"
         in release_gates
     )
+    assert "`repo_count=14`" in release_gates
+    assert "`artifact_ready_count=14`" in release_gates
+    assert "`metadata_complete_ready_count=14`" in release_gates
+    assert "`native_smoke_ready_count=14`" in release_gates
+    assert "`remote_checksum_mismatch_count=0`" in release_gates
+    assert "`forbidden_file_count=0`" in release_gates
     assert "not host logs, raw eval dumps, or terminal transcripts" in release_gates
     assert "The GitHub repository is public" in release_gates
     assert "python -m build" in release_gates
