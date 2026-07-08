@@ -212,6 +212,12 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "Source visibility follow-up" in request
     assert "still a private\nsource snapshot repo" in request
     assert "make only this source-only kernel repo public" in request
+    assert "locally prepared and checked on 2026-07-08T17:39Z" in request
+    assert "9dcd6896a4d9e259d29d17589e230ce1ed7aec2cf2de715a43e47ba55edb37a7" in (
+        request
+    )
+    assert "21 tar entries" in request
+    assert "binary `.so`, or benchmark output files" in request
     assert "WaveCut/orbitquant-packed-matmul" in request
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
