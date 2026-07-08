@@ -32,7 +32,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "14/14 native-smoke\n  ready" in release_gates
     assert "zero remote checksum mismatches" in release_gates
     assert "zero\n  forbidden remote files" in release_gates
-    assert "re-run on 2026-07-08T17:27Z" in release_gates
+    assert "re-run on 2026-07-08T22:04Z" in release_gates
     assert "14/14 policy-inventory-ready" in release_gates
     assert "paper reproduction or\n  metric-table claims" in release_gates
     assert "GenEval\n  overall and per-task scores" in release_gates
@@ -50,6 +50,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "policy_inventory_ready=14" in release_gates
     assert "policy_inventory_error_count=0" in release_gates
     assert "`policy_inventory_ready_count=14`" in release_gates
+    assert "144 missing\n  release-grade metrics" in release_gates
     assert "CUDA/Triton partial optimized" in release_gates
     assert "Metal/MPS partial optimized" in release_gates
     assert "CPU\n  reference-only" in release_gates

@@ -103,10 +103,11 @@ URL, or signed-off audit note.
   private artifact repos. It reported 14/14 artifact-ready, 14/14 native-smoke
   ready, 14/14 metadata-complete, zero manifest warnings, zero missing
   metadata, zero remote checksum mismatches, zero README mismatches, and zero
-  forbidden remote files. The same audit was re-run on 2026-07-08T17:27Z and
+  forbidden remote files. The same audit was re-run on 2026-07-08T22:04Z and
   again reported 14/14 artifact-ready, 14/14 native-smoke-ready, 14/14
   metadata-complete, 14/14 policy-inventory-ready, zero forbidden files, zero
-  remote checksum mismatches, and zero README mismatches.
+  remote checksum mismatches, zero README mismatches, and 144 missing
+  release-grade metrics.
 - [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
