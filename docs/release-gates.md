@@ -34,7 +34,10 @@ URL, or signed-off audit note.
   variants and stopped only at the Hugging Face permission error. The request
   was submitted as
   `https://huggingface.co/spaces/kernels-community/README/discussions/15`;
-  approval remains pending. As of 2026-07-08T17:15Z, the linked
+  a follow-up comment on 2026-07-08T18:03Z refreshed the review source snapshot
+  to `6821e4cd5ff1894994d7137c1d861660cfeed1c8` and source archive SHA256
+  `77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651`.
+  Approval remains pending. As of 2026-07-08T17:15Z, the linked
   `WaveCut/orbitquant-packed-matmul` source snapshot repo is still private; if
   reviewers cannot access it, provide a tracked source archive in the
   discussion or get explicit approval to make only that source-only kernel repo

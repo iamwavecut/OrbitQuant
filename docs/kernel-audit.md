@@ -58,6 +58,10 @@ for the current artifact format and runtime modes.
   before failing only at the Hugging Face permission check. The approval
   request is open as
   `https://huggingface.co/spaces/kernels-community/README/discussions/15`.
+  A follow-up comment on 2026-07-08T18:03Z points reviewers to refreshed
+  source snapshot `6821e4cd5ff1894994d7137c1d861660cfeed1c8` and source
+  archive SHA256
+  `77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651`.
   The submitted request text is
   [kernel-hub-approval-request.md](kernel-hub-approval-request.md). Do not treat
   the native package as remotely loadable through `get_kernel` until that

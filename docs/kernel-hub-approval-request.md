@@ -9,6 +9,12 @@ Submitted discussion:
 
 `https://huggingface.co/spaces/kernels-community/README/discussions/15`
 
+Follow-up comment:
+
+On 2026-07-08T18:03Z, the discussion was updated with source snapshot
+`6821e4cd5ff1894994d7137c1d861660cfeed1c8` and source archive SHA256
+`77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651`.
+
 Source visibility follow-up:
 
 As of 2026-07-08T17:15Z, `WaveCut/orbitquant-packed-matmul` is still a private

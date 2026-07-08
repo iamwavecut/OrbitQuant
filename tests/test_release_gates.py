@@ -78,7 +78,7 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "stopped only at the Hugging Face permission error" in release_gates
     assert "kernels-community/README/discussions/15" in release_gates
-    assert "approval remains pending" in release_gates
+    assert "Approval remains pending" in release_gates
     assert "2026-07-08T17:15Z" in release_gates
     assert "source snapshot repo is still private" in release_gates
     assert "tracked source archive" in release_gates
@@ -229,6 +229,7 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "6821e4cd5ff1894994d7137c1d861660cfeed1c8" in kernel_audit
     assert "adding CUDA launch-error checks" in kernel_audit
     assert "kernels-community/README/discussions/15" in kernel_audit
+    assert "follow-up comment on 2026-07-08T18:03Z" in kernel_audit
     assert "W4 512x1024x1024 float16" in kernel_audit
     assert "0.10189520000712946" in kernel_audit
     assert "build/torch212-metal-aarch64-darwin" in kernel_audit
@@ -245,6 +246,8 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "kernels-community/README" in request
     assert "huggingface.co/spaces/kernels-community/README/discussions/new" in request
     assert "huggingface.co/spaces/kernels-community/README/discussions/15" in request
+    assert "Follow-up comment" in request
+    assert "On 2026-07-08T18:03Z" in request
     assert "Source visibility follow-up" in request
     assert "still a private\nsource snapshot repo" in request
     assert "make only this source-only kernel repo public" in request
