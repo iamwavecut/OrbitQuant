@@ -2831,6 +2831,89 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
     }
 
 
+def test_cli_audit_hf_artifacts_artifact_regression_gate_ignores_release_metrics(
+    capsys, tmp_path, monkeypatch
+):
+    def fake_audit_hf_artifacts(*, namespace, suites, revision, policy_inventory_root):
+        return {
+            "namespace": namespace,
+            "policy_inventory_root": policy_inventory_root,
+            "repo_count": 1,
+            "existing_count": 1,
+            "artifact_ready_count": 1,
+            "native_smoke_ready_count": 1,
+            "metadata_complete_ready_count": 1,
+            "policy_inventory_ready_count": 1,
+            "policy_inventory_error_count": 0,
+            "release_eval_ready_count": 0,
+            "missing_required_metric_count": 14,
+            "manifest_warning_count": 0,
+            "metadata_missing_count": 0,
+            "remote_checksum_mismatch_count": 0,
+            "forbidden_file_count": 0,
+            "rows": [{"repo_id": "WaveCut/example"}],
+        }
+
+    monkeypatch.setattr(cli_main, "audit_hf_artifact_repos", fake_audit_hf_artifacts)
+
+    assert (
+        main(
+            [
+                "audit-hf-artifacts",
+                "--policy-inventory-root",
+                str(tmp_path / "inventories"),
+                "--fail-on-artifact-regression",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["missing_required_metric_count"] == 14
+
+
+def test_cli_audit_hf_artifacts_artifact_regression_gate_fails_on_remote_hygiene(
+    capsys, tmp_path, monkeypatch
+):
+    def fake_audit_hf_artifacts(*, namespace, suites, revision, policy_inventory_root):
+        return {
+            "namespace": namespace,
+            "policy_inventory_root": policy_inventory_root,
+            "repo_count": 1,
+            "existing_count": 1,
+            "artifact_ready_count": 1,
+            "native_smoke_ready_count": 1,
+            "metadata_complete_ready_count": 1,
+            "policy_inventory_ready_count": 1,
+            "policy_inventory_error_count": 0,
+            "release_eval_ready_count": 0,
+            "missing_required_metric_count": 0,
+            "manifest_warning_count": 0,
+            "metadata_missing_count": 0,
+            "remote_checksum_mismatch_count": 0,
+            "forbidden_file_count": 1,
+            "rows": [{"repo_id": "WaveCut/example"}],
+        }
+
+    monkeypatch.setattr(cli_main, "audit_hf_artifact_repos", fake_audit_hf_artifacts)
+
+    assert (
+        main(
+            [
+                "audit-hf-artifacts",
+                "--policy-inventory-root",
+                str(tmp_path / "inventories"),
+                "--fail-on-artifact-regression",
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["forbidden_file_count"] == 1
+    assert "forbidden_file_count=1 expected 0" in captured.err
+
+
 def test_cli_fetch_hf_artifacts_wires_suite_and_download_options(
     capsys, tmp_path, monkeypatch
 ):

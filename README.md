@@ -248,6 +248,7 @@ Published Hub repositories can be checked without downloading tensor weights:
 orbitquant audit-hf-artifacts \
   --namespace WaveCut \
   --policy-inventory-root ./reports/native/module-inventories \
+  --fail-on-artifact-regression \
   --output ./reports/native/hf-artifact-audit.json \
   --markdown-output ./reports/native/hf-artifact-audit.md
 ```

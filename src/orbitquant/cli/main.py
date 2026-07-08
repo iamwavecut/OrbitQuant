@@ -114,6 +114,42 @@ def _prewarm_pipeline_component(
     }
 
 
+def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
+    repo_count = int(payload.get("repo_count") or 0)
+    regressions: list[str] = []
+    if repo_count <= 0:
+        regressions.append("repo_count is zero")
+
+    for key in (
+        "existing_count",
+        "artifact_ready_count",
+        "native_smoke_ready_count",
+        "metadata_complete_ready_count",
+    ):
+        if int(payload.get(key) or 0) != repo_count:
+            regressions.append(f"{key}={payload.get(key, 0)} expected {repo_count}")
+
+    if (
+        payload.get("policy_inventory_root") is not None
+        and int(payload.get("policy_inventory_ready_count") or 0) != repo_count
+    ):
+        regressions.append(
+            "policy_inventory_ready_count="
+            f"{payload.get('policy_inventory_ready_count', 0)} expected {repo_count}"
+        )
+
+    for key in (
+        "policy_inventory_error_count",
+        "manifest_warning_count",
+        "metadata_missing_count",
+        "remote_checksum_mismatch_count",
+        "forbidden_file_count",
+    ):
+        if int(payload.get(key) or 0) != 0:
+            regressions.append(f"{key}={payload.get(key, 0)} expected 0")
+    return regressions
+
+
 def _parse_block_size(value: str) -> int | str:
     if value == "paper":
         return value
@@ -607,6 +643,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     audit_hf_parser.add_argument("--output")
     audit_hf_parser.add_argument("--markdown-output")
+    audit_hf_parser.add_argument(
+        "--fail-on-artifact-regression",
+        action="store_true",
+        help=(
+            "return a non-zero exit code when compact artifact readiness, native "
+            "smoke proof, metadata, policy inventory, checksums, or remote file "
+            "hygiene regress; release metrics are intentionally ignored"
+        ),
+    )
 
     fetch_hf_parser = subparsers.add_parser(
         "fetch-hf-artifacts",
@@ -1151,6 +1196,14 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8",
             )
         print(rendered)
+        if args.fail_on_artifact_regression:
+            regressions = _hf_artifact_audit_regressions(payload)
+            if regressions:
+                print(
+                    "HF artifact audit regressions: " + "; ".join(regressions),
+                    file=sys.stderr,
+                )
+                return 1
         return 0
     if args.command == "fetch-hf-artifacts":
         suites = None
