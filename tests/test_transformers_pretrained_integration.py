@@ -104,24 +104,52 @@ def test_transformers_pretrained_streams_full_precision_weight_into_packed_tenso
 
 def test_transformers_pretrained_save_pretrained_round_trips_pre_quantized_model(
     tmp_path,
+    monkeypatch,
 ):
     register_hf_quantizers()
     source_dir = tmp_path / "source"
     quantized_dir = tmp_path / "quantized"
     model = TinyTransformersModel(TinyTransformersConfig())
     model.save_pretrained(source_dir)
+    quantization_config = OrbitQuantConfig(
+        block_size=8,
+        target_policy="generic_dit",
+        runtime_mode="debug_no_activation_quant",
+        activation_kernel_backend="cpu",
+        activation_eps=1e-8,
+    )
 
     quantized = TinyTransformersModel.from_pretrained(
         source_dir,
-        quantization_config=OrbitQuantConfig(block_size=8),
+        quantization_config=quantization_config,
     )
     quantized.save_pretrained(quantized_dir)
     saved_config = json.loads((quantized_dir / "config.json").read_text())
 
+    def fail_from_linear(cls, *args, **kwargs):
+        raise AssertionError("pre-quantized restore should not requantize Linear weights")
+
+    def fail_post_load_quantization(*args, **kwargs):
+        raise AssertionError("pre-quantized restore fell back to post-load quantization")
+
+    monkeypatch.setattr(OrbitQuantLinear, "from_linear", classmethod(fail_from_linear))
+    monkeypatch.setattr(
+        "orbitquant.quantizer.quantize_linear_modules",
+        fail_post_load_quantization,
+    )
+
     restored = TinyTransformersModel.from_pretrained(quantized_dir)
 
-    assert saved_config["quantization_config"]["quant_method"] == "orbitquant"
-    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    saved_quantization_config = saved_config["quantization_config"]
+    assert saved_quantization_config["quant_method"] == "orbitquant"
+    assert saved_quantization_config["runtime_mode"] == "debug_no_activation_quant"
+    assert saved_quantization_config["activation_kernel_backend"] == "cpu"
+    assert saved_quantization_config["activation_eps"] == 1e-8
+    restored_linear = restored.transformer_blocks[0]["attn"]["to_q"]
+    assert isinstance(restored_linear, OrbitQuantLinear)
+    assert restored_linear.runtime_mode == "debug_no_activation_quant"
+    assert restored_linear.activation_kernel_backend == "cpu"
+    assert restored_linear.activation_eps == 1e-8
     assert isinstance(restored.transformer_blocks[0]["modulation"], RTNInt4Linear)
     assert isinstance(restored.proj_out, torch.nn.Linear)
     x = torch.randn(2, 3, 16)
