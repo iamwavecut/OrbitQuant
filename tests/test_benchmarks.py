@@ -1,6 +1,8 @@
 import torch
 
+import orbitquant.benchmarks as benchmarks_module
 from orbitquant.benchmarks import _weight_quantization_backend_label, benchmark_orbit_linear
+from orbitquant.layers import OrbitQuantLinear
 
 
 def test_benchmark_orbit_linear_reports_stage_timings_on_cpu():
@@ -79,6 +81,39 @@ def test_benchmark_orbit_linear_reports_tuned_packed_matmul_default_tile_on_cpu(
         "block_k": 64,
         "num_warps": 8,
     }
+
+
+def test_benchmark_orbit_linear_treats_native_packed_runtime_as_cacheless(monkeypatch):
+    def fail_prewarm(*args, **kwargs):
+        raise AssertionError("packed runtime must not materialize dequant prewarm")
+
+    def fail_dequant(*args, **kwargs):
+        raise AssertionError("packed runtime benchmark must not dequantize weights")
+
+    def fake_forward(self, x):
+        return torch.zeros(*x.shape[:-1], self.out_features, device=x.device, dtype=x.dtype)
+
+    monkeypatch.setattr(benchmarks_module, "prewarm_quantized_linear_modules", fail_prewarm)
+    monkeypatch.setattr(OrbitQuantLinear, "_dequantize_weight", fail_dequant)
+    monkeypatch.setattr(OrbitQuantLinear, "forward", fake_forward)
+
+    result = benchmark_orbit_linear(
+        tokens=4,
+        in_features=16,
+        out_features=8,
+        block_size=8,
+        activation_kernel_backend="cpu",
+        runtime_mode="native_packed_matmul",
+        device="cpu",
+        dtype=torch.float32,
+        warmup=0,
+        iterations=1,
+    )
+
+    assert result["runtime_mode"] == "native_packed_matmul"
+    assert result["prewarm"]["total_modules"] == 0
+    assert result["timings_ms"]["weight_dequant_cold_ms"] is None
+    assert result["timings_ms"]["weight_dequant_cached_ms"] is None
 
 
 def test_benchmark_weight_backend_label_separates_reference_mps_from_cpu():

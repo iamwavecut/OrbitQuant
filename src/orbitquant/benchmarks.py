@@ -15,6 +15,8 @@ from orbitquant.modeling import (
     quantize_linear_modules,
 )
 
+_PACKED_MATMUL_RUNTIME_MODES = {"triton_packed_matmul", "native_packed_matmul"}
+
 
 def _resolve_device(device: str | torch.device) -> torch.device:
     requested = str(device)
@@ -174,7 +176,7 @@ def benchmark_orbit_linear(
     quantized.to(target_device)
     x = torch.randn(tokens, in_features, device=target_device, dtype=dtype)
 
-    if runtime_mode == "triton_packed_matmul":
+    if runtime_mode in _PACKED_MATMUL_RUNTIME_MODES:
         prewarm = QuantizationPrewarmSummary(
             orbitquant_modules=0,
             adaln_modules=0,
@@ -246,7 +248,7 @@ def benchmark_orbit_linear(
             iterations=iterations,
         ),
     }
-    if runtime_mode == "triton_packed_matmul":
+    if runtime_mode in _PACKED_MATMUL_RUNTIME_MODES:
         timings["weight_dequant_cold_ms"] = None
         timings["weight_dequant_cached_ms"] = None
     else:
@@ -269,7 +271,7 @@ def benchmark_orbit_linear(
         warmup=max(1, min(warmup, 3)),
         iterations=max(1, min(iterations, 5)),
     )
-    if runtime_mode != "triton_packed_matmul":
+    if runtime_mode not in _PACKED_MATMUL_RUNTIME_MODES:
         prewarm_quantized_linear_modules(quantized, device=target_device, dtype=dtype)
     timings["forward_prewarmed_ms"] = _mean_time_ms(
         forward_prewarmed,
@@ -334,7 +336,7 @@ def benchmark_orbit_linear(
             "GPU utilization; weight_quantize_pack_hot_ms measures the already "
             "compiled CUDA path. In dequant_bf16 mode, forward_prewarmed_ms uses "
             "OrbitQuant activation kernels plus cached dequantized weights and "
-            "PyTorch linear. In triton_packed_matmul mode, forward_prewarmed_ms "
+            "PyTorch linear. In packed matmul runtime modes, forward_prewarmed_ms "
             "uses the opt-in packed-weight matmul path instead of the cached "
             "dequantized-weight path."
         ),

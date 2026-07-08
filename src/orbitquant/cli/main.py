@@ -78,7 +78,9 @@ _RUNTIME_MODE_CHOICES = [
     "debug_no_quant",
     "debug_no_activation_quant",
     "triton_packed_matmul",
+    "native_packed_matmul",
 ]
+_PACKED_MATMUL_RUNTIME_MODES = {"triton_packed_matmul", "native_packed_matmul"}
 
 
 def _torch_dtype(name: str) -> torch.dtype:
@@ -122,7 +124,7 @@ def _prewarm_pipeline_component(
 
 
 def _should_prewarm_quantized_weights(config: OrbitQuantConfig | None) -> bool:
-    return config is None or config.runtime_mode != "triton_packed_matmul"
+    return config is None or config.runtime_mode not in _PACKED_MATMUL_RUNTIME_MODES
 
 
 def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
@@ -402,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             "debug_no_quant",
             "debug_no_activation_quant",
             "triton_packed_matmul",
+            "native_packed_matmul",
         ],
     )
     kernel_bench_parser.add_argument("--device", default="auto")

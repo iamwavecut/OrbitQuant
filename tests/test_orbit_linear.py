@@ -445,6 +445,105 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
     ]
 
 
+def test_orbit_linear_native_packed_matmul_runtime_rejects_cpu_before_quantization(
+    monkeypatch,
+):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="native_packed_matmul",
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    x = torch.randn(2, 5, 16)
+
+    def fail_activation_quantization(*args, **kwargs):
+        raise AssertionError("device validation should run before activation quantization")
+
+    monkeypatch.setattr(
+        layers_module,
+        "quantize_activations_kernel",
+        fail_activation_quantization,
+    )
+
+    with pytest.raises(RuntimeError, match="requires CUDA or MPS input tensors"):
+        quantized(x)
+
+
+def test_orbit_linear_native_packed_matmul_runtime_avoids_weight_dequant_cache(monkeypatch):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="native_packed_matmul",
+        activation_kernel_backend="cpu",
+        packed_matmul_block_m=32,
+        packed_matmul_block_n=64,
+        packed_matmul_block_k=64,
+        packed_matmul_num_warps=8,
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    x = torch.randn(2, 5, 16)
+    calls = []
+
+    def fake_activation_kernel(input_tensor, **kwargs):
+        return input_tensor
+
+    def fake_matmul(input_tensor, packed_weight_indices, row_norms, codebook, **kwargs):
+        calls.append(
+            {
+                "shape": tuple(input_tensor.shape),
+                "bits": kwargs["bits"],
+                "out_features": kwargs["out_features"],
+                "in_features": kwargs["in_features"],
+                "bias_is_none": kwargs["bias"] is None,
+                "block_m": kwargs["block_m"],
+                "block_n": kwargs["block_n"],
+                "block_k": kwargs["block_k"],
+            }
+        )
+        return torch.zeros(
+            *input_tensor.shape[:-1],
+            kwargs["out_features"],
+            dtype=input_tensor.dtype,
+        )
+
+    def fail_dequant(*args, **kwargs):
+        raise AssertionError(
+            "native_packed_matmul runtime should not materialize dequantized weight"
+        )
+
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_activation_kernel)
+    monkeypatch.setattr(quantized, "_validate_native_packed_matmul_input", lambda x: None)
+    monkeypatch.setattr(native_module, "matmul_packed_weight_with_native_kernel", fake_matmul)
+    monkeypatch.setattr(quantized, "_dequantize_weight", fail_dequant)
+
+    actual = quantized(x)
+
+    assert actual.shape == (2, 5, 7)
+    assert calls == [
+        {
+            "shape": (2, 5, 16),
+            "bits": 4,
+            "out_features": 7,
+            "in_features": 16,
+            "bias_is_none": False,
+            "block_m": 32,
+            "block_n": 64,
+            "block_k": 64,
+        }
+    ]
+
+
 @pytest.mark.parametrize("use_bias", [True, False])
 def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias):
     if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:

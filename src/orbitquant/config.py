@@ -20,6 +20,7 @@ _SUPPORTED_RUNTIME_MODES = {
     "debug_no_quant",
     "debug_no_activation_quant",
     "triton_packed_matmul",
+    "native_packed_matmul",
 }
 _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
 _SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}

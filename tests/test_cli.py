@@ -22,6 +22,28 @@ def test_cli_version_prints_version(capsys):
     assert "0.1.0" in output
 
 
+def test_cli_packed_matmul_runtime_modes_skip_dequant_prewarm():
+    assert cli_main._should_prewarm_quantized_weights(None) is True
+    assert (
+        cli_main._should_prewarm_quantized_weights(
+            OrbitQuantConfig(runtime_mode="dequant_bf16")
+        )
+        is True
+    )
+    assert (
+        cli_main._should_prewarm_quantized_weights(
+            OrbitQuantConfig(runtime_mode="triton_packed_matmul")
+        )
+        is False
+    )
+    assert (
+        cli_main._should_prewarm_quantized_weights(
+            OrbitQuantConfig(runtime_mode="native_packed_matmul")
+        )
+        is False
+    )
+
+
 def test_cli_native_suites_lists_no_range_smoke_settings(capsys):
     assert main(["native-suites"]) == 0
 
@@ -180,7 +202,10 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
     assert payload["quantization_buffers"]["packed_weight_indices_device"] == "cpu"
 
 
-def test_cli_kernel_bench_passes_packed_matmul_tile_options(monkeypatch, capsys):
+@pytest.mark.parametrize("runtime_mode", ["triton_packed_matmul", "native_packed_matmul"])
+def test_cli_kernel_bench_passes_packed_matmul_tile_options(
+    monkeypatch, capsys, runtime_mode
+):
     seen_kwargs = []
 
     def fake_benchmark_orbit_linear(**kwargs):
@@ -194,7 +219,7 @@ def test_cli_kernel_bench_passes_packed_matmul_tile_options(monkeypatch, capsys)
             [
                 "kernel-bench",
                 "--runtime-mode",
-                "triton_packed_matmul",
+                runtime_mode,
                 "--packed-matmul-block-m",
                 "32",
                 "--packed-matmul-block-n",
@@ -209,7 +234,7 @@ def test_cli_kernel_bench_passes_packed_matmul_tile_options(monkeypatch, capsys)
     )
 
     assert json.loads(capsys.readouterr().out) == {"ok": True}
-    assert seen_kwargs[0]["runtime_mode"] == "triton_packed_matmul"
+    assert seen_kwargs[0]["runtime_mode"] == runtime_mode
     assert seen_kwargs[0]["packed_matmul_block_m"] == 32
     assert seen_kwargs[0]["packed_matmul_block_n"] == 64
     assert seen_kwargs[0]["packed_matmul_block_k"] == 64
@@ -254,7 +279,10 @@ def test_cli_quantize_bench_prints_full_model_staging_timings(capsys):
     assert payload["summary"]["quantized_modules"]
 
 
-def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys, tmp_path):
+@pytest.mark.parametrize("runtime_mode", ["triton_packed_matmul", "native_packed_matmul"])
+def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(
+    capsys, tmp_path, runtime_mode
+):
     assert (
         main(
             [
@@ -264,7 +292,7 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys
                 "--seeds",
                 "0",
                 "--runtime-mode",
-                "triton_packed_matmul",
+                runtime_mode,
             ]
         )
         == 0
@@ -280,7 +308,7 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys
         "wan-native",
     }
     assert sum(1 for job in jobs if job["suite"] == "wan-native") == 2
-    assert {job["runtime_mode"] for job in jobs} == {"triton_packed_matmul"}
+    assert {job["runtime_mode"] for job in jobs} == {runtime_mode}
     wan_w4a6 = next(
         job
         for job in jobs
@@ -647,7 +675,8 @@ def test_cli_generate_dry_run_prints_native_request(capsys, tmp_path):
     assert '"width": 1024' in output
 
 
-def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
+@pytest.mark.parametrize("runtime_mode", ["triton_packed_matmul", "native_packed_matmul"])
+def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path, runtime_mode):
     assert (
         main(
             [
@@ -667,7 +696,7 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
                 "--activation-kernel-backend",
                 "cpu",
                 "--runtime-mode",
-                "triton_packed_matmul",
+                runtime_mode,
                 "--dry-run",
             ]
         )
@@ -680,7 +709,7 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
     assert '"weight_bits": 4' in output
     assert '"activation_bits": 6' in output
     assert '"activation_kernel_backend": "cpu"' in output
-    assert '"runtime_mode": "triton_packed_matmul"' in output
+    assert f'"runtime_mode": "{runtime_mode}"' in output
     assert '"target_policy": "wan"' in output
 
 
@@ -2474,7 +2503,8 @@ def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path
     assert output["quantized_module_count"] == 1
 
 
-def test_cli_validate_artifact_rejects_unexpected_runtime_mode(capsys, tmp_path):
+@pytest.mark.parametrize("runtime_mode", ["triton_packed_matmul", "native_packed_matmul"])
+def test_cli_validate_artifact_rejects_unexpected_runtime_mode(capsys, tmp_path, runtime_mode):
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(
         [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
@@ -2498,7 +2528,7 @@ def test_cli_validate_artifact_rejects_unexpected_runtime_mode(capsys, tmp_path)
                 "--artifact",
                 str(tmp_path),
                 "--runtime-mode",
-                "triton_packed_matmul",
+                runtime_mode,
             ]
         )
         == 1

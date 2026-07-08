@@ -47,6 +47,12 @@ def test_orbit_quant_config_accepts_triton_packed_matmul_runtime_mode():
     assert config.runtime_mode == "triton_packed_matmul"
 
 
+def test_orbit_quant_config_accepts_native_packed_matmul_runtime_mode():
+    config = OrbitQuantConfig(runtime_mode="native_packed_matmul")
+
+    assert config.runtime_mode == "native_packed_matmul"
+
+
 def test_orbit_quant_config_round_trips_packed_matmul_tile_config():
     config = OrbitQuantConfig(
         packed_matmul_block_m=32,

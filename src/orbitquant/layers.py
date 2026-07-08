@@ -307,6 +307,13 @@ class OrbitQuantLinear(nn.Module):
                 f"got {x.device.type}."
             )
 
+    def _validate_native_packed_matmul_input(self, x: torch.Tensor) -> None:
+        if x.device.type not in {"cuda", "mps"}:
+            raise RuntimeError(
+                "native_packed_matmul runtime requires CUDA or MPS input tensors; "
+                f"got {x.device.type}."
+            )
+
     def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         cache_key = (str(device), dtype)
         if (
@@ -381,6 +388,8 @@ class OrbitQuantLinear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.runtime_mode == "triton_packed_matmul":
             self._validate_triton_packed_matmul_input(x)
+        elif self.runtime_mode == "native_packed_matmul":
+            self._validate_native_packed_matmul_input(x)
 
         if self.runtime_mode == "debug_no_quant":
             rotated_x = self.rotation.apply_to_activations(x.to(torch.float32)).to(x.dtype)
@@ -424,6 +433,26 @@ class OrbitQuantLinear(nn.Module):
                 block_n=self.packed_matmul_block_n,
                 block_k=self.packed_matmul_block_k,
                 num_warps=self.packed_matmul_num_warps,
+            )
+        if self.runtime_mode == "native_packed_matmul":
+            if self.packed_weight_indices is None or self.row_norms is None:
+                raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
+            from orbitquant.kernels.native_packed_matmul import (
+                matmul_packed_weight_with_native_kernel,
+            )
+
+            return matmul_packed_weight_with_native_kernel(
+                rotated_x,
+                self.packed_weight_indices,
+                self.row_norms,
+                self.weight_codebook,
+                bits=self.weight_bits,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                bias=bias,
+                block_m=self.packed_matmul_block_m,
+                block_n=self.packed_matmul_block_n,
+                block_k=self.packed_matmul_block_k,
             )
 
         weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)
