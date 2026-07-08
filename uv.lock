@@ -1125,6 +1125,7 @@ hf = [
 ]
 kernels = [
     { name = "kernels" },
+    { name = "triton" },
 ]
 
 [package.metadata]
@@ -1145,6 +1146,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.5" },
     { name = "tqdm", specifier = ">=4.66" },
     { name = "transformers", marker = "extra == 'hf'", specifier = ">=4.53" },
+    { name = "triton", marker = "extra == 'kernels'", specifier = ">=3.5" },
 ]
 provides-extras = ["hf", "kernels", "eval", "dev"]
 

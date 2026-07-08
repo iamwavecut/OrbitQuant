@@ -38,6 +38,7 @@ hf = [
 ]
 kernels = [
   "kernels>=0.16",
+  "triton>=3.5",
 ]
 eval = [
   "imageio>=2.37",

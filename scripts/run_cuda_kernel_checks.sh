@@ -110,10 +110,10 @@ fi
 . "$VENV_DIR/bin/activate"
 
 if command -v uv >/dev/null 2>&1; then
-  uv pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff "kernels>=0.16"
+  uv pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff "kernels>=0.16" "triton>=3.5"
   uv pip install --no-deps -e .
 else
-  python -m pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff "kernels>=0.16"
+  python -m pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest pytest-xdist ruff "kernels>=0.16" "triton>=3.5"
   python -m pip install --no-deps -e .
 fi
 
