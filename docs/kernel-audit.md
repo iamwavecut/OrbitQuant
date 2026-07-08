@@ -84,9 +84,21 @@ for the current artifact format and runtime modes.
   2026-07-08T17:10Z. With Torch 2.12.1 it selected
   `build/torch212-metal-aarch64-darwin`, ran `matmul_packed_weight` on MPS, and
   produced a finite float16 output tensor.
-- CUDA/Triton must still be verified on a CUDA host with
-  `scripts/run_cuda_kernel_checks.sh` before the overall kernel audit release
-  gate can be closed.
+- CUDA/Triton partial gate passed on 2026-07-08T19:31Z at OrbitQuant commit
+  `301d836` on a RunPod secure-cloud RTX 4090 host with Torch 2.9.1+cu128,
+  CUDA 12.8, Triton 3.5.1, and driver 570.211.01. The run used
+  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` and completed CUDA kernel tests,
+  `orbitquant kernel-info`, `auto_fused` CUDA `kernel-bench`, and CUDA
+  `quantize-bench` with exit 0. This verifies the Python/Triton CUDA path and
+  packed-weight CUDA runtime fallback behavior, not the separate native CUDA
+  kernel-builder package.
+- Native CUDA `native_packed_matmul` still needs a compatible loadable variant.
+  A locally built `build/torch29-cxx11-cu130-x86_64-linux` variant was copied
+  to the same CUDA 12.8 host and failed before execution with
+  `ImportError: libcudart.so.13`, proving that artifact is a CUDA 13 build and
+  cannot close the CUDA 12.8 native-package gate. A CUDA 12.8-compatible
+  kernel-builder variant or approved Hugging Face Kernel Hub upload is still
+  required before claiming native CUDA package coverage.
 
 ## Packaging Boundary
 

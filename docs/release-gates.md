@@ -55,7 +55,17 @@ URL, or signed-off audit note.
   smoke-tested through `LOCAL_KERNELS`; with Torch 2.12.1 it selected
   `build/torch212-metal-aarch64-darwin`, ran `matmul_packed_weight` on MPS, and
   produced a finite float16 output tensor.
-  CUDA/Triton remains pending on a CUDA host.
+  CUDA/Triton partial gate passed on 2026-07-08T19:31Z at OrbitQuant commit
+  `301d836` on a RunPod secure-cloud RTX 4090 host with Torch 2.9.1+cu128,
+  CUDA 12.8, Triton 3.5.1, and driver 570.211.01. The run completed CUDA
+  kernel tests, `orbitquant kernel-info`, `auto_fused` CUDA `kernel-bench`,
+  and CUDA `quantize-bench` with exit 0 using
+  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0`. Native CUDA
+  `native_packed_matmul` remains open: the available local
+  `build/torch29-cxx11-cu130-x86_64-linux` variant failed to load on that CUDA
+  12.8 host with `ImportError: libcudart.so.13`, so a CUDA 12.8-compatible
+  kernel-builder variant or approved Hugging Face Kernel Hub upload is still
+  required before closing this gate.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is

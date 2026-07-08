@@ -96,7 +96,12 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`LOCAL_KERNELS`; with Torch 2.12.1 it selected" in release_gates
     assert "`build/torch212-metal-aarch64-darwin`" in release_gates
     assert "finite float16 output tensor" in release_gates
-    assert "CUDA/Triton remains pending on a CUDA host" in release_gates
+    assert "CUDA/Triton partial gate passed on 2026-07-08T19:31Z" in release_gates
+    assert "OrbitQuant commit\n  `301d836`" in release_gates
+    assert "Torch 2.9.1+cu128" in release_gates
+    assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0" in release_gates
+    assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
+    assert "`ImportError: libcudart.so.13`" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
         in release_gates
@@ -256,7 +261,11 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "build/torch212-metal-aarch64-darwin" in kernel_audit
     assert "finite float16 output tensor" in kernel_audit
     assert "[kernel-hub-approval-request.md]" in kernel_audit
-    assert "CUDA/Triton must still be verified on a CUDA host" in kernel_audit
+    assert "CUDA/Triton partial gate passed on 2026-07-08T19:31Z" in kernel_audit
+    assert "Torch 2.9.1+cu128" in kernel_audit
+    assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0" in kernel_audit
+    assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
+    assert "`ImportError: libcudart.so.13`" in kernel_audit
     assert "a4d927c" not in kernel_audit
 
 
