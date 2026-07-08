@@ -46,6 +46,13 @@ for the current artifact format and runtime modes.
   `nix --option sandbox relaxed run .#ci-test -L`. The run verified
   kernel-builder layout hooks, macOS 15/Python ABI 3.9 compatibility,
   get-kernel loading, and 17 package tests for the Metal build.
+- A private Hugging Face repo exists at
+  `WaveCut/orbitquant-packed-matmul`, but Kernel Hub publication is not yet
+  approved for the account. `nix --option sandbox relaxed --option max-jobs 1
+  --option cores 1 run .#build-and-upload -L` built the three Metal variants
+  for commit `a4d927c` and then failed at upload with the Kernel Hub approval
+  error. Do not treat the native package as remotely loadable through
+  `get_kernel` until that approval is granted and upload verification passes.
 - CUDA/Triton must still be verified on a CUDA host with
   `scripts/run_cuda_kernel_checks.sh` before the overall kernel audit release
   gate can be closed.
@@ -62,8 +69,11 @@ The `native_packed_matmul` runtime uses the separate
 `native-kernels/orbitquant-packed-matmul` package. That package is configured
 for `kernel-builder`, targets CUDA and Metal, uses ABI3-safe
 `TORCH_LIBRARY_EXPAND`/`REGISTER_EXTENSION` bindings, and has its own package
-tests. It should not be used as evidence that the Python Triton backend is
-fully fused or kernel-builder compliant.
+tests. Remote loading through Hugging Face `kernels.get_kernel` requires
+Kernel Hub publish approval for `WaveCut/orbitquant-packed-matmul`; until then,
+release tests must use `LOCAL_KERNELS` or an importable local package. It should
+not be used as evidence that the Python Triton backend is fully fused or
+kernel-builder compliant.
 
 The current MPS path uses `torch.mps.compile_shader` for local Metal shaders.
 It is not an upstream PyTorch native MPS operator implementation, so
