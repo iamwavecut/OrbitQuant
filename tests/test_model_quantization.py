@@ -57,7 +57,7 @@ def test_inspect_linear_module_policy_reports_inventory_without_mutating_model()
 
     inventory = inspect_linear_module_policy(model, config)
 
-    assert inventory["target_policy"] == "auto"
+    assert inventory["target_policy"] == "generic_dit"
     assert inventory["linear_module_count"] == 3
     assert inventory["action_counts"] == {
         "orbitquant": 1,
@@ -80,6 +80,34 @@ def test_inspect_linear_module_policy_reports_inventory_without_mutating_model()
     }
     assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], torch.nn.Linear)
     assert isinstance(model.transformer_blocks[0]["modulation"], torch.nn.Linear)
+
+
+class TinyFlux2PolicyInventoryModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.double_stream_modulation_img = torch.nn.ModuleDict(
+            {"linear": torch.nn.Linear(16, 32)}
+        )
+        self.single_transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {"attn": torch.nn.ModuleDict({"to_qkv_mlp_proj": torch.nn.Linear(16, 32)})}
+                )
+            ]
+        )
+
+
+def test_inspect_linear_module_policy_reports_resolved_auto_target_policy():
+    inventory = inspect_linear_module_policy(
+        TinyFlux2PolicyInventoryModel(),
+        OrbitQuantConfig(target_policy="auto", block_size=8),
+    )
+
+    assert inventory["target_policy"] == "flux2"
+    assert inventory["quantized_modules"] == [
+        "single_transformer_blocks.0.attn.to_qkv_mlp_proj"
+    ]
+    assert inventory["adaln_modules"] == ["double_stream_modulation_img.linear"]
 
 
 def test_quantize_linear_modules_keeps_dtype_overridden_modules_unquantized():

@@ -10,7 +10,7 @@ from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import available_backends
 from orbitquant.layers import OrbitQuantLinear
-from orbitquant.policies import PolicyDecision, classify_linear_modules
+from orbitquant.policies import PolicyDecision, classify_linear_modules, resolve_target_policy
 
 _TORCH_DTYPE_BY_NAME = {
     "bfloat16": torch.bfloat16,
@@ -55,6 +55,7 @@ def inspect_linear_module_policy(
     config: OrbitQuantConfig,
 ) -> dict[str, Any]:
     decisions = classify_linear_modules(model, config)
+    target_policy = resolve_target_policy(model, config)
     modules: list[dict[str, Any]] = []
     by_action: dict[str, list[str]] = {
         "orbitquant": [],
@@ -82,7 +83,7 @@ def inspect_linear_module_policy(
         )
 
     return {
-        "target_policy": config.target_policy,
+        "target_policy": target_policy,
         "linear_module_count": len(modules),
         "action_counts": {action: len(names) for action, names in by_action.items()},
         "quantized_modules": by_action.get("orbitquant", []),
