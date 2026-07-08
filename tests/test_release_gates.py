@@ -127,6 +127,10 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "zero-regression counts" in release_gates
     assert "not host logs, raw eval dumps, or terminal transcripts" in release_gates
     assert "The GitHub repository is public" in release_gates
+    assert "[release-0.1.0.md](release-0.1.0.md)" in release_gates
+    assert "repository visibility and\n  the release tag remain pending explicit approval" in (
+        release_gates
+    )
     assert "python -m build" in release_gates
     assert "python -m twine check dist/*" in release_gates
     assert "python -m twine upload\n  dist/*" in release_gates
@@ -165,6 +169,37 @@ def test_release_gates_keep_current_priority_order():
     positions = [release_gates.index(token) for token in expected_order]
 
     assert positions == sorted(positions)
+
+
+def test_release_notes_are_artifact_focused_and_reproducible():
+    release_notes = Path("docs/release-0.1.0.md").read_text(encoding="utf-8")
+
+    assert "OrbitQuant 0.1.0 Release Notes" in release_notes
+    assert "Package Scope" in release_notes
+    assert "Implemented Quantization" in release_notes
+    assert 'runtime_mode="auto_fused"' in release_notes
+    assert "runtime_mode=\"dequant_bf16\"" in release_notes
+    assert "Paper-aligned targets" in release_notes
+    assert "FLUX.1-schnell" in release_notes
+    assert "Z-Image-Turbo" in release_notes
+    assert "Wan2.1 T2V 1.3B" in release_notes
+    assert "FLUX.2 Klein artifacts are not claimed" in release_notes
+    assert "scripts/run_paper_methodology_checks.sh" in release_notes
+    assert "scripts/run_hf_compat_checks.sh --mode all" in release_notes
+    assert "audit-hf-artifacts" in release_notes
+    assert "scripts/run_mps_kernel_checks.sh" in release_notes
+    assert "scripts/run_cuda_kernel_checks.sh" in release_notes
+    assert "GenEval and VBench numbers are release evidence" in release_notes
+    assert "ROCm and XPU are not implemented" in release_notes
+    assert "orbitquant-0.1.0.tar.gz" in release_notes
+    assert "orbitquant-0.1.0-py3-none-any.whl" in release_notes
+    assert "must not contain generated `build/`, `.venv/`, `__pycache__/`" in (
+        release_notes
+    )
+    assert "WaveCut/orbitquant-packed-matmul" in release_notes
+    assert "RunPod" not in release_notes
+    assert "discussion" not in release_notes.lower()
+    assert "chronology" not in release_notes.lower()
 
 
 def test_kernel_audit_documents_backend_claim_boundaries():

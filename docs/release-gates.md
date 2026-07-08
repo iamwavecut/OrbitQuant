@@ -116,7 +116,9 @@ URL, or signed-off audit note.
   `policy_inventory_ready_count=14`.
 - [ ] The GitHub repository is public, tagged, and includes the release docs,
   license, source distribution expectations, and reproducible verification
-  commands.
+  commands. Release-note content for the first public package release candidate
+  is prepared in [release-0.1.0.md](release-0.1.0.md); repository visibility and
+  the release tag remain pending explicit approval.
 - [ ] The PyPI package is built and checked with `python -m build` and
   `python -m twine check dist/*`, then uploaded with `python -m twine upload
   dist/*`. Credentials may require a user-provided PyPI token or browser
