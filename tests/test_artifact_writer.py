@@ -14,6 +14,7 @@ from orbitquant.artifacts import (
     repair_artifact_metadata,
     save_orbitquant_artifact,
     sha256_file,
+    validate_artifact_policy_inventory,
     validate_orbitquant_artifact,
 )
 from orbitquant.artifacts.checksums import (
@@ -24,7 +25,7 @@ from orbitquant.artifacts.checksums import (
 )
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
-from orbitquant.modeling import quantize_linear_modules
+from orbitquant.modeling import inspect_linear_module_policy, quantize_linear_modules
 
 
 class TinyArtifactModel(torch.nn.Module):
@@ -205,6 +206,24 @@ def test_auto_policy_artifact_records_resolved_policy_and_loads_prequantized_flu
     assert benchmark_summary["target_policy"] == "flux"
     assert manifest["adaln_modules"] == ["transformer_blocks.0.norm1.linear"]
     assert manifest["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
+
+    inventory_path = tmp_path / "policy-inventory.json"
+    inventory_payload = {
+        "source_model_id": "black-forest-labs/FLUX.1-schnell",
+        "source_revision": "abc123",
+        "component": "transformer",
+        "load_mode": "config",
+        "pipeline_class": None,
+        "component_class": "FluxTransformer2DArtifactModel",
+        **inspect_linear_module_policy(FluxTransformer2DArtifactModel(), config),
+    }
+    inventory_path.write_text(json.dumps(inventory_payload, indent=2) + "\n")
+    inventory_validation = validate_artifact_policy_inventory(tmp_path, inventory_path)
+
+    assert inventory_validation["valid"] is True
+    assert inventory_validation["target_policy"] == "flux"
+    assert inventory_validation["quantized_module_count"] == 1
+    assert inventory_validation["adaln_module_count"] == 1
 
     restored = FluxTransformer2DArtifactModel()
     loaded_manifest = load_orbitquant_artifact(restored, tmp_path)
