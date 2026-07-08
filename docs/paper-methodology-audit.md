@@ -1,6 +1,11 @@
 # OrbitQuant Paper Methodology Audit
 
 Status date: 2026-07-08.
+Verification: `scripts/run_paper_methodology_checks.sh` passed on
+2026-07-08T15:49Z against arXiv 2607.02461v1. The audit covers method
+conformance and claim boundaries; native artifact proof, public artifact
+publication, and release-grade GenEval/VBench metric claims remain separate
+release gates.
 
 Paper source:
 

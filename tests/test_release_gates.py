@@ -8,6 +8,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "verification output" in release_gates
     assert "arXiv 2607.02461" in release_gates
     assert "`scripts/run_paper_methodology_checks.sh`" in release_gates
+    assert "- [x] Final paper conformance audit" in release_gates
+    assert "passed on 2026-07-08T15:49Z against arXiv 2607.02461v1" in release_gates
     assert "paper-aligned subset" in release_gates
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
     assert "native-resolution BF16-vs-OrbitQuant\n  comparison assets" in release_gates
@@ -99,6 +101,9 @@ def test_kernel_audit_documents_backend_claim_boundaries():
 def test_paper_methodology_audit_uses_claim_boundary_language():
     audit = Path("docs/paper-methodology-audit.md").read_text(encoding="utf-8")
 
+    assert "Verification: `scripts/run_paper_methodology_checks.sh` passed" in audit
+    assert "2026-07-08T15:49Z against arXiv 2607.02461v1" in audit
+    assert "release-grade GenEval/VBench metric claims remain separate" in audit
     assert "Native artifact readiness is separate from full GenEval or VBench scoring" in (
         audit
     )

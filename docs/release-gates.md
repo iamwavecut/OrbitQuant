@@ -8,11 +8,15 @@ URL, or signed-off audit note.
   CUDA/Triton partial optimized, Metal/MPS partial optimized, CPU
   reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
   The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
-- [ ] Final paper conformance audit is complete against arXiv 2607.02461, with
+- [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
   [paper-methodology-audit.md](paper-methodology-audit.md), and the lightweight
   invariant gate is `scripts/run_paper_methodology_checks.sh`.
+  Evidence: passed on 2026-07-08T15:49Z against arXiv 2607.02461v1, including
+  codebook, RPBH, OrbitQuantLinear, AdaLN INT4, target-policy, native-setting,
+  and config-inventory checks for FLUX.2 Klein, FLUX.1-schnell, Z-Image-Turbo,
+  and Wan2.1.
 - [ ] Release wording separates the paper-aligned subset from extra targets:
   FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 are paper targets; FLUX.2 Klein is
   an additional target unless the paper scope is expanded.
