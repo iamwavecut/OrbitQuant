@@ -66,10 +66,14 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "loadable Kernel Hub artifact must be a `kernel`-type repository" in (
         release_gates
     )
-    assert "Kernels Creation access from\n  `https://huggingface.co/settings/account`" in (
+    assert "kernels-community/README/discussions/new" in release_gates
+    assert "2026-07-08T17:02Z" in release_gates
+    assert "`nix --option sandbox relaxed run .#build-and-copy -L`" in release_gates
+    assert "passed locally and copied 3 Metal build variants" in release_gates
+    assert "`nix --option sandbox relaxed run .#build-and-upload -L` found those 3" in (
         release_gates
     )
-    assert "Kernel Hub binary publication still requires that account approval" in release_gates
+    assert "stopped only at the Hugging Face permission error" in release_gates
     assert "CUDA/Triton remains pending on a CUDA host" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
@@ -169,8 +173,9 @@ def test_kernel_audit_documents_backend_claim_boundaries():
 def test_kernel_hub_approval_request_contains_required_review_fields():
     request = Path("docs/kernel-hub-approval-request.md").read_text(encoding="utf-8")
 
-    assert "Request Kernels Creation access" in request
-    assert "account-level \"Request Kernels\nCreation\" flow" in request
+    assert "Request Kernel Hub publish access" in request
+    assert "kernels-community/README" in request
+    assert "huggingface.co/spaces/kernels-community/README/discussions/new" in request
     assert "WaveCut/orbitquant-packed-matmul" in request
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
@@ -193,7 +198,8 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "ComfyUI-OrbitQuant" in request
     assert "TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in request
     assert "Python ABI 3.9" in request
-    assert "Kernels Creation access is needed" in request
+    assert "`build-and-copy` currently builds 3 local Metal variants" in request
+    assert "publish access is needed" in request
     assert "CUDA host benchmark evidence is pending" in request
     assert "uploaded as a `kernel`-type repository" in request
     assert "trust_remote_code=True" in request

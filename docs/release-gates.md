@@ -24,12 +24,14 @@ URL, or signed-off audit note.
   output directories. This source snapshot is review evidence only; the final
   loadable Kernel Hub artifact must be a `kernel`-type repository with
   `build/` variants uploaded by `kernel-builder build-and-upload`. Hugging Face
-  documents this as account-level Kernels Creation access from
-  `https://huggingface.co/settings/account` ("Request Kernels Creation").
-  Kernel Hub binary publication still requires that account approval;
-  `build-and-upload` built the local variants for commit `a4d927c` and then
-  failed with the Kernel Hub approval error. The request draft is
-  [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
+  `kernel-builder` currently asks publishers to request access through a
+  discussion at
+  `https://huggingface.co/spaces/kernels-community/README/discussions/new`.
+  On 2026-07-08T17:02Z, `nix --option sandbox relaxed run .#build-and-copy -L`
+  passed locally and copied 3 Metal build variants; the following
+  `nix --option sandbox relaxed run .#build-and-upload -L` found those 3
+  variants and stopped only at the Hugging Face permission error. The request
+  draft is [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
   CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted

@@ -1,17 +1,20 @@
 # Kernel Hub Approval Request
 
-Use this as the source text for the Hugging Face account-level "Request Kernels
-Creation" flow or a Hugging Face support/discussion follow-up. Before posting,
-ensure the referenced source URI is visible to the reviewer or attach the kernel
-source directly.
+Use this as the source text for the Hugging Face `kernels-community/README`
+discussion requested by `kernel-builder build-and-upload`:
+
+`https://huggingface.co/spaces/kernels-community/README/discussions/new`
+
+Before posting, ensure the referenced source URI is visible to the reviewer or
+attach the kernel source directly.
 
 ## Title
 
-Request Kernels Creation access for `WaveCut/orbitquant-packed-matmul`
+Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
 
 ## Body
 
-We would like Kernels Creation access to publish
+We would like Kernel Hub publish access to publish
 `WaveCut/orbitquant-packed-matmul` as a Hugging Face Kernel Hub package.
 
 Repository:
@@ -91,8 +94,9 @@ Current build and verification status:
 - Local Metal builds passed ABI compatibility checks for Python ABI 3.9
 - Local MPS OrbitQuant gate passed with `runtime_mode="native_packed_matmul"`
   through `LOCAL_KERNELS`
-- `build-and-upload` currently builds the local variants and then stops at
-  Kernel Hub publish permission, which is why Kernels Creation access is needed
+- `build-and-copy` currently builds 3 local Metal variants
+- `build-and-upload` finds those 3 variants and then stops at Kernel Hub
+  publish permission, which is why publish access is needed
 
 Benchmark status:
 
@@ -102,8 +106,8 @@ Benchmark status:
 
 Requested approval:
 
-Please enable Kernels Creation access for the `WaveCut` publisher namespace so
-this package can be uploaded as a `kernel`-type repository and loaded with:
+Please enable Kernel Hub publish access for the `WaveCut` publisher namespace
+so this package can be uploaded as a `kernel`-type repository and loaded with:
 
 ```python
 from kernels import get_kernel
