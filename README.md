@@ -64,12 +64,36 @@ missing, and runs the CUDA kernel validation gate.
 ## Load A Published Artifact
 
 Published OrbitQuant model repos are component artifacts. Load the source
-Diffusers pipeline first, download the OrbitQuant artifact, then patch the
-pipeline component:
+Diffusers pipeline and patch the quantized component from the artifact:
 
 ```python
 import torch
-from diffusers import DiffusionPipeline
+from huggingface_hub import snapshot_download
+from orbitquant import load_quantized_pipeline_from_artifact
+
+artifact_id = "WaveCut/FLUX.1-schnell-OrbitQuant-W4A4"
+
+artifact_dir = snapshot_download(artifact_id, repo_type="model")
+pipe = load_quantized_pipeline_from_artifact(
+    artifact_dir,
+    torch_dtype=torch.bfloat16,
+    device="cuda",
+)
+
+result = pipe(
+    prompt="A clean product photo of a red ceramic mug on a wooden desk",
+    num_inference_steps=4,
+    guidance_scale=0.0,
+)
+```
+
+The helper reads `model_index.json`, loads the recorded source pipeline revision,
+and patches the artifact's recorded component. To control the source pipeline
+class or load steps directly, use the lower-level component loader:
+
+```python
+import torch
+from diffusers import FluxPipeline
 from huggingface_hub import snapshot_download
 from orbitquant import load_quantized_pipeline_component
 
@@ -77,7 +101,7 @@ base_model = "black-forest-labs/FLUX.1-schnell"
 artifact_id = "WaveCut/FLUX.1-schnell-OrbitQuant-W4A4"
 
 artifact_dir = snapshot_download(artifact_id, repo_type="model")
-pipe = DiffusionPipeline.from_pretrained(
+pipe = FluxPipeline.from_pretrained(
     base_model,
     torch_dtype=torch.bfloat16,
 )

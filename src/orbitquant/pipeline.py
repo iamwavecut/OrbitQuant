@@ -77,6 +77,13 @@ def _validate_artifact_component(artifact_dir: str | Path, component: str) -> No
     )
 
 
+def _artifact_model_index(artifact_dir: str | Path) -> dict[str, Any]:
+    model_index_path = Path(artifact_dir) / "model_index.json"
+    if not model_index_path.is_file():
+        raise RuntimeError(f"required artifact file missing: {model_index_path}")
+    return json.loads(model_index_path.read_text(encoding="utf-8"))
+
+
 def quantize_pipeline(
     pipeline: Any,
     config: OrbitQuantConfig,
@@ -138,3 +145,62 @@ def load_quantized_pipeline_component(
         validate_checksums=validate_checksums,
         device=device,
     )
+
+
+def load_quantized_pipeline_from_artifact(
+    artifact_dir: str | Path,
+    *,
+    pipeline_cls: Any | None = None,
+    component: str | None = None,
+    strict: bool = True,
+    validate_checksums: bool = True,
+    device: str | torch.device | None = None,
+    torch_dtype: torch.dtype | None = None,
+    **from_pretrained_kwargs: Any,
+) -> Any:
+    """Load the source Diffusers pipeline and patch in an OrbitQuant component artifact."""
+
+    artifact_path = Path(artifact_dir)
+    model_index = _artifact_model_index(artifact_path)
+    source_model_id = model_index.get("source_model_id")
+    if not isinstance(source_model_id, str) or not source_model_id:
+        raise RuntimeError("model_index.json is missing a non-empty source_model_id")
+
+    resolved_component = component or model_index.get("component") or "transformer"
+    _validate_artifact_component(artifact_path, resolved_component)
+
+    if pipeline_cls is None:
+        try:
+            from diffusers import DiffusionPipeline
+        except Exception as exc:
+            raise ImportError(
+                "load_quantized_pipeline_from_artifact requires diffusers or an explicit "
+                "pipeline_cls"
+            ) from exc
+        pipeline_cls = DiffusionPipeline
+
+    source_revision = model_index.get("source_revision")
+    if (
+        isinstance(source_revision, str)
+        and source_revision
+        and source_revision != "unknown"
+        and "revision" not in from_pretrained_kwargs
+    ):
+        from_pretrained_kwargs["revision"] = source_revision
+    if torch_dtype is not None and "torch_dtype" not in from_pretrained_kwargs:
+        from_pretrained_kwargs["torch_dtype"] = torch_dtype
+
+    pipeline = pipeline_cls.from_pretrained(source_model_id, **from_pretrained_kwargs)
+    manifest = load_quantized_pipeline_component(
+        pipeline,
+        artifact_path,
+        component=resolved_component,
+        strict=strict,
+        validate_checksums=validate_checksums,
+        device=device,
+    )
+    pipeline.orbitquant_manifest = manifest
+    pipeline.orbitquant_artifact_dir = str(artifact_path)
+    if device is not None and hasattr(pipeline, "to"):
+        pipeline = pipeline.to(device)
+    return pipeline

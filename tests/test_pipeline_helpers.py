@@ -8,6 +8,7 @@ from orbitquant.layers import OrbitQuantLinear
 from orbitquant.pipeline import (
     build_diffusers_pipeline_quantization_config,
     load_quantized_pipeline_component,
+    load_quantized_pipeline_from_artifact,
     quantize_pipeline,
     save_quantized_pipeline_component,
 )
@@ -161,6 +162,110 @@ def test_load_quantized_pipeline_component_restores_saved_component_artifact(tmp
     assert manifest.source_model_id == "example/model"
     assert isinstance(restored_layer, OrbitQuantLinear)
     assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
+
+
+def test_load_quantized_pipeline_from_artifact_loads_source_pipeline_and_component(tmp_path):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    calls = []
+
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            calls.append((model_id, kwargs))
+            return TinyPipeline()
+
+    pipeline = load_quantized_pipeline_from_artifact(
+        tmp_path,
+        pipeline_cls=FakePipeline,
+        torch_dtype=torch.float32,
+        device="cpu",
+    )
+
+    restored_layer = pipeline.transformer.transformer_blocks[0]["attn"]["to_q"]
+    assert calls == [
+        (
+            "example/model",
+            {
+                "revision": "abc123",
+                "torch_dtype": torch.float32,
+            },
+        )
+    ]
+    assert isinstance(restored_layer, OrbitQuantLinear)
+    assert pipeline.orbitquant_manifest.source_model_id == "example/model"
+    assert pipeline.orbitquant_artifact_dir == str(tmp_path)
+    assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
+
+
+def test_load_quantized_pipeline_from_artifact_respects_explicit_revision(tmp_path):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    calls = []
+
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            calls.append((model_id, kwargs))
+            return TinyPipeline()
+
+    load_quantized_pipeline_from_artifact(
+        tmp_path,
+        pipeline_cls=FakePipeline,
+        revision="main",
+    )
+
+    assert calls == [("example/model", {"revision": "main"})]
+
+
+def test_load_quantized_pipeline_from_artifact_rejects_component_mismatch(tmp_path):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="denoiser")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="denoiser",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            raise AssertionError("component mismatch should fail before source load")
+
+    with pytest.raises(ValueError, match="component mismatch"):
+        load_quantized_pipeline_from_artifact(
+            tmp_path,
+            pipeline_cls=FakePipeline,
+            component="transformer",
+        )
 
 
 def test_load_quantized_pipeline_component_rejects_component_mismatch(tmp_path):
