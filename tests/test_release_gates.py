@@ -74,6 +74,8 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "stopped only at the Hugging Face permission error" in release_gates
+    assert "kernels-community/README/discussions/15" in release_gates
+    assert "approval remains pending" in release_gates
     assert "matching\n  `torch212-metal-aarch64-darwin` variant" in release_gates
     assert "W4 512x1024x1024 float16" in release_gates
     assert "0.00764581459807232" in release_gates
@@ -181,10 +183,13 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "Request Kernel Hub publish access" in request
     assert "kernels-community/README" in request
     assert "huggingface.co/spaces/kernels-community/README/discussions/new" in request
+    assert "huggingface.co/spaces/kernels-community/README/discussions/15" in request
     assert "WaveCut/orbitquant-packed-matmul" in request
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Review source snapshot:" in request
+    assert "062b934389dce9242e0a9185ed469cc3170e3e73" in request
+    assert "f7eb3fa912caa27ad682c7ea1757f580a2751a01" not in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request
     assert "huggingface.co/WaveCut/orbitquant-packed-matmul/commit" in request

@@ -31,7 +31,10 @@ URL, or signed-off audit note.
   passed locally and copied 3 Metal build variants; the following
   `nix --option sandbox relaxed run .#build-and-upload -L` found those 3
   variants and stopped only at the Hugging Face permission error. The request
-  draft is [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
+  was submitted as
+  `https://huggingface.co/spaces/kernels-community/README/discussions/15`;
+  approval remains pending. The request text is
+  [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4

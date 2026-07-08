@@ -5,6 +5,10 @@ discussion requested by `kernel-builder build-and-upload`:
 
 `https://huggingface.co/spaces/kernels-community/README/discussions/new`
 
+Submitted discussion:
+
+`https://huggingface.co/spaces/kernels-community/README/discussions/15`
+
 Before posting, ensure the referenced source URI is visible to the reviewer or
 attach the kernel source directly.
 
@@ -22,7 +26,7 @@ Repository:
 - Kernel Hub repo id: `WaveCut/orbitquant-packed-matmul`
 - Source package path: `native-kernels/orbitquant-packed-matmul`
 - Source repository: `https://github.com/iamwavecut/OrbitQuant`
-- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/f7eb3fa912caa27ad682c7ea1757f580a2751a01`
+- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/062b934389dce9242e0a9185ed469cc3170e3e73`
 - License: Apache-2.0
 
 Review-ready source package:
