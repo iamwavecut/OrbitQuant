@@ -101,6 +101,54 @@ def test_runpod_ssh_health_script_uses_sterile_ssh_probe():
     assert "runpodctl pod" not in text
 
 
+def test_runpod_ssh_health_script_executes_clean_probe_with_web_ui_command(tmp_path):
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$@\" > \"$RUNPOD_FAKE_SSH_ARGS\"\n"
+        "printf '__RUNPOD_SSH_HEALTH_OK__\\nfake-host\\n'\n",
+        encoding="utf-8",
+    )
+    fake_ssh.chmod(0o755)
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("fake-key", encoding="utf-8")
+    args_path = tmp_path / "ssh-args.txt"
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+    env["RUNPOD_FAKE_SSH_ARGS"] = str(args_path)
+
+    result = subprocess.run(
+        [
+            "scripts/runpod_ssh_health.sh",
+            "ssh",
+            "pod-user@ssh.runpod.io",
+            "-i",
+            str(key_path),
+            "-p",
+            "45678",
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+
+    ssh_args = args_path.read_text(encoding="utf-8").splitlines()
+    assert "RUNPOD_SSH_HEALTH_READY target=pod-user@ssh.runpod.io" in result.stdout
+    assert ssh_args[:3] == ["-F", "/dev/null", "-tt"]
+    assert "-o" in ssh_args
+    assert "IdentitiesOnly=yes" in ssh_args
+    assert "ControlMaster=no" in ssh_args
+    assert "ControlPath=none" in ssh_args
+    assert "PreferredAuthentications=publickey" in ssh_args
+    assert "-i" in ssh_args
+    assert str(key_path) in ssh_args
+    assert "-p" in ssh_args
+    assert "45678" in ssh_args
+    assert "pod-user@ssh.runpod.io" in ssh_args
+    assert any("__RUNPOD_SSH_HEALTH_OK__" in arg for arg in ssh_args)
+
+
 def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant():
     package_root = Path("native-kernels/orbitquant-packed-matmul")
     tracked_files = _tracked_native_kernel_files(package_root)
