@@ -124,6 +124,21 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert "packed_matmul_forward_half" in metal_source
 
 
+def test_metal_host_source_matches_cuda_packed_weight_contract() -> None:
+    metal_host = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_metal/packed_matmul.mm"
+    ).read_text(encoding="utf-8")
+
+    assert "#include <torch/mps.h>" in metal_host
+    assert "torch::mps::get_command_buffer()" in metal_host
+    assert "torch::mps::get_dispatch_queue()" in metal_host
+    assert "torch::mps::commit()" in metal_host
+    assert "packed_weight_indices.scalar_type() == torch::kUInt8" in metal_host
+    assert "row_norms.scalar_type() == torch::kFloat" in metal_host
+    assert "centroids.scalar_type() == torch::kFloat" in metal_host
+    assert "bias.scalar_type() == torch::kFloat" in metal_host
+
+
 def test_kernel_package_pytest_marks_runtime_test_for_kernel_builder_ci() -> None:
     test_source = (KERNEL_ROOT / "tests/test_packed_matmul.py").read_text(encoding="utf-8")
 

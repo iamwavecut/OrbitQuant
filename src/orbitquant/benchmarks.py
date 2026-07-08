@@ -15,7 +15,10 @@ from orbitquant.modeling import (
     quantize_linear_modules,
 )
 
-_PACKED_MATMUL_RUNTIME_MODES = {"triton_packed_matmul", "native_packed_matmul"}
+_PACKED_MATMUL_RUNTIME_MODES = {
+    "triton_packed_matmul",
+    "native_packed_matmul",
+}
 
 
 def _resolve_device(device: str | torch.device) -> torch.device:
@@ -100,6 +103,12 @@ def _peak_memory_bytes(device: torch.device) -> int | None:
     return int(torch.cuda.max_memory_allocated(device))
 
 
+def _runtime_uses_packed_matmul(runtime_mode: str, device: torch.device) -> bool:
+    if runtime_mode == "auto_fused":
+        return device.type in {"cuda", "mps"}
+    return runtime_mode in _PACKED_MATMUL_RUNTIME_MODES
+
+
 def _weight_quantization_backend_label(device: torch.device) -> str:
     if device.type == "cuda" and backend_capabilities()["triton_cuda"]["available"]:
         return "triton_cuda"
@@ -117,7 +126,7 @@ def benchmark_orbit_linear(
     activation_bits: int = 4,
     block_size: int | str = "paper",
     activation_kernel_backend: str = "auto",
-    runtime_mode: str = "dequant_bf16",
+    runtime_mode: str = "auto_fused",
     packed_matmul_block_m: int = 32,
     packed_matmul_block_n: int = 64,
     packed_matmul_block_k: int = 64,
@@ -176,7 +185,9 @@ def benchmark_orbit_linear(
     quantized.to(target_device)
     x = torch.randn(tokens, in_features, device=target_device, dtype=dtype)
 
-    if runtime_mode in _PACKED_MATMUL_RUNTIME_MODES:
+    uses_packed_matmul = _runtime_uses_packed_matmul(runtime_mode, target_device)
+
+    if uses_packed_matmul:
         prewarm = QuantizationPrewarmSummary(
             orbitquant_modules=0,
             adaln_modules=0,
@@ -248,7 +259,7 @@ def benchmark_orbit_linear(
             iterations=iterations,
         ),
     }
-    if runtime_mode in _PACKED_MATMUL_RUNTIME_MODES:
+    if uses_packed_matmul:
         timings["weight_dequant_cold_ms"] = None
         timings["weight_dequant_cached_ms"] = None
     else:
@@ -271,7 +282,7 @@ def benchmark_orbit_linear(
         warmup=max(1, min(warmup, 3)),
         iterations=max(1, min(iterations, 5)),
     )
-    if runtime_mode not in _PACKED_MATMUL_RUNTIME_MODES:
+    if not uses_packed_matmul:
         prewarm_quantized_linear_modules(quantized, device=target_device, dtype=dtype)
     timings["forward_prewarmed_ms"] = _mean_time_ms(
         forward_prewarmed,
@@ -336,8 +347,8 @@ def benchmark_orbit_linear(
             "GPU utilization; weight_quantize_pack_hot_ms measures the already "
             "compiled CUDA path. In dequant_bf16 mode, forward_prewarmed_ms uses "
             "OrbitQuant activation kernels plus cached dequantized weights and "
-            "PyTorch linear. In packed matmul runtime modes, forward_prewarmed_ms "
-            "uses the opt-in packed-weight matmul path instead of the cached "
+            "PyTorch linear. In auto_fused and packed matmul runtime modes, "
+            "forward_prewarmed_ms uses packed-weight matmul instead of the cached "
             "dequantized-weight path."
         ),
     }

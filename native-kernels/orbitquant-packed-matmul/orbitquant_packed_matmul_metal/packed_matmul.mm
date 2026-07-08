@@ -1,5 +1,7 @@
 #include "../torch-ext/torch_binding.h"
 
+#include <torch/mps.h>
+
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
@@ -156,6 +158,7 @@ void matmul_packed_weight(
   TORCH_CHECK(packed_weight_indices.is_contiguous(), "packed weights must be contiguous");
   TORCH_CHECK(row_norms.is_contiguous(), "row norms must be contiguous");
   TORCH_CHECK(centroids.is_contiguous(), "centroids must be contiguous");
+  TORCH_CHECK(packed_weight_indices.scalar_type() == torch::kUInt8, "packed weights must be uint8");
   TORCH_CHECK(x.scalar_type() == torch::kFloat || x.scalar_type() == torch::kHalf,
               "Metal packed matmul supports float32 and float16 inputs");
   TORCH_CHECK(out.scalar_type() == x.scalar_type(), "out dtype must match x dtype");

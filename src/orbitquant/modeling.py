@@ -342,7 +342,7 @@ def prewarm_quantized_linear_modules(
     device: str | torch.device | None = None,
     dtype: torch.dtype | None = None,
 ) -> QuantizationPrewarmSummary:
-    """Materialize lazy dequantized weight caches for quantized linear modules."""
+    """Prewarm reference dequant caches, skipping auto_fused GPU/MPS modules."""
 
     target_device = None if device is None else _quantization_device(device)
     started_at = time.perf_counter()
@@ -361,7 +361,12 @@ def prewarm_quantized_linear_modules(
         if device_key not in synced_devices:
             _synchronize_if_needed(module_device)
             synced_devices[device_key] = module_device
-        module._dequantize_weight(device=module_device, dtype=module_dtype)
+        if not (
+            isinstance(module, OrbitQuantLinear)
+            and module.runtime_mode == "auto_fused"
+            and module_device.type in {"cuda", "mps"}
+        ):
+            module._dequantize_weight(device=module_device, dtype=module_dtype)
         last_device = module_device
         last_dtype = module_dtype
         if isinstance(module, OrbitQuantLinear):

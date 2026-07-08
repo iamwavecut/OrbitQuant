@@ -119,10 +119,12 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "hf_kernel_builder_compliant": False,
             "notes": (
                 "Triton handles runtime activation norm, RPBH/FWHT rotation, codebook "
-                "lookup/rescale, packed weight dequant, opt-in packed weight matmul, "
+                "lookup/rescale, packed weight dequant, packed weight matmul, "
                 "offline low-bit pack/unpack, offline weight RPBH/FWHT codebook indexing "
                 "with direct low-bit packing, and AdaLN INT4 RTN quantize/pack/dequant. "
-                "The default runtime mode still uses the BF16 PyTorch linear path."
+                "The default auto_fused runtime prefers packed low-bit matmul when a "
+                "native or Triton packed kernel is available; full-model speedup claims "
+                "still require separate benchmark artifacts."
             ),
         },
     }

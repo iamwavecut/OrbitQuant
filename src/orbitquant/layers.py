@@ -86,6 +86,24 @@ def _quantize_weight_pack(
     return pack_lowbit(weight_indices, bits=bits, validate=False)
 
 
+def _native_packed_matmul_load_error() -> Exception | None:
+    try:
+        from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
+        load_native_packed_matmul_kernel()
+    except Exception as exc:
+        return exc
+    return None
+
+
+def _triton_packed_matmul_import_error() -> Exception | None:
+    try:
+        from orbitquant.kernels.triton_cuda import matmul_packed_weight_with_triton  # noqa: F401
+    except Exception as exc:
+        return exc
+    return None
+
+
 class OrbitQuantLinear(nn.Module):
     """Linear layer with OrbitQuant-packed rotated weights.
 
@@ -314,6 +332,69 @@ class OrbitQuantLinear(nn.Module):
                 f"got {x.device.type}."
             )
 
+    def _auto_fused_unavailable_error(
+        self,
+        *,
+        device_type: str,
+        native_error: Exception | None,
+        triton_error: Exception | None = None,
+    ) -> RuntimeError:
+        reference_hint = "Set runtime_mode='dequant_bf16' to use the reference/debug path."
+        native_hint = (
+            "Install the Hugging Face `kernels` package with access to "
+            "WaveCut/orbitquant-packed-matmul version 1, set LOCAL_KERNELS to a local "
+            "native-kernels/orbitquant-packed-matmul build, or make the "
+            "`orbitquant_packed_matmul` package importable."
+        )
+        if device_type == "cuda":
+            triton_hint = "Install a CUDA-compatible Triton stack to use triton_packed_matmul."
+            return RuntimeError(
+                "auto_fused runtime requires packed low-bit matmul on CUDA and will not "
+                "silently materialize a full dequantized weight matrix. Tried "
+                f"native_packed_matmul ({native_error}) and triton_packed_matmul "
+                f"({triton_error}). {native_hint} {triton_hint} {reference_hint}"
+            )
+        if device_type == "mps":
+            return RuntimeError(
+                "auto_fused runtime requires the native Metal packed low-bit matmul "
+                "kernel on MPS and will not silently materialize a full dequantized "
+                f"weight matrix. native_packed_matmul failed: {native_error}. "
+                f"{native_hint} {reference_hint}"
+            )
+        return RuntimeError(
+            f"auto_fused runtime does not support device type {device_type!r}. "
+            f"{reference_hint}"
+        )
+
+    def _resolve_auto_fused_runtime(self, x: torch.Tensor) -> str:
+        device_type = x.device.type
+        if device_type == "cpu":
+            return "dequant_bf16"
+        if device_type == "cuda":
+            native_error = _native_packed_matmul_load_error()
+            if native_error is None:
+                return "native_packed_matmul"
+            triton_error = _triton_packed_matmul_import_error()
+            if triton_error is None:
+                return "triton_packed_matmul"
+            raise self._auto_fused_unavailable_error(
+                device_type=device_type,
+                native_error=native_error,
+                triton_error=triton_error,
+            )
+        if device_type == "mps":
+            native_error = _native_packed_matmul_load_error()
+            if native_error is None:
+                return "native_packed_matmul"
+            raise self._auto_fused_unavailable_error(
+                device_type=device_type,
+                native_error=native_error,
+            )
+        raise self._auto_fused_unavailable_error(
+            device_type=device_type,
+            native_error=None,
+        )
+
     def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         cache_key = (str(device), dtype)
         if (
@@ -386,14 +467,20 @@ class OrbitQuantLinear(nn.Module):
         return dequantized
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.runtime_mode == "triton_packed_matmul":
+        runtime_mode = (
+            self._resolve_auto_fused_runtime(x)
+            if self.runtime_mode == "auto_fused"
+            else self.runtime_mode
+        )
+
+        if runtime_mode == "triton_packed_matmul":
             self._validate_triton_packed_matmul_input(x)
-        elif self.runtime_mode == "native_packed_matmul":
+        elif runtime_mode == "native_packed_matmul":
             self._validate_native_packed_matmul_input(x)
 
-        if self.runtime_mode == "debug_no_quant":
+        if runtime_mode == "debug_no_quant":
             rotated_x = self.rotation.apply_to_activations(x.to(torch.float32)).to(x.dtype)
-        elif self.runtime_mode == "debug_no_activation_quant":
+        elif runtime_mode == "debug_no_activation_quant":
             work = x.to(torch.float32)
             norms = work.norm(dim=-1, keepdim=True)
             rotated_x = (
@@ -408,10 +495,10 @@ class OrbitQuantLinear(nn.Module):
                 eps=self.activation_eps,
                 backend=self.activation_kernel_backend,
                 constant_tensors=self._activation_kernel_constant_tensors(x.device),
-            )
+        )
 
         bias = None if self.bias is None else self.bias.to(device=x.device, dtype=rotated_x.dtype)
-        if self.runtime_mode == "triton_packed_matmul":
+        if runtime_mode == "triton_packed_matmul":
             if self.packed_weight_indices is None or self.row_norms is None:
                 raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
             try:
@@ -434,7 +521,7 @@ class OrbitQuantLinear(nn.Module):
                 block_k=self.packed_matmul_block_k,
                 num_warps=self.packed_matmul_num_warps,
             )
-        if self.runtime_mode == "native_packed_matmul":
+        if runtime_mode == "native_packed_matmul":
             if self.packed_weight_indices is None or self.row_norms is None:
                 raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
             from orbitquant.kernels.native_packed_matmul import (

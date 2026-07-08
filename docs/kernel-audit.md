@@ -8,8 +8,8 @@ for the current artifact format and runtime modes.
 | Backend | Status | Implemented path | Release claim boundary |
 | --- | --- | --- | --- |
 | CPU | Reference-only | PyTorch reference activation quantization, weight dequantization, and linear matmul. | Correctness baseline only. Do not claim optimized CPU kernels or CPU speedup. |
-| MPS/Metal | Partial optimized | Inline Metal shader for codebook lookup/rescale and packed weight dequantization. | PyTorch still handles norm, RPBH rotation, and `F.linear`; do not claim full MPS fusion. |
-| CUDA/Triton | Partial optimized | Triton activation norm/RPBH/FWHT/codebook/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and opt-in packed matmul. | Default runtime remains `dequant_bf16`; do not claim default low-bit tensor-core speedup or full activation-plus-matmul fusion. |
+| MPS/Metal | Partial optimized | Native packed matmul package when importable, plus inline Metal shader coverage for codebook lookup/rescale and packed weight dequantization. | `auto_fused` requires native packed matmul on MPS; do not claim full activation-plus-matmul fusion without model benchmark artifacts. |
+| CUDA/Triton | Partial optimized | Native packed matmul package when importable, Triton activation norm/RPBH/FWHT/codebook/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and packed matmul. | `auto_fused` prefers native packed matmul then Triton packed matmul on CUDA; do not claim full-model speedup or full activation-plus-matmul fusion without benchmark artifacts. |
 | ROCm | Unsupported | No implementation in this tree. | Exclude from release acceleration claims unless implemented and verified. |
 | XPU | Unsupported | No implementation in this tree. | Exclude from release acceleration claims unless implemented and verified. |
 
@@ -29,11 +29,18 @@ for the current artifact format and runtime modes.
 
 ## Packaging Boundary
 
-The current CUDA path is implemented with Python Triton kernels. It is not a
-Hugging Face Kernels Hub `kernel-builder` package and must not be described as
-ABI3 kernel-builder compliant until that packaging path exists and passes the
-kernel-builder checks. `orbitquant kernel-info` therefore reports
-`hf_kernel_builder_compliant=false` for the current CUDA path.
+The current CUDA OrbitQuant pipeline path is implemented with Python Triton
+kernels. It is not itself a Hugging Face Kernels Hub `kernel-builder` package
+and must not be described as ABI3 kernel-builder compliant.
+`orbitquant kernel-info` therefore reports `hf_kernel_builder_compliant=false`
+for the `triton_cuda` backend.
+
+The `native_packed_matmul` runtime uses the separate
+`native-kernels/orbitquant-packed-matmul` package. That package is configured
+for `kernel-builder`, targets CUDA and Metal, uses ABI3-safe
+`TORCH_LIBRARY_EXPAND`/`REGISTER_EXTENSION` bindings, and has its own package
+tests. It should not be used as evidence that the Python Triton backend is
+fully fused or kernel-builder compliant.
 
 The current MPS path uses `torch.mps.compile_shader` for local Metal shaders.
 It is not an upstream PyTorch native MPS operator implementation, so

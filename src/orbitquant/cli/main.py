@@ -74,13 +74,18 @@ from orbitquant.modeling import (
 from orbitquant.pipeline import load_quantized_pipeline_component
 
 _RUNTIME_MODE_CHOICES = [
+    "auto_fused",
     "dequant_bf16",
     "debug_no_quant",
     "debug_no_activation_quant",
     "triton_packed_matmul",
     "native_packed_matmul",
 ]
-_PACKED_MATMUL_RUNTIME_MODES = {"triton_packed_matmul", "native_packed_matmul"}
+_PACKED_MATMUL_RUNTIME_MODES = {
+    "auto_fused",
+    "triton_packed_matmul",
+    "native_packed_matmul",
+}
 
 
 def _torch_dtype(name: str) -> torch.dtype:
@@ -398,14 +403,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     kernel_bench_parser.add_argument(
         "--runtime-mode",
-        default="dequant_bf16",
-        choices=[
-            "dequant_bf16",
-            "debug_no_quant",
-            "debug_no_activation_quant",
-            "triton_packed_matmul",
-            "native_packed_matmul",
-        ],
+        default="auto_fused",
+        choices=_RUNTIME_MODE_CHOICES,
     )
     kernel_bench_parser.add_argument("--device", default="auto")
     kernel_bench_parser.add_argument(
@@ -551,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
     quantize_parser.add_argument("--block-size", type=_parse_block_size, default="paper")
     quantize_parser.add_argument(
         "--runtime-mode",
-        default="dequant_bf16",
+        default="auto_fused",
         choices=_RUNTIME_MODE_CHOICES,
     )
     quantize_parser.add_argument(
@@ -787,7 +786,7 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--rotation-seed", type=int, default=0)
     generate_parser.add_argument(
         "--runtime-mode",
-        default="dequant_bf16",
+        default="auto_fused",
         choices=_RUNTIME_MODE_CHOICES,
     )
     generate_parser.add_argument(

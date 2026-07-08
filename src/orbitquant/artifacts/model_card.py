@@ -322,6 +322,12 @@ def render_model_card(
             "",
             _usage_snippet(data["source_model_id"], bits),
             "",
+            "`runtime_mode=\"auto_fused\"` is the default optimized runtime. On "
+            "CUDA it tries the native packed low-bit matmul kernel first, then "
+            "Triton packed matmul. On MPS it requires the native Metal packed "
+            "matmul kernel. Use `runtime_mode=\"dequant_bf16\"` only as an "
+            "explicit compatibility/debug reference path.",
+            "",
             *native_settings_lines,
             *validation_status_lines,
             *native_validation_proof_lines,
@@ -371,9 +377,10 @@ def render_model_card(
             "",
             "- This is a transformer-component artifact; load it into the source "
             "pipeline as shown above.",
-            "- Runtime mode may dequantize packed weights before BF16 matmul. Disk "
-            "artifacts are compact, while runtime VRAM depends on the selected "
-            "backend.",
+            "- CUDA and MPS `auto_fused` inference requires a packed matmul kernel "
+            "and fails loudly when the required kernel is unavailable. The explicit "
+            "`dequant_bf16` reference mode materializes dequantized weights before "
+            "BF16 matmul.",
             "- Quality depends on the source model and bit setting. Very low-bit "
             "settings can degrade prompt following or visual detail.",
             "",

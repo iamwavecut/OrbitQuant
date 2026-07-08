@@ -170,6 +170,7 @@ def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):
         activation_bits=4,
         rotation_seed=11,
         block_size=8,
+        runtime_mode="dequant_bf16",
         activation_kernel_backend="cpu",
     )
     quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
@@ -281,6 +282,7 @@ def test_orbit_linear_mps_forward_matches_reference_without_cpu_unpack(monkeypat
         activation_bits=4,
         rotation_seed=11,
         block_size=8,
+        runtime_mode="dequant_bf16",
         activation_kernel_backend="cpu",
     )
     reference = OrbitQuantLinear.from_linear(
@@ -542,6 +544,216 @@ def test_orbit_linear_native_packed_matmul_runtime_avoids_weight_dequant_cache(m
             "block_k": 64,
         }
     ]
+
+
+def test_orbit_linear_auto_fused_cuda_prefers_native_then_triton(monkeypatch):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8),
+        module_name="block.ff.linear",
+    )
+    fake_cuda_input = SimpleNamespace(device=torch.device("cuda"))
+
+    monkeypatch.setattr(layers_module, "_native_packed_matmul_load_error", lambda: None)
+    monkeypatch.setattr(
+        layers_module,
+        "_triton_packed_matmul_import_error",
+        lambda: (_ for _ in ()).throw(AssertionError("native should be preferred")),
+    )
+
+    assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "native_packed_matmul"
+
+    native_error = RuntimeError("native kernel package missing")
+    monkeypatch.setattr(layers_module, "_native_packed_matmul_load_error", lambda: native_error)
+    monkeypatch.setattr(layers_module, "_triton_packed_matmul_import_error", lambda: None)
+
+    assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "triton_packed_matmul"
+
+
+def test_orbit_linear_auto_fused_missing_cuda_kernels_fails_loud(monkeypatch):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8),
+        module_name="block.ff.linear",
+    )
+    fake_cuda_input = SimpleNamespace(device=torch.device("cuda"))
+
+    monkeypatch.setattr(
+        layers_module,
+        "_native_packed_matmul_load_error",
+        lambda: RuntimeError("native package unavailable"),
+    )
+    monkeypatch.setattr(
+        layers_module,
+        "_triton_packed_matmul_import_error",
+        lambda: RuntimeError("triton unavailable"),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        quantized._resolve_auto_fused_runtime(fake_cuda_input)
+
+    message = str(exc_info.value)
+    assert "auto_fused runtime requires packed low-bit matmul on CUDA" in message
+    assert "native_packed_matmul" in message
+    assert "triton_packed_matmul" in message
+    assert "runtime_mode='dequant_bf16'" in message
+
+
+def test_orbit_linear_auto_fused_missing_mps_kernel_fails_loud(monkeypatch):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8),
+        module_name="block.ff.linear",
+    )
+    fake_mps_input = SimpleNamespace(device=torch.device("mps"))
+
+    monkeypatch.setattr(
+        layers_module,
+        "_native_packed_matmul_load_error",
+        lambda: RuntimeError("native Metal package unavailable"),
+    )
+    monkeypatch.setattr(
+        layers_module,
+        "_triton_packed_matmul_import_error",
+        lambda: (_ for _ in ()).throw(AssertionError("MPS should not try Triton")),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        quantized._resolve_auto_fused_runtime(fake_mps_input)
+
+    message = str(exc_info.value)
+    assert "auto_fused runtime requires the native Metal packed low-bit matmul" in message
+    assert "native_packed_matmul failed" in message
+    assert "runtime_mode='dequant_bf16'" in message
+
+
+@pytest.mark.parametrize(
+    ("resolved_runtime", "native_calls", "triton_calls"),
+    [
+        ("native_packed_matmul", 1, 0),
+        ("triton_packed_matmul", 0, 1),
+    ],
+)
+def test_orbit_linear_auto_fused_forward_avoids_dequantized_weight_and_full_linear(
+    monkeypatch,
+    resolved_runtime,
+    native_calls,
+    triton_calls,
+):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    x = torch.randn(2, 5, 16)
+    calls = {"native": 0, "triton": 0}
+
+    def fake_activation_kernel(input_tensor, **kwargs):
+        return input_tensor
+
+    def fake_native_matmul(input_tensor, *args, **kwargs):
+        calls["native"] += 1
+        return torch.zeros(
+            *input_tensor.shape[:-1],
+            kwargs["out_features"],
+            dtype=input_tensor.dtype,
+        )
+
+    def fake_triton_matmul(input_tensor, *args, **kwargs):
+        calls["triton"] += 1
+        return torch.zeros(
+            *input_tensor.shape[:-1],
+            kwargs["out_features"],
+            dtype=input_tensor.dtype,
+        )
+
+    def fail_dequant(*args, **kwargs):
+        raise AssertionError("auto_fused GPU path must not materialize dequantized weights")
+
+    def fail_full_linear(*args, **kwargs):
+        raise AssertionError("auto_fused GPU path must not call F.linear with full weights")
+
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    monkeypatch.setattr(
+        quantized,
+        "_resolve_auto_fused_runtime",
+        lambda input_tensor: resolved_runtime,
+    )
+    monkeypatch.setattr(
+        quantized,
+        "_validate_native_packed_matmul_input",
+        lambda input_tensor: None,
+    )
+    monkeypatch.setattr(
+        quantized,
+        "_validate_triton_packed_matmul_input",
+        lambda input_tensor: None,
+    )
+    monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_activation_kernel)
+    monkeypatch.setattr(
+        native_module,
+        "matmul_packed_weight_with_native_kernel",
+        fake_native_matmul,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "orbitquant.kernels.triton_cuda",
+        SimpleNamespace(matmul_packed_weight_with_triton=fake_triton_matmul),
+    )
+    monkeypatch.setattr(quantized, "_dequantize_weight", fail_dequant)
+    monkeypatch.setattr(layers_module.F, "linear", fail_full_linear)
+
+    actual = quantized(x)
+
+    assert quantized.runtime_mode == "auto_fused"
+    assert actual.shape == (2, 5, 7)
+    assert calls == {"native": native_calls, "triton": triton_calls}
+
+
+def test_orbit_linear_explicit_dequant_bf16_still_uses_reference_path(monkeypatch):
+    torch.manual_seed(5)
+    source = torch.nn.Linear(16, 7)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    x = torch.randn(2, 5, 16)
+    calls = {"dequant": 0, "linear": 0}
+    original_dequant = quantized._dequantize_weight
+    original_linear = layers_module.F.linear
+
+    def counted_dequant(*args, **kwargs):
+        calls["dequant"] += 1
+        return original_dequant(*args, **kwargs)
+
+    def counted_linear(*args, **kwargs):
+        calls["linear"] += 1
+        return original_linear(*args, **kwargs)
+
+    monkeypatch.setattr(quantized, "_dequantize_weight", counted_dequant)
+    monkeypatch.setattr(layers_module.F, "linear", counted_linear)
+
+    actual = quantized(x)
+
+    assert actual.shape == (2, 5, 7)
+    assert calls == {"dequant": 1, "linear": 1}
 
 
 def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch):

@@ -61,7 +61,7 @@ Status legend:
 | Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
 | Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Native artifact-readiness evidence is separate from release-grade metric tables. Full metric runs are required before metric-table or paper-reproduction claims. |
 | FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py`, `docs/release-gates.md` | It is treated as an additional target using paper-style native settings. |
-| Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py` | CUDA/Triton covers several quant/dequant stages and optional packed matmul. Default runtime remains BF16 PyTorch matmul after dequantization. |
+| Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Default `auto_fused` runtime requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. Full-model speedup claims still require benchmark artifacts. |
 | Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `docs/release-gates.md` | Missing metrics block only paper metric/reproduction claims. |
 
 ## Model Policy Evidence
@@ -118,16 +118,16 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 | Backend | Status | Evidence | Claim boundary |
 | --- | --- | --- | --- |
 | CPU | Pass as reference | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/functional.py` | Correctness baseline only; no optimized CPU kernel claim. |
-| CUDA/Triton | Partial optimized path | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Covers activation norm/RPBH/lookup/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and opt-in packed matmul. Default `dequant_bf16` still uses PyTorch BF16 matmul. |
-| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py` | Metal handles codebook lookup/rescale and packed weight dequant. Norm, RPBH rotation, and `F.linear` still use PyTorch. |
+| CUDA/Triton | Partial optimized path | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Covers activation norm/RPBH/lookup/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and packed matmul. Default `auto_fused` selects native packed matmul first, then Triton packed matmul when available. |
+| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_orbit_linear.py` | Default `auto_fused` requires the native Metal packed matmul package. Lower-level Metal helpers cover codebook lookup/rescale and packed weight dequant. |
 | ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
 | XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
 
 ## Pending Evidence For Acceleration Claims
 
-- `runtime_mode="triton_packed_matmul"` is CUDA-only and now fails before
-  activation quantization when the input tensor is non-CUDA. It remains an
-  opt-in experimental path until full-model CUDA benchmarks are complete.
+- `runtime_mode="auto_fused"` is the default optimized policy. It avoids silent
+  CUDA/MPS fallback to full dequantized BF16 weight materialization. Explicit
+  `runtime_mode="dequant_bf16"` remains the compatibility/debug reference path.
 
 ## Native Eval And Claim Policy
 
@@ -153,9 +153,9 @@ the paper's GenEval or VBench numbers.
 
 | Item | Status | Rationale |
 | --- | --- | --- |
-| Default runtime uses dequantized BF16 matmul. | Accepted limitation | The paper's latency/memory analysis also evaluates fake quantization with BF16 matmul. Do not claim realized native low-bit tensor-core speedup for this default path. |
+| Explicit `dequant_bf16` runtime uses dequantized BF16 matmul. | Accepted reference path | It is kept for compatibility and debugging. Do not claim it as low-bit fused inference. |
 | Zero weight rows use an epsilon guard for direction quantization. | Accepted implementation guard | The paper defines weight directions as `w' / ||w'||` for nonzero rows. The implementation divides by `max(||w'||, ε)` only when choosing codebook indices, stores the raw BF16 row norm, and dequantizes zero rows back to exactly zero. |
-| Optional `triton_packed_matmul` exists but is not the default. | Accepted experimental path | It materially advances the kernel objective, but needs more full-model CUDA benchmarking before broad acceleration claims. |
+| Full-model speedup is not yet a release claim. | Accepted claim boundary | `auto_fused`, `native_packed_matmul`, and `triton_packed_matmul` use packed matmul paths, but model-specific benchmark artifacts are still required before broad acceleration claims. |
 | Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
 | Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |

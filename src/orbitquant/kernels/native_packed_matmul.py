@@ -53,6 +53,10 @@ def _load_native_packed_matmul_kernel() -> Any:
     return _NATIVE_KERNEL
 
 
+def load_native_packed_matmul_kernel() -> Any:
+    return _load_native_packed_matmul_kernel()
+
+
 def matmul_packed_weight_with_native_kernel(
     x: torch.Tensor,
     packed_weight_indices: torch.Tensor,

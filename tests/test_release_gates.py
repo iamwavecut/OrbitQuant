@@ -52,6 +52,27 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "chronology" not in release_gates.lower()
 
 
+def test_release_gates_keep_current_priority_order():
+    release_gates = Path("docs/release-gates.md").read_text(encoding="utf-8")
+
+    expected_order = [
+        "Kernel audit and benchmarks",
+        "Final paper conformance audit",
+        "Release wording separates",
+        "Native artifact validation",
+        "Full-model module classification inventories",
+        "Compatibility is verified against",
+        "Checkpoint and model repositories",
+        "The GitHub repository is public",
+        "The PyPI package is built",
+        "ComfyUI compatibility is verified",
+        "Release-grade metrics are complete",
+    ]
+    positions = [release_gates.index(token) for token in expected_order]
+
+    assert positions == sorted(positions)
+
+
 def test_kernel_audit_documents_backend_claim_boundaries():
     kernel_audit = Path("docs/kernel-audit.md").read_text(encoding="utf-8")
 
@@ -60,10 +81,14 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "CUDA/Triton | Partial optimized" in kernel_audit
     assert "ROCm | Unsupported" in kernel_audit
     assert "XPU | Unsupported" in kernel_audit
-    assert "default low-bit tensor-core speedup" in kernel_audit
+    assert "`auto_fused` prefers native packed matmul then Triton packed matmul" in (
+        kernel_audit
+    )
     assert "full activation-plus-matmul fusion" in kernel_audit
     assert "`claim_status` values" in kernel_audit
-    assert "not a\nHugging Face Kernels Hub `kernel-builder` package" in kernel_audit
+    assert "not itself a Hugging Face Kernels Hub `kernel-builder` package" in kernel_audit
+    assert "`native_packed_matmul` runtime uses the separate" in kernel_audit
+    assert "targets CUDA and Metal" in kernel_audit
 
 
 def test_paper_methodology_audit_uses_claim_boundary_language():

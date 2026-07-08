@@ -16,6 +16,7 @@ except Exception:
 
 _SUPPORTED_BITS = {2, 3, 4, 6, 8}
 _SUPPORTED_RUNTIME_MODES = {
+    "auto_fused",
     "dequant_bf16",
     "debug_no_quant",
     "debug_no_activation_quant",
@@ -65,7 +66,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     modules_to_not_convert: list[str] = field(default_factory=list)
     modules_dtype_dict: dict[str, list[str]] = field(default_factory=dict)
     artifact_format_version: int = 1
-    runtime_mode: str = "dequant_bf16"
+    runtime_mode: str = "auto_fused"
     activation_kernel_backend: str = "auto"
     packed_matmul_block_m: int = 32
     packed_matmul_block_n: int = 64

@@ -163,6 +163,28 @@ This path is for Hugging Face-native model repositories. Published FLUX,
 Z-Image, and Wan artifacts remain Diffusers pipeline-component artifacts and
 use the component loader shown above.
 
+## Runtime Modes
+
+`OrbitQuantConfig` defaults to `runtime_mode="auto_fused"`. On CUDA this tries
+the native packed low-bit matmul kernel first, then the Triton packed matmul
+kernel. On MPS it requires the native Metal packed low-bit matmul kernel. On CPU
+it uses the reference path.
+
+CUDA and MPS `auto_fused` inference does not silently fall back to materializing
+the full dequantized weight matrix. If a packed kernel is unavailable,
+OrbitQuant raises an error that names the missing backend and points to the
+explicit reference mode:
+
+```python
+from orbitquant import OrbitQuantConfig
+
+config = OrbitQuantConfig(
+    weight_bits=4,
+    activation_bits=4,
+    runtime_mode="dequant_bf16",  # compatibility/debug reference path
+)
+```
+
 ## Quantize A Pipeline Component
 
 ```python
@@ -384,20 +406,24 @@ Each artifact is intentionally inspectable without executing code:
 
 ## Kernels
 
-The default correctness runtime still uses BF16 PyTorch matmul after low-bit
-dequantization, so disk compression and runtime VRAM/latency are reported
-separately. Kernel support is backend-specific:
+The default runtime is `auto_fused`, which uses packed low-bit matmul on CUDA
+or MPS when the matching kernel package is available. The explicit
+`runtime_mode="dequant_bf16"` compatibility path materializes dequantized
+weights before BF16 PyTorch matmul. Disk compression and runtime VRAM/latency
+are reported separately. Kernel support is backend-specific:
 
 - CPU is a correctness reference path only and does not claim optimized CPU
   kernels.
-- MPS/Metal is partially optimized: Metal handles codebook lookup/rescale and
-  packed weight dequantization; PyTorch still handles norm, RPBH rotation, and
-  `F.linear`.
+- MPS/Metal uses the native packed low-bit matmul package in `auto_fused` mode
+  when it is importable. Lower-level Metal helpers also cover codebook
+  lookup/rescale and packed weight dequantization.
 - CUDA/Triton is partially optimized: Triton covers runtime activation norm,
   RPBH/FWHT rotation, codebook lookup/rescale, packed weight dequantization,
   low-bit pack/unpack, offline weight RPBH/FWHT codebook indexing with direct
-  low-bit packing, AdaLN INT4 RTN quantize/pack/dequant, and opt-in
-  packed-weight matmul via `runtime_mode="triton_packed_matmul"`.
+  low-bit packing, AdaLN INT4 RTN quantize/pack/dequant, and packed-weight
+  matmul via `runtime_mode="triton_packed_matmul"`.
+- `runtime_mode="native_packed_matmul"` explicitly selects the native packed
+  matmul package for CUDA/MPS when available.
 - ROCm and XPU are not implemented backends in this repository.
 
 Run `orbitquant kernel-info` to inspect backend capabilities. In that output,
@@ -405,10 +431,8 @@ Run `orbitquant kernel-info` to inspect backend capabilities. In that output,
 is populated only when the backend is active in the current environment.
 `scripts/run_cuda_kernel_checks.sh` runs the CUDA kernel test and benchmark gate
 on a GPU host. Use `scripts/run_mps_kernel_checks.sh` for the equivalent short
-MPS/Metal gate on Apple Silicon. The default runtime remains `dequant_bf16`;
-packed-weight matmul is available as an explicit CUDA/Triton runtime mode while
-broader activation-plus-matmul fusion is outside the current release claim
-boundary.
+MPS/Metal gate on Apple Silicon. Full-model speedup claims still require
+backend-specific benchmark artifacts for the target model and native settings.
 See [docs/kernel-audit.md](docs/kernel-audit.md) for the release claim
 boundary.
 

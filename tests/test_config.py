@@ -41,6 +41,18 @@ def test_orbit_quant_config_default_epsilon_matches_paper_equation():
     assert config.activation_eps == 1e-10
 
 
+def test_orbit_quant_config_defaults_to_auto_fused_runtime_mode():
+    config = OrbitQuantConfig()
+
+    assert config.runtime_mode == "auto_fused"
+
+
+def test_orbit_quant_config_accepts_auto_fused_runtime_mode():
+    config = OrbitQuantConfig(runtime_mode="auto_fused")
+
+    assert config.runtime_mode == "auto_fused"
+
+
 def test_orbit_quant_config_accepts_triton_packed_matmul_runtime_mode():
     config = OrbitQuantConfig(runtime_mode="triton_packed_matmul")
 

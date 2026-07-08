@@ -4,6 +4,10 @@ Use this checklist as the final acceptance gate before announcing or cutting a
 release. Each item must have a dated artifact, verification output, published
 URL, or signed-off audit note.
 
+- [ ] Kernel audit and benchmarks match the advertised backend claim boundary:
+  CUDA/Triton partial optimized, Metal/MPS partial optimized, CPU
+  reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
+  The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
 - [ ] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
@@ -17,28 +21,16 @@ URL, or signed-off audit note.
   comparison assets, load validation, finite-output checks, manifests, and
   checksums. Published compact artifacts must include a `native_smoke` proof
   block in `benchmark/summary.json`; raw generation records remain local-only.
-- [ ] Release-grade metrics are complete before making paper reproduction or
-  metric-table claims. Image paper-target artifacts then include GenEval
-  overall and per-task scores; Wan artifacts then include all required VBench
-  dimensions. Missing release metrics block only those metric/reproduction
-  claims; compact artifacts without those metrics must present native comparison
-  status instead of paper-reproduction metric claims.
 - [ ] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
   cross-checked against the captured summary for quantized, AdaLN INT4, and
   skipped modules.
-- [ ] Kernel audit and benchmarks match the advertised backend claim boundary:
-  CUDA/Triton partial optimized, Metal/MPS partial optimized, CPU
-  reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
-  The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
 - [ ] Compatibility is verified against the latest published releases and dev
   branches of Diffusers and Transformers with
   `scripts/run_hf_compat_checks.sh --mode all`, using the current Torch base.
   This gate uses registration, pipeline quantization config, and mini
   integration tests; it does not download model weights or generate samples.
-- [ ] ComfyUI compatibility is verified after the relevant schema stabilizes,
-  including load, graph execution, and artifact metadata behavior.
 - [ ] Checkpoint and model repositories are published with artifact-focused
   model cards, complete file manifests, checksums where applicable, and native
   comparison assets for the advertised targets. Cards must describe the
@@ -53,3 +45,11 @@ URL, or signed-off audit note.
   `python -m twine check dist/*`, then uploaded with `python -m twine upload
   dist/*`. Credentials may require a user-provided PyPI token or browser
   action before upload can complete.
+- [ ] ComfyUI compatibility is verified after the relevant schema stabilizes,
+  including load, graph execution, and artifact metadata behavior.
+- [ ] Release-grade metrics are complete before making paper reproduction or
+  metric-table claims. Image paper-target artifacts then include GenEval
+  overall and per-task scores; Wan artifacts then include all required VBench
+  dimensions. Missing release metrics block only those metric/reproduction
+  claims; compact artifacts without those metrics must present native comparison
+  status instead of paper-reproduction metric claims.

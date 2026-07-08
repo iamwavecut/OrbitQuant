@@ -24,6 +24,7 @@ def test_cli_version_prints_version(capsys):
 
 def test_cli_packed_matmul_runtime_modes_skip_dequant_prewarm():
     assert cli_main._should_prewarm_quantized_weights(None) is True
+    assert cli_main._should_prewarm_quantized_weights(OrbitQuantConfig()) is False
     assert (
         cli_main._should_prewarm_quantized_weights(
             OrbitQuantConfig(runtime_mode="dequant_bf16")

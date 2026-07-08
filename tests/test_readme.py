@@ -50,7 +50,10 @@ def test_readme_documents_component_artifact_usage():
     assert "not accepted as published quality evidence" in readme
     assert "Local validation outputs may include raw `benchmark/*.jsonl`" in readme
     assert "compact published artifacts omit those raw files" in readme
-    assert "outside the current release claim boundary" in " ".join(readme.split())
+    assert 'defaults to `runtime_mode="auto_fused"`' in readme
+    assert "does not silently fall back to materializing" in readme
+    assert 'runtime_mode="dequant_bf16"' in readme
+    assert "Full-model speedup claims still require" in readme
     assert "## Release Metrics" in readme
     assert "Full GenEval and VBench runs are release evidence" in readme
     assert "Compact artifact readiness is tracked\nseparately" in readme
@@ -61,7 +64,7 @@ def test_readme_documents_component_artifact_usage():
     assert "orbitquant external-eval-script" in readme
     assert "[docs/release-gates.md](docs/release-gates.md)" in readme
     assert "CPU is a correctness reference path only" in readme
-    assert "MPS/Metal is partially optimized" in readme
+    assert "MPS/Metal uses the native packed low-bit matmul package" in readme
     assert "CUDA/Triton is partially optimized" in readme
     assert "ROCm and XPU are not implemented backends" in readme
     assert "scripts/run_mps_kernel_checks.sh" in readme
