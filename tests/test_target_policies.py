@@ -271,6 +271,7 @@ def test_flux_policy_matches_current_diffusers_tiny_module_names():
     decisions = classify_linear_modules(model, OrbitQuantConfig(target_policy="flux"))
 
     assert decisions["transformer_blocks.0.norm1.linear"].action == "adaln_int4_rtn"
+    assert decisions["single_transformer_blocks.0.norm.linear"].action == "adaln_int4_rtn"
     assert decisions["single_transformer_blocks.0.proj_out"].action == "orbitquant"
     assert decisions["norm_out.linear"].action == "bf16_skip"
     assert decisions["proj_out"].action == "bf16_skip"

@@ -154,6 +154,17 @@ def _contains_component_substring(value: str, tokens: tuple[str, ...]) -> bool:
     return any(token in component for component in _path_components(value) for token in tokens)
 
 
+def _contains_component_or_path_substring(value: str, tokens: tuple[str, ...]) -> bool:
+    components = _path_components(value)
+    for token in tokens:
+        if "." in token:
+            if token in value:
+                return True
+        elif any(token in component for component in components):
+            return True
+    return False
+
+
 def resolve_target_policy(model: torch.nn.Module, config: OrbitQuantConfig) -> str:
     if config.target_policy != "auto":
         return config.target_policy
@@ -181,7 +192,7 @@ def _is_top_level_modulation(lowered: str, rules: PolicyRules) -> bool:
 def _is_scoped_modulation(lowered: str, rules: PolicyRules) -> bool:
     return _contains_path_component(
         lowered, rules.modulation_scopes
-    ) and _contains_component_substring(
+    ) and _contains_component_or_path_substring(
         lowered,
         rules.modulation_tokens,
     )
