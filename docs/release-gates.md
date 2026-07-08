@@ -33,7 +33,11 @@ URL, or signed-off audit note.
   variants and stopped only at the Hugging Face permission error. The request
   was submitted as
   `https://huggingface.co/spaces/kernels-community/README/discussions/15`;
-  approval remains pending. The request text is
+  approval remains pending. As of 2026-07-08T17:15Z, the linked
+  `WaveCut/orbitquant-packed-matmul` source snapshot repo is still private; if
+  reviewers cannot access it, provide a tracked source archive in the
+  discussion or get explicit approval to make only that source-only kernel repo
+  public. The request text is
   [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
