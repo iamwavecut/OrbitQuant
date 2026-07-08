@@ -26,11 +26,14 @@ URL, or signed-off audit note.
   remain unpublished, but each published artifact manifest must be
   cross-checked against the captured summary for quantized, AdaLN INT4, and
   skipped modules.
-- [ ] Compatibility is verified against the latest published releases and dev
+- [x] Compatibility is verified against the latest published releases and dev
   branches of Diffusers and Transformers with
   `scripts/run_hf_compat_checks.sh --mode all`, using the current Torch base.
   This gate uses registration, pipeline quantization config, and mini
   integration tests; it does not download model weights or generate samples.
+  Evidence: passed on 2026-07-08T15:47Z with Torch 2.12.1, current/release
+  Diffusers 0.39.0 and Transformers 5.13.0, and dev Diffusers 0.40.0.dev0 plus
+  Transformers 5.14.0.dev0.
 - [ ] Checkpoint and model repositories are published with artifact-focused
   model cards, complete file manifests, checksums where applicable, and native
   comparison assets for the advertised targets. Cards must describe the

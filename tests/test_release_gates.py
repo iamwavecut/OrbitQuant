@@ -33,6 +33,10 @@ def test_release_gates_document_final_acceptance_checklist():
         "latest published releases and dev\n  branches of Diffusers and Transformers"
         in release_gates
     )
+    assert "- [x] Compatibility is verified" in release_gates
+    assert "passed on 2026-07-08T15:47Z" in release_gates
+    assert "Diffusers 0.40.0.dev0" in release_gates
+    assert "Transformers 5.14.0.dev0" in release_gates
     assert "ComfyUI compatibility is verified after the relevant schema stabilizes" in release_gates
     assert "artifact-focused\n  model cards" in release_gates
     assert "native\n  comparison assets" in release_gates
