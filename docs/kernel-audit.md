@@ -32,6 +32,19 @@ for the current artifact format and runtime modes.
   the target model class and native settings. Synthetic kernel benchmarks are
   useful diagnostics, not release evidence for FLUX, Z-Image, or Wan throughput.
 
+## Current Verification Evidence
+
+- MPS/Metal partial gate passed locally on 2026-07-08T15:58Z with
+  `PYTHON_BIN="$(uv python find)" scripts/run_mps_kernel_checks.sh`. The run
+  verified Torch 2.12.1 MPS availability, `torch.mps.compile_shader`, MPS
+  kernel tests, `orbitquant kernel-info`, native `WaveCut/orbitquant-packed-matmul`
+  loading through Hugging Face `kernels` via `LOCAL_KERNELS`, `auto_fused`
+  benchmark execution, and explicit `runtime_mode="native_packed_matmul"`
+  benchmark execution.
+- CUDA/Triton must still be verified on a CUDA host with
+  `scripts/run_cuda_kernel_checks.sh` before the overall kernel audit release
+  gate can be closed.
+
 ## Packaging Boundary
 
 The current CUDA OrbitQuant pipeline path is implemented with Python Triton

@@ -31,6 +31,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "CPU\n  reference-only" in release_gates
     assert "ROCm/XPU explicitly unsupported" in release_gates
     assert "[kernel-audit.md](kernel-audit.md)" in release_gates
+    assert "MPS/Metal passed\n  `scripts/run_mps_kernel_checks.sh`" in release_gates
+    assert "explicit `runtime_mode=\"native_packed_matmul\"`\n  benchmark execution" in (
+        release_gates
+    )
+    assert "CUDA/Triton remains pending on a CUDA host" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
         in release_gates
@@ -104,6 +109,13 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "kernel-builder CI" in kernel_audit
     assert "`native_packed_matmul` runtime uses the separate" in kernel_audit
     assert "targets CUDA and Metal" in kernel_audit
+    assert "Current Verification Evidence" in kernel_audit
+    assert "scripts/run_mps_kernel_checks.sh" in kernel_audit
+    assert "native `WaveCut/orbitquant-packed-matmul`\n  loading" in kernel_audit
+    assert "explicit `runtime_mode=\"native_packed_matmul\"`\n  benchmark execution" in (
+        kernel_audit
+    )
+    assert "CUDA/Triton must still be verified on a CUDA host" in kernel_audit
 
 
 def test_paper_methodology_audit_uses_claim_boundary_language():

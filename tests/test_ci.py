@@ -51,6 +51,9 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "mps-kernel-contract-ok" in mps_script
     assert "codebook_lookup_rescale" in mps_script
     assert "upstream_native_mps_op" in mps_script
+    assert "kernels>=0.16" in mps_script
+    assert "native-packed-matmul-kernel-ok" in mps_script
+    assert "--runtime-mode native_packed_matmul" in mps_script
 
 
 def test_hf_compatibility_script_is_executable_and_release_dev_aware():

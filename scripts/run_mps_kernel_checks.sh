@@ -28,10 +28,10 @@ fi
 . "$VENV_DIR/bin/activate"
 
 if command -v uv >/dev/null 2>&1; then
-  uv pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest ruff
+  uv pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest ruff "kernels>=0.16"
   uv pip install --no-deps -e .
 else
-  python -m pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest ruff
+  python -m pip install hatchling numpy safetensors huggingface_hub packaging tqdm pytest ruff "kernels>=0.16"
   python -m pip install --no-deps -e .
 fi
 
@@ -49,6 +49,17 @@ print("mps", torch.backends.mps.is_available())
 print("compile_shader", hasattr(torch.mps, "compile_shader"))
 PY
 stage env-done
+
+stage native-packed-matmul-load-start
+python - <<'PY'
+from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
+kernel = load_native_packed_matmul_kernel()
+if not hasattr(kernel, "matmul_packed_weight"):
+    raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
+print("native-packed-matmul-kernel-ok", kernel)
+PY
+stage native-packed-matmul-load-done
 
 stage kernel-tests-start
 pytest tests/test_kernels.py tests/test_orbit_linear.py -q -k 'mps or backend_capabilities'
@@ -93,3 +104,19 @@ orbitquant kernel-bench \
   --warmup "$WARMUP" \
   --iterations "$ITERATIONS"
 stage kernel-bench-done
+
+stage native-packed-matmul-bench-start
+orbitquant kernel-bench \
+  --tokens "$TOKENS" \
+  --in-features "$IN_FEATURES" \
+  --out-features "$OUT_FEATURES" \
+  --weight-bits 4 \
+  --activation-bits 4 \
+  --block-size "$BLOCK_SIZE" \
+  --activation-kernel-backend mps \
+  --runtime-mode native_packed_matmul \
+  --device mps \
+  --dtype float32 \
+  --warmup "$WARMUP" \
+  --iterations "$ITERATIONS"
+stage native-packed-matmul-bench-done

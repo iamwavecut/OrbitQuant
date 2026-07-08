@@ -8,6 +8,10 @@ URL, or signed-off audit note.
   CUDA/Triton partial optimized, Metal/MPS partial optimized, CPU
   reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
   The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
+  Current partial evidence: MPS/Metal passed
+  `scripts/run_mps_kernel_checks.sh` on 2026-07-08T15:58Z, including native
+  packed matmul load and explicit `runtime_mode="native_packed_matmul"`
+  benchmark execution. CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
