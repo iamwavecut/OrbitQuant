@@ -44,3 +44,7 @@ nix --option sandbox relaxed run .#ci-test -L
 The build produces ABI3 Hugging Face Kernels artifacts under `build/` for the
 supported backend variants on the current platform. On macOS, `sandbox relaxed`
 or enabled Nix sandboxing is required by `kernel-builder`.
+
+For direct local imports, add the matching `build/torch*-<backend>-<platform>`
+directory to `PYTHONPATH`; the `torch*` variant must match the runtime PyTorch
+version.
