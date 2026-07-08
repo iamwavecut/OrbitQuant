@@ -50,6 +50,27 @@ def _mismatch(name: str, expected: Any, actual: Any) -> str | None:
     return None if expected == actual else f"{name}: expected {expected!r}, got {actual!r}"
 
 
+def _validate_config_manifest(config: OrbitQuantConfig, manifest: OrbitQuantManifest) -> None:
+    expected = {
+        "weight_bits": config.weight_bits,
+        "activation_bits": config.activation_bits,
+        "rotation_seed": config.rotation_seed,
+        "block_size": config.block_size,
+        "target_policy": config.target_policy,
+        "runtime_mode": config.runtime_mode,
+        "activation_kernel_backend": config.activation_kernel_backend,
+        "activation_eps": config.activation_eps,
+        "adaln_group_size": config.adaln_group_size,
+    }
+    mismatches = [
+        mismatch
+        for key, value in expected.items()
+        if (mismatch := _mismatch(key, value, getattr(manifest, key))) is not None
+    ]
+    if mismatches:
+        raise RuntimeError("quantization_config mismatch: " + "; ".join(mismatches))
+
+
 def _validate_model_index(
     model_index: dict[str, Any],
     *,
@@ -259,6 +280,7 @@ def validate_orbitquant_artifact(
         )
     else:
         sha256sums_entries = {}
+    _validate_config_manifest(config, manifest)
     _validate_model_index(model_index, config=config, manifest=manifest)
     expected_shapes = manifest.module_shapes
     codebook_validation = "skipped"

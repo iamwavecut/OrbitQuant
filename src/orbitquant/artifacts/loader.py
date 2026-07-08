@@ -14,7 +14,10 @@ from orbitquant.artifacts.checksums import (
     validate_sha256sums,
 )
 from orbitquant.artifacts.manifest import OrbitQuantManifest
-from orbitquant.artifacts.validator import validate_required_artifact_files
+from orbitquant.artifacts.validator import (
+    _validate_config_manifest,
+    validate_required_artifact_files,
+)
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import _parent_and_child, _set_child
@@ -63,6 +66,7 @@ def load_orbitquant_artifact(
     manifest = OrbitQuantManifest.from_dict(
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
+    _validate_config_manifest(config, manifest)
     if validate_checksums:
         validate_artifact_checksums(artifact_path, manifest.checksums)
         validate_sha256sums(

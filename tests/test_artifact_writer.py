@@ -373,6 +373,39 @@ def test_validate_orbitquant_artifact_can_skip_heavy_checksum_and_tensor_passes(
     assert result["tensor_validation"] == "skipped"
 
 
+def test_validate_orbitquant_artifact_rejects_config_manifest_drift_without_checksums(
+    tmp_path,
+):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    config_path = tmp_path / "quantization_config.json"
+    payload = json.loads(config_path.read_text())
+    payload["runtime_mode"] = "debug_no_activation_quant"
+    config_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    try:
+        validate_orbitquant_artifact(
+            tmp_path,
+            validate_checksums_enabled=False,
+            validate_tensors=False,
+        )
+    except RuntimeError as exc:
+        assert "quantization_config mismatch" in str(exc)
+        assert "runtime_mode" in str(exc)
+    else:
+        raise AssertionError("validate_orbitquant_artifact accepted drifted metadata")
+
+
 def test_repair_artifact_metadata_updates_provenance_and_checksums(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)
@@ -1124,6 +1157,39 @@ def test_load_orbitquant_artifact_can_skip_checksum_validation_for_trusted_local
 
     assert manifest.source_model_id == "example/model"
     assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+
+
+def test_load_orbitquant_artifact_rejects_config_manifest_drift_without_checksums(
+    tmp_path,
+):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    config_path = tmp_path / "quantization_config.json"
+    payload = json.loads(config_path.read_text())
+    payload["activation_eps"] = 1e-4
+    config_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    try:
+        load_orbitquant_artifact(
+            TinyArtifactModel(),
+            tmp_path,
+            validate_checksums=False,
+        )
+    except RuntimeError as exc:
+        assert "quantization_config mismatch" in str(exc)
+        assert "activation_eps" in str(exc)
+    else:
+        raise AssertionError("load_orbitquant_artifact accepted drifted metadata")
 
 
 def test_load_orbitquant_artifact_rejects_missing_required_layout_file(tmp_path):

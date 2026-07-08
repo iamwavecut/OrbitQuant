@@ -2421,7 +2421,7 @@ def test_cli_validate_artifact_rejects_manifest_policy_config_mismatch(tmp_path)
         + "\n"
     )
 
-    with pytest.raises(RuntimeError, match="manifest_target_policy"):
+    with pytest.raises(RuntimeError, match="quantization_config mismatch.*target_policy"):
         main(
             [
                 "validate-artifact",
