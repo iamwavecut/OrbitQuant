@@ -1377,6 +1377,77 @@ def test_repair_hf_native_smoke_proof_refreshes_stale_readme_when_proof_exists(
     assert "| Paired prompt/seed count | `1` |" in repaired_readme
 
 
+def test_repair_hf_native_smoke_proof_normalizes_legacy_video_export_fps(
+    tmp_path,
+    monkeypatch,
+):
+    suite = NativeSuite(
+        name="wan-native",
+        model_id="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        pipeline="WanPipeline",
+        width=832,
+        height=480,
+        frames=81,
+        export_fps=16,
+        steps=50,
+        guidance=5.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/Wan2.1-T2V-1.3B-Diffusers-OrbitQuant-W4A4"
+    _write_artifact(tmp_path)
+    matrix = tmp_path / "assets" / "video_generation_comparison_matrix.webp"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_bytes(b"matrix")
+    summary_path = tmp_path / "benchmark" / "summary.json"
+    summary = json.loads(_native_smoke_summary(suite))
+    summary["native_smoke"]["comparison_asset_path"] = (
+        "assets/video_generation_comparison_matrix.webp"
+    )
+    summary["native_smoke"]["proof_source"] = "local_paired_native_smoke_backup"
+    for split in ("original", "orbitquant"):
+        del summary["native_smoke"]["splits"][split]["native_settings"][0]["export_fps"]
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    refresh_artifact_checksums(tmp_path)
+
+    def fake_download(repo, filename, **kwargs):
+        return str(_remote_file_map(repo_id, tmp_path)[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+    fake_api = FakeCleanupHfApi(tmp_path)
+
+    result = repair_hf_native_smoke_proof(
+        repo_id=repo_id,
+        suite=suite,
+        revision="main",
+        api=fake_api,
+    )
+
+    assert result["existing_native_smoke_ready"] is False
+    assert result["normalized_native_smoke_settings"] is True
+    assert set(result["changed_files"]) >= {
+        "benchmark/summary.json",
+        "orbitquant_manifest.json",
+        "SHA256SUMS",
+    }
+    assert "model.safetensors" not in result["changed_files"]
+    operation_by_path = {
+        operation.path_in_repo: operation.path_or_fileobj
+        for operation in fake_api.create_commit_calls[0]["operations"]
+    }
+    repaired_summary = json.loads(operation_by_path["benchmark/summary.json"])
+    expected_settings = hub_module._native_smoke_expected_settings(suite)
+    for split in ("original", "orbitquant"):
+        assert repaired_summary["native_smoke"]["splits"][split]["native_settings"] == [
+            expected_settings
+        ]
+    status = hub_module._native_smoke_proof_status(
+        repaired_summary,
+        suite=suite,
+        file_names={"assets/video_generation_comparison_matrix.webp"},
+    )
+    assert status["ready"] is True
+
+
 def test_repair_hf_native_smoke_proof_skips_when_video_frames_are_insufficient(
     tmp_path,
     monkeypatch,

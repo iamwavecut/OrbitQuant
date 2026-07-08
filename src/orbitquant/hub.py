@@ -413,6 +413,54 @@ def _native_smoke_expected_settings(suite: NativeSuite) -> dict[str, Any]:
     return settings
 
 
+def _native_smoke_settings_match_with_missing_export_fps(
+    actual: Any, expected: dict[str, Any]
+) -> bool:
+    if not isinstance(actual, dict):
+        return False
+    extra_keys = set(actual) - set(expected)
+    if extra_keys:
+        return False
+    for key, expected_value in expected.items():
+        if key == "export_fps" and key not in actual:
+            continue
+        if actual.get(key) != expected_value:
+            return False
+    return True
+
+
+def _normalize_native_smoke_proof_settings(
+    proof: Any, *, suite: NativeSuite
+) -> dict[str, Any] | None:
+    if not isinstance(proof, dict):
+        return None
+    expected_settings = _native_smoke_expected_settings(suite)
+    splits = proof.get("splits")
+    if not isinstance(splits, dict):
+        return None
+
+    next_proof = json.loads(json.dumps(proof))
+    changed = False
+    for split in ("original", "orbitquant"):
+        split_payload = next_proof.get("splits", {}).get(split)
+        if not isinstance(split_payload, dict):
+            return None
+        native_settings = split_payload.get("native_settings")
+        if native_settings == [expected_settings]:
+            continue
+        if not (
+            isinstance(native_settings, list)
+            and len(native_settings) == 1
+            and _native_smoke_settings_match_with_missing_export_fps(
+                native_settings[0], expected_settings
+            )
+        ):
+            return None
+        split_payload["native_settings"] = [expected_settings]
+        changed = True
+    return next_proof if changed else None
+
+
 def _native_smoke_proof_status(
     summary: dict[str, Any],
     *,
@@ -1817,7 +1865,19 @@ def repair_hf_native_smoke_proof(
 
     native_smoke: dict[str, Any] | None = None
     skipped_reason: str | None = None
-    if native_smoke_backup_root is not None:
+    native_settings_missing = {
+        "native_smoke.original.native_settings",
+        "native_smoke.orbitquant.native_settings",
+    }
+    if set(current_status["missing"]).issubset(native_settings_missing):
+        native_smoke = _normalize_native_smoke_proof_settings(
+            benchmark_summary.get("native_smoke"),
+            suite=suite,
+        )
+        if native_smoke is not None:
+            result["normalized_native_smoke_settings"] = True
+
+    if native_smoke is None and native_smoke_backup_root is not None:
         bit_setting = f"W{manifest.weight_bits}A{manifest.activation_bits}"
         native_smoke, skipped_reason = _native_smoke_proof_from_backup_assets(
             native_smoke_backup_root,
@@ -1827,6 +1887,13 @@ def repair_hf_native_smoke_proof(
             file_names=file_names,
         )
         result["backup_skipped_reason"] = skipped_reason
+        normalized_native_smoke = _normalize_native_smoke_proof_settings(
+            native_smoke,
+            suite=suite,
+        )
+        if normalized_native_smoke is not None:
+            native_smoke = normalized_native_smoke
+            result["normalized_native_smoke_settings"] = True
 
     if (
         native_smoke is None
