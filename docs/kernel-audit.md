@@ -41,20 +41,35 @@ for the current artifact format and runtime modes.
   loading through Hugging Face `kernels` via `LOCAL_KERNELS`, `auto_fused`
   benchmark execution, and explicit `runtime_mode="native_packed_matmul"`
   benchmark execution.
-- The native packed matmul package passed local kernel-builder CI on
-  2026-07-08T16:31Z with
-  `nix --option sandbox relaxed run .#ci-test -L`. The run verified
-  kernel-builder layout hooks, macOS 15/Python ABI 3.9 compatibility,
-  get-kernel loading, and 17 package tests for the Metal build.
-- A private Hugging Face repo exists at
-  `WaveCut/orbitquant-packed-matmul`, but Kernel Hub publication is not yet
-  approved for the account. `nix --option sandbox relaxed --option max-jobs 1
-  --option cores 1 run .#build-and-upload -L` built the three Metal variants
-  for commit `a4d927c` and then failed at upload with the Kernel Hub approval
-  error. The approval request draft is
+- The native packed matmul package passed local kernel-builder CI again on
+  2026-07-08T16:59Z with
+  `nix --option sandbox relaxed run .#ci-test -L` after adding kernel
+  `upstream`/`source` metadata. The run verified kernel-builder layout hooks,
+  macOS 15/Python ABI 3.9 compatibility, get-kernel loading, and 17 package
+  tests for the Metal build.
+- A private Hugging Face source snapshot exists at
+  `WaveCut/orbitquant-packed-matmul` commit
+  `062b934389dce9242e0a9185ed469cc3170e3e73`, but Kernel Hub publication is
+  not yet approved for the account. On 2026-07-08T17:02Z,
+  `nix --option sandbox relaxed run .#build-and-copy -L` built and copied the
+  three Metal variants, and
+  `nix --option sandbox relaxed run .#build-and-upload -L` found those variants
+  before failing only at the Hugging Face permission check. The approval
+  request is open as
+  `https://huggingface.co/spaces/kernels-community/README/discussions/15`.
+  The submitted request text is
   [kernel-hub-approval-request.md](kernel-hub-approval-request.md). Do not treat
   the native package as remotely loadable through `get_kernel` until that
   approval is granted and upload verification passes.
+- The MPS native package path has smoke benchmark evidence from the matching
+  `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
+  `0.00764581459807232` seconds/iteration over 20 iterations, and W4
+  512x3072x3072 float16 at `0.10189520000712946` seconds/iteration over
+  10 iterations.
+- The OrbitQuant native loader was smoke-tested through `LOCAL_KERNELS` on
+  2026-07-08T17:10Z. With Torch 2.12.1 it selected
+  `build/torch212-metal-aarch64-darwin`, ran `matmul_packed_weight` on MPS, and
+  produced a finite float16 output tensor.
 - CUDA/Triton must still be verified on a CUDA host with
   `scripts/run_cuda_kernel_checks.sh` before the overall kernel audit release
   gate can be closed.

@@ -177,8 +177,16 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "explicit `runtime_mode=\"native_packed_matmul\"`\n  benchmark execution" in (
         kernel_audit
     )
+    assert "2026-07-08T16:59Z" in kernel_audit
+    assert "062b934389dce9242e0a9185ed469cc3170e3e73" in kernel_audit
+    assert "kernels-community/README/discussions/15" in kernel_audit
+    assert "W4 512x1024x1024 float16" in kernel_audit
+    assert "0.10189520000712946" in kernel_audit
+    assert "build/torch212-metal-aarch64-darwin" in kernel_audit
+    assert "finite float16 output tensor" in kernel_audit
     assert "[kernel-hub-approval-request.md]" in kernel_audit
     assert "CUDA/Triton must still be verified on a CUDA host" in kernel_audit
+    assert "a4d927c" not in kernel_audit
 
 
 def test_kernel_hub_approval_request_contains_required_review_fields():
