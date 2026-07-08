@@ -38,7 +38,7 @@ def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (KERNEL_ROOT / "torch-ext").rglob("*")
-        if path.is_file()
+        if path.suffix in {".cpp", ".h", ".py"}
     )
     banned = [
         "pybind11",

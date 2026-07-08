@@ -11,6 +11,14 @@ _KERNEL_VERSION = 1
 _NATIVE_KERNEL: Any | None = None
 
 
+def _load_importable_packed_matmul_kernel() -> Any | None:
+    try:
+        import orbitquant_packed_matmul
+    except Exception:
+        return None
+    return orbitquant_packed_matmul
+
+
 def _load_native_packed_matmul_kernel() -> Any:
     global _NATIVE_KERNEL
     if _NATIVE_KERNEL is not None:
@@ -19,19 +27,28 @@ def _load_native_packed_matmul_kernel() -> Any:
     try:
         from kernels import get_kernel
     except Exception as exc:  # pragma: no cover - optional dependency
+        _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
+        if _NATIVE_KERNEL is not None:
+            return _NATIVE_KERNEL
         raise RuntimeError(
-            "native_packed_matmul runtime requires the Hugging Face kernels package. "
-            "Install it with `pip install kernels`, or use runtime_mode='dequant_bf16'."
+            "native_packed_matmul runtime requires either an importable "
+            "orbitquant_packed_matmul kernel package or the Hugging Face kernels package. "
+            "Install a compatible OrbitQuant native kernel build, install `kernels`, "
+            "or use runtime_mode='dequant_bf16'."
         ) from exc
 
     try:
         _NATIVE_KERNEL = get_kernel(_KERNEL_REPO_ID, version=_KERNEL_VERSION)
     except Exception as exc:  # pragma: no cover - environment and Hub dependent
+        _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
+        if _NATIVE_KERNEL is not None:
+            return _NATIVE_KERNEL
         raise RuntimeError(
             "native_packed_matmul runtime could not load "
             f"{_KERNEL_REPO_ID} version {_KERNEL_VERSION}. For local development, set "
             "LOCAL_KERNELS=WaveCut/orbitquant-packed-matmul=/absolute/path/to/"
-            "native-kernels/orbitquant-packed-matmul before importing OrbitQuant."
+            "native-kernels/orbitquant-packed-matmul before importing OrbitQuant, "
+            "or make a compatible orbitquant_packed_matmul package importable."
         ) from exc
     return _NATIVE_KERNEL
 

@@ -548,7 +548,7 @@ def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch)
     if not torch.backends.mps.is_available():
         pytest.skip("MPS backend is not available")
     try:
-        from orbitquant_packed_matmul import matmul_packed_weight
+        import orbitquant_packed_matmul  # noqa: F401
     except Exception:
         pytest.skip("native packed matmul kernel package is not importable")
 
@@ -573,11 +573,7 @@ def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch)
     ).to("mps")
     packed = copy.deepcopy(reference).to("mps")
     packed.runtime_mode = "native_packed_matmul"
-    monkeypatch.setattr(
-        native_module,
-        "_load_native_packed_matmul_kernel",
-        lambda: SimpleNamespace(matmul_packed_weight=matmul_packed_weight),
-    )
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
 
     expected = reference(x)
     actual = packed(x)
