@@ -144,6 +144,12 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`OrbitQuantConfig()` defaulted\n  to `runtime_mode=\"auto_fused\"`" in (
         release_gates
     )
+    assert "Re-checked on 2026-07-08T18:07Z after the native kernel source refresh" in (
+        release_gates
+    )
+    assert "`tests/test_distribution.py` verifies" in release_gates
+    assert "source distribution keeps the tracked native\n  kernel source" in release_gates
+    assert "`/tmp/orbitquant-build-verify-20260708T180719Z`" in release_gates
     assert "Upload remains pending" in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates

@@ -136,6 +136,13 @@ URL, or signed-off audit note.
   using a temporary build output directory: `twine check` passed for both
   artifacts, fresh wheel install/import succeeded, `OrbitQuantConfig()` defaulted
   to `runtime_mode="auto_fused"`, and `orbitquant --version` returned `0.1.0`.
+  Re-checked on 2026-07-08T18:07Z after the native kernel source refresh:
+  `tests/test_distribution.py` verifies that the wheel target contains only the
+  Python runtime package while the source distribution keeps the tracked native
+  kernel source and excludes generated `build/`, `.venv/`, `__pycache__/`,
+  `.pyc`, `.so`, local artifact, and report paths. A fresh build in
+  `/tmp/orbitquant-build-verify-20260708T180719Z` produced both expected
+  artifacts and `twine check` passed.
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, and artifact metadata behavior.
