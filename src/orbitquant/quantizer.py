@@ -119,7 +119,7 @@ class OrbitQuantizer(*_hf_base_classes()):
 
     When Diffusers/Transformers are installed, ``register_hf_quantizers`` also
     registers this class in their auto mappings. The methods stay intentionally
-    conservative until the full pre-quantized safetensors loader lands.
+    conservative around HF version-specific loading hooks.
     """
 
     requires_parameters_quantization = True
@@ -350,8 +350,13 @@ class OrbitQuantizer(*_hf_base_classes()):
                 self.quantization_config,
                 quantization_device=self._quantization_device_from_kwargs(kwargs),
             )
-        if self._transformers_streaming_quantization and hasattr(model, "_weight_conversions"):
-            delattr(model, "_weight_conversions")
+        if self._transformers_streaming_quantization:
+            if hasattr(model, "_weight_conversions"):
+                delattr(model, "_weight_conversions")
+            self._transformers_postload_quantization = False
+            self._transformers_streaming_quantization = False
+            self._transformers_orbit_module_names = []
+            self._transformers_adaln_module_names = []
         return model
 
     def _dequantize(self, model: Any) -> Any:

@@ -265,6 +265,40 @@ def test_transformers_streaming_conversion_moves_weight_to_quantization_device(m
     }
 
 
+def test_transformers_streaming_quantizer_declares_and_clears_weight_conversions():
+    pytest.importorskip("transformers.core_model_loading")
+    from orbitquant.transformers_ops import OrbitQuantWeightQuantize
+
+    model = TinyQuantizerTransformer()
+    model.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
+    quantizer = OrbitQuantizer(
+        OrbitQuantConfig(block_size=8),
+        pre_quantized=False,
+        quantization_device="cpu",
+    )
+
+    assert quantizer.get_weight_conversions() == []
+
+    quantizer._process_model_before_weight_loading(model, checkpoint_files=["dummy.safetensors"])
+    conversions = quantizer.get_weight_conversions()
+    targets = {tuple(conversion.target_patterns): conversion for conversion in conversions}
+
+    assert set(targets) == {
+        ("transformer_blocks.0.attn.to_q.packed_weight_indices",),
+        ("transformer_blocks.0.modulation.packed_weight",),
+    }
+    for conversion in conversions:
+        assert conversion.source_patterns[0].endswith(".weight")
+        assert len(conversion.operations) == 1
+        assert isinstance(conversion.operations[0], OrbitQuantWeightQuantize)
+
+    model._weight_conversions = conversions
+    quantizer._process_model_after_weight_loading(model)
+
+    assert not hasattr(model, "_weight_conversions")
+    assert quantizer.get_weight_conversions() == []
+
+
 def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():
     torch.manual_seed(0)
     config = OrbitQuantConfig(block_size=8)
