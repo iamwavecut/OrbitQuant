@@ -56,7 +56,7 @@ native_kernel_build_variant_dir() {
   local output_path
   local variants_json
 
-  variants_json="$(nix --option sandbox relaxed eval --json .#variants)"
+  variants_json="$(nix --extra-experimental-features "nix-command flakes" --option sandbox relaxed eval --json .#variants)"
   python - "$variant" "$variants_json" <<'PY'
 import json
 import sys
@@ -71,7 +71,7 @@ if expected not in variants:
 PY
 
   output_path="$(
-    nix --option sandbox relaxed build --no-link --json ".#redistributable.$variant" |
+    nix --extra-experimental-features "nix-command flakes" --option sandbox relaxed build --no-link --json ".#redistributable.$variant" |
       python -c 'import json, sys; print(json.load(sys.stdin)[0]["outputs"]["out"])'
   )"
   printf '%s/%s\n' "$output_path" "$variant"
