@@ -57,33 +57,6 @@ print("device", torch.cuda.get_device_name(0))
 PY
 stage env-done
 
-if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
-  stage native-kernel-package-ci-start
-  if ! command -v nix >/dev/null 2>&1; then
-    printf '%s\n' \
-      "native kernel package CI requires nix for kernel-builder." \
-      "Install nix, use a GPU image with nix, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when a compatible native packed-matmul kernel is already loadable through Hugging Face kernels or an importable package." \
-      >&2
-    exit 1
-  fi
-  (
-    cd native-kernels/orbitquant-packed-matmul
-    nix --option sandbox relaxed run .#ci-test -L
-  )
-  export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
-  stage native-packed-matmul-load-start
-  python - <<'PY'
-from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
-
-kernel = load_native_packed_matmul_kernel()
-if not hasattr(kernel, "matmul_packed_weight"):
-    raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
-print("native-packed-matmul-kernel-ok", kernel)
-PY
-  stage native-packed-matmul-load-done
-  stage native-kernel-package-ci-done
-fi
-
 stage kernel-tests-start
 pytest tests/test_kernels.py tests/test_adaln_rtn.py tests/test_orbit_linear.py -q
 stage kernel-tests-done
@@ -135,6 +108,47 @@ orbitquant kernel-bench \
   --iterations "$ITERATIONS"
 stage kernel-bench-done
 
+stage quantize-bench-start
+orbitquant quantize-bench \
+  --layers 2 \
+  --in-features "$IN_FEATURES" \
+  --hidden-features "$HIDDEN_FEATURES" \
+  --weight-bits 4 \
+  --activation-bits 4 \
+  --block-size "$BLOCK_SIZE" \
+  --source-device cpu \
+  --quantization-device cuda \
+  --staging-mode component \
+  --dtype bfloat16
+stage quantize-bench-done
+
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
+  stage native-kernel-package-ci-start
+  if ! command -v nix >/dev/null 2>&1; then
+    printf '%s\n' \
+      "native kernel package CI requires nix for kernel-builder." \
+      "Install nix, use a GPU image with nix, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when a compatible native packed-matmul kernel is already loadable through Hugging Face kernels or an importable package." \
+      >&2
+    exit 1
+  fi
+  (
+    cd native-kernels/orbitquant-packed-matmul
+    nix --option sandbox relaxed run .#ci-test -L
+  )
+  export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
+  stage native-packed-matmul-load-start
+  python - <<'PY'
+from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
+kernel = load_native_packed_matmul_kernel()
+if not hasattr(kernel, "matmul_packed_weight"):
+    raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
+print("native-packed-matmul-kernel-ok", kernel)
+PY
+  stage native-packed-matmul-load-done
+  stage native-kernel-package-ci-done
+fi
+
 stage native-packed-matmul-bench-start
 orbitquant kernel-bench \
   --tokens "$TOKENS" \
@@ -154,17 +168,3 @@ orbitquant kernel-bench \
   --warmup "$WARMUP" \
   --iterations "$ITERATIONS"
 stage native-packed-matmul-bench-done
-
-stage quantize-bench-start
-orbitquant quantize-bench \
-  --layers 2 \
-  --in-features "$IN_FEATURES" \
-  --hidden-features "$HIDDEN_FEATURES" \
-  --weight-bits 4 \
-  --activation-bits 4 \
-  --block-size "$BLOCK_SIZE" \
-  --source-device cpu \
-  --quantization-device cuda \
-  --staging-mode component \
-  --dtype bfloat16
-stage quantize-bench-done

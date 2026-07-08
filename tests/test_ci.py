@@ -45,6 +45,18 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "activation_norm_rpbh_quant_rescale" in cuda_script
     assert "packed_weight_matmul" in cuda_script
     assert "hf_kernel_builder_compliant" in cuda_script
+    assert cuda_script.index("kernel-tests-start") < cuda_script.index(
+        "native-kernel-package-ci-start"
+    )
+    assert cuda_script.index("kernel-info-start") < cuda_script.index(
+        "native-kernel-package-ci-start"
+    )
+    assert cuda_script.index("kernel-bench-start") < cuda_script.index(
+        "native-kernel-package-ci-start"
+    )
+    assert cuda_script.index("native-kernel-package-ci-done") < cuda_script.index(
+        "native-packed-matmul-bench-start"
+    )
 
     mps_script = Path("scripts/run_mps_kernel_checks.sh").read_text(encoding="utf-8")
     assert "MPS Metal compile_shader is not available" in mps_script
