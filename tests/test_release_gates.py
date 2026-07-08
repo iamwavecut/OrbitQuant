@@ -81,6 +81,10 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "0.00764581459807232" in release_gates
     assert "W4\n  512x3072x3072 float16" in release_gates
     assert "0.10189520000712946" in release_gates
+    assert "2026-07-08T17:10Z" in release_gates
+    assert "`LOCAL_KERNELS`; with Torch 2.12.1 it selected" in release_gates
+    assert "`build/torch212-metal-aarch64-darwin`" in release_gates
+    assert "finite float16 output tensor" in release_gates
     assert "CUDA/Triton remains pending on a CUDA host" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"

@@ -39,7 +39,10 @@ URL, or signed-off audit note.
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4
   512x3072x3072 float16 at `0.10189520000712946` seconds/iteration over
-  10 iterations.
+  10 iterations. On 2026-07-08T17:10Z, the OrbitQuant native loader was also
+  smoke-tested through `LOCAL_KERNELS`; with Torch 2.12.1 it selected
+  `build/torch212-metal-aarch64-darwin`, ran `matmul_packed_weight` on MPS, and
+  produced a finite float16 output tensor.
   CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
