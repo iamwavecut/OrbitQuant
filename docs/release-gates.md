@@ -11,7 +11,11 @@ URL, or signed-off audit note.
   Current partial evidence: MPS/Metal passed
   `scripts/run_mps_kernel_checks.sh` on 2026-07-08T15:58Z, including native
   packed matmul load and explicit `runtime_mode="native_packed_matmul"`
-  benchmark execution. CUDA/Triton remains pending on a CUDA host.
+  benchmark execution. `native-kernels/orbitquant-packed-matmul` passed
+  `nix --option sandbox relaxed run .#ci-test -L` locally on
+  2026-07-08T16:31Z, including kernel-builder layout hooks, ABI compatibility
+  for macOS 15/Python ABI 3.9, get-kernel loading, and 17 package tests.
+  CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is

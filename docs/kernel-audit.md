@@ -41,6 +41,11 @@ for the current artifact format and runtime modes.
   loading through Hugging Face `kernels` via `LOCAL_KERNELS`, `auto_fused`
   benchmark execution, and explicit `runtime_mode="native_packed_matmul"`
   benchmark execution.
+- The native packed matmul package passed local kernel-builder CI on
+  2026-07-08T16:31Z with
+  `nix --option sandbox relaxed run .#ci-test -L`. The run verified
+  kernel-builder layout hooks, macOS 15/Python ABI 3.9 compatibility,
+  get-kernel loading, and 17 package tests for the Metal build.
 - CUDA/Triton must still be verified on a CUDA host with
   `scripts/run_cuda_kernel_checks.sh` before the overall kernel audit release
   gate can be closed.
