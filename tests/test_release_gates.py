@@ -102,6 +102,9 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0" in release_gates
     assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
     assert "`ImportError: libcudart.so.13`" in release_gates
+    assert "`torch211-cxx11-cu128-x86_64-linux`" in release_gates
+    assert "`torch29-cxx11-cu128-x86_64-linux`" in release_gates
+    assert "runtime with an exported compatible variant" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
         in release_gates
@@ -266,6 +269,9 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0" in kernel_audit
     assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
     assert "`ImportError: libcudart.so.13`" in kernel_audit
+    assert "`torch211-cxx11-cu128-x86_64-linux`" in kernel_audit
+    assert "`torch29-cxx11-cu128-x86_64-linux`" in kernel_audit
+    assert "Torch 2.11+cu128" in kernel_audit
     assert "a4d927c" not in kernel_audit
 
 

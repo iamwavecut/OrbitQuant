@@ -102,7 +102,13 @@ for the current artifact format and runtime modes.
   kernel-builder variant or approved Hugging Face Kernel Hub upload is still
   required before claiming native CUDA package coverage. Current local checks
   build exact `redistributable.<runtime-variant>` outputs instead of selecting
-  ignored `build/` artifacts.
+  ignored `build/` artifacts. The current HF `kernel-builder` matrix exports
+  `torch211-cxx11-cu128-x86_64-linux`, but not `torch29-cxx11-cu128-x86_64-linux`;
+  `kernels` rejects CUDA variants newer than the runtime CUDA minor version.
+  Therefore the existing RunPod image with Torch 2.9.1+cu128 can keep serving
+  Triton/eval work, but it cannot close the native CUDA package gate. Closing
+  that gate requires a runtime with an exported compatible variant, such as
+  Torch 2.11+cu128, or an approved Kernel Hub upload with a compatible build.
 
 ## Packaging Boundary
 
