@@ -27,7 +27,7 @@ Review-ready source package:
 The private Kernel Hub repo already contains the reviewable tracked source
 snapshot at:
 
-`https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/f7eb3fa912caa27ad682c7ea1757f580a2751a01`
+`https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/062b934389dce9242e0a9185ed469cc3170e3e73`
 
 If the source repository is still private when this request is posted, attach a
 source archive generated from the Git-tracked kernel package path:
