@@ -1,6 +1,18 @@
 import os
+import re
+import subprocess
 import tomllib
 from pathlib import Path
+
+
+def _tracked_native_kernel_files(package_root: Path) -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", str(package_root)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [Path(line) for line in result.stdout.splitlines() if line]
 
 
 def test_github_actions_cpu_unit_workflow_exists():
@@ -66,6 +78,53 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "kernels>=0.16" in mps_script
     assert "native-packed-matmul-kernel-ok" in mps_script
     assert "--runtime-mode native_packed_matmul" in mps_script
+
+
+def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant():
+    package_root = Path("native-kernels/orbitquant-packed-matmul")
+    tracked_files = _tracked_native_kernel_files(package_root)
+
+    forbidden_patterns = {
+        "pybind11": re.compile(r"pybind11|PYBIND11|py::"),
+        "torch extension header": re.compile(r"torch/extension\.h"),
+        "hardcoded torch op namespace": re.compile(
+            r"TORCH_LIBRARY\(|TORCH_LIBRARY_FRAGMENT|TORCH_LIBRARY_IMPL|PyInit"
+        ),
+        "setuptools extension build": re.compile(
+            r"CUDAExtension|BuildExtension|cpp_extension\.load|load_inline"
+        ),
+        "hardcoded Python torch.ops lookup": re.compile(r"torch\.ops\."),
+    }
+    violations: list[str] = []
+    for path in tracked_files:
+        if path.suffix not in {".cpp", ".h", ".cu", ".mm", ".metal", ".py"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for label, pattern in forbidden_patterns.items():
+            if pattern.search(text):
+                violations.append(f"{path}: {label}")
+
+    assert not (package_root / "setup.py").exists()
+    assert not (package_root / "pyproject.toml").exists()
+    assert not violations
+
+    build_config = tomllib.loads((package_root / "build.toml").read_text(encoding="utf-8"))
+    assert build_config["general"]["name"] == "orbitquant-packed-matmul"
+    assert "_" not in build_config["general"]["name"]
+    assert build_config["general"]["license"] == "Apache-2.0"
+    assert build_config["general"]["backends"] == ["cuda", "metal"]
+
+    binding = (package_root / "torch-ext/torch_binding.cpp").read_text(encoding="utf-8")
+    assert "#include <torch/library.h>" in binding
+    assert "#include \"registration.h\"" in binding
+    assert "TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in binding
+    assert "REGISTER_EXTENSION(TORCH_EXTENSION_NAME)" in binding
+
+    package_api = (
+        package_root / "torch-ext/orbitquant_packed_matmul/__init__.py"
+    ).read_text(encoding="utf-8")
+    assert "from ._ops import ops" in package_api
+    assert "from orbitquant_packed_matmul" not in package_api
 
 
 def test_hf_compatibility_script_is_executable_and_release_dev_aware():
