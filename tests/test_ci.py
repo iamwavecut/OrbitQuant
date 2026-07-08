@@ -52,6 +52,9 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "nix --option sandbox relaxed run .#ci-test -L" in cuda_script
     assert "kernels>=0.16" in cuda_script
     assert "LOCAL_KERNELS=\"$NATIVE_KERNEL_REPO_ID=$(native_kernel_variant_dir)" in cuda_script
+    assert "torch.version.cuda" in cuda_script
+    assert "expected_variant" in cuda_script
+    assert "no runtime-compatible CUDA kernel variant found" in cuda_script
     assert "native-packed-matmul-bench-skipped-no-local-kernel" in cuda_script
     assert "native-packed-matmul-kernel-ok" in cuda_script
     assert "--runtime-mode native_packed_matmul" in cuda_script

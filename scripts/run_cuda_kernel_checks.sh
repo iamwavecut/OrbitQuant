@@ -27,22 +27,48 @@ NATIVE_KERNEL_SOURCE_DIR="$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
 native_kernel_variant_dir() {
   python - "$NATIVE_KERNEL_SOURCE_DIR" <<'PY'
 import json
+import platform
+import re
 import sys
 from pathlib import Path
 
+import torch
+
 source_dir = Path(sys.argv[1])
-candidates = []
+torch_match = re.match(r"^(\d+)\.(\d+)", torch.__version__)
+if torch_match is None:
+    raise SystemExit(f"could not parse torch version from {torch.__version__!r}")
+if not torch.version.cuda:
+    raise SystemExit("runtime torch build is not CUDA-enabled")
+
+system = sys.platform
+machine = platform.machine()
+if system != "linux":
+    raise SystemExit(f"CUDA kernel package CI expects Linux, got {system}")
+
+expected_variant = (
+    f"torch{torch_match.group(1)}{torch_match.group(2)}-cxx11-"
+    f"cu{torch.version.cuda.replace('.', '')}-{machine}-linux"
+)
+available = []
 for metadata_path in sorted((source_dir / "build").glob("*/metadata.json")):
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata.get("backend", {}).get("type") == "cuda":
-        candidates.append(metadata_path.parent)
+        available.append(metadata_path.parent.name)
+        if metadata_path.parent.name == expected_variant:
+            print(metadata_path.parent)
+            raise SystemExit(0)
 
-if not candidates:
+if not available:
     raise SystemExit(
         f"no built CUDA kernel variant with metadata.json under {source_dir / 'build'}"
     )
 
-print(candidates[-1])
+raise SystemExit(
+    "no runtime-compatible CUDA kernel variant found under "
+    f"{source_dir / 'build'}; expected {expected_variant}; "
+    f"available CUDA variants: {', '.join(available)}"
+)
 PY
 }
 
