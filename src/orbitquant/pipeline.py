@@ -84,6 +84,36 @@ def _artifact_model_index(artifact_dir: str | Path) -> dict[str, Any]:
     return json.loads(model_index_path.read_text(encoding="utf-8"))
 
 
+def _native_pipeline_class_name(source_model_id: str) -> str | None:
+    from orbitquant.eval.native_settings import list_native_suites
+
+    for suite in list_native_suites():
+        if suite.model_id == source_model_id:
+            return suite.pipeline
+    return None
+
+
+def _resolve_artifact_pipeline_cls(model_index: dict[str, Any], pipeline_cls: Any | None) -> Any:
+    if pipeline_cls is not None:
+        return pipeline_cls
+    try:
+        import diffusers
+    except Exception as exc:
+        raise ImportError(
+            "load_quantized_pipeline_from_artifact requires diffusers or an explicit "
+            "pipeline_cls"
+        ) from exc
+
+    source_model_id = model_index.get("source_model_id")
+    if isinstance(source_model_id, str):
+        native_pipeline_name = _native_pipeline_class_name(source_model_id)
+        if native_pipeline_name is not None:
+            native_pipeline_cls = getattr(diffusers, native_pipeline_name, None)
+            if native_pipeline_cls is not None:
+                return native_pipeline_cls
+    return diffusers.DiffusionPipeline
+
+
 def quantize_pipeline(
     pipeline: Any,
     config: OrbitQuantConfig,
@@ -169,15 +199,7 @@ def load_quantized_pipeline_from_artifact(
     resolved_component = component or model_index.get("component") or "transformer"
     _validate_artifact_component(artifact_path, resolved_component)
 
-    if pipeline_cls is None:
-        try:
-            from diffusers import DiffusionPipeline
-        except Exception as exc:
-            raise ImportError(
-                "load_quantized_pipeline_from_artifact requires diffusers or an explicit "
-                "pipeline_cls"
-            ) from exc
-        pipeline_cls = DiffusionPipeline
+    pipeline_cls = _resolve_artifact_pipeline_cls(model_index, pipeline_cls)
 
     source_revision = model_index.get("source_revision")
     if (

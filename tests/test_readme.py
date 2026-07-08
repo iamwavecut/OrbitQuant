@@ -15,6 +15,7 @@ def test_readme_documents_component_artifact_usage():
     assert "load_quantized_pipeline_component" in readme
     assert "Published OrbitQuant model repos are component artifacts" in readme
     assert "The helper reads `model_index.json`" in readme
+    assert "uses the model-specific Diffusers pipeline" in readme
     assert "DiffusionPipeline.from_pretrained" in readme
     assert "build_diffusers_pipeline_quantization_config" in readme
     assert "`PipelineQuantizationConfig`" in readme

@@ -1,4 +1,6 @@
 import json
+import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -207,6 +209,89 @@ def test_load_quantized_pipeline_from_artifact_loads_source_pipeline_and_compone
     assert pipeline.orbitquant_manifest.source_model_id == "example/model"
     assert pipeline.orbitquant_artifact_dir == str(tmp_path)
     assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
+
+
+def test_load_quantized_pipeline_from_artifact_uses_native_pipeline_class(
+    monkeypatch,
+    tmp_path,
+):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="black-forest-labs/FLUX.1-schnell",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    calls = []
+
+    class FakeFluxPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            calls.append(("flux", model_id, kwargs))
+            return TinyPipeline()
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            calls.append(("generic", model_id, kwargs))
+            return TinyPipeline()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(
+            FluxPipeline=FakeFluxPipeline,
+            DiffusionPipeline=FakeDiffusionPipeline,
+        ),
+    )
+
+    pipeline = load_quantized_pipeline_from_artifact(tmp_path)
+
+    assert calls == [("flux", "black-forest-labs/FLUX.1-schnell", {"revision": "abc123"})]
+    assert isinstance(pipeline.transformer.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+
+
+def test_load_quantized_pipeline_from_artifact_falls_back_to_generic_pipeline(
+    monkeypatch,
+    tmp_path,
+):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="black-forest-labs/FLUX.1-schnell",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    calls = []
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            calls.append((model_id, kwargs))
+            return TinyPipeline()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(DiffusionPipeline=FakeDiffusionPipeline),
+    )
+
+    pipeline = load_quantized_pipeline_from_artifact(tmp_path)
+
+    assert calls == [("black-forest-labs/FLUX.1-schnell", {"revision": "abc123"})]
+    assert isinstance(pipeline.transformer.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
 
 
 def test_load_quantized_pipeline_from_artifact_respects_explicit_revision(tmp_path):

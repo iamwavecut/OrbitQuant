@@ -87,9 +87,11 @@ result = pipe(
 )
 ```
 
-The helper reads `model_index.json`, loads the recorded source pipeline revision,
-and patches the artifact's recorded component. To control the source pipeline
-class or load steps directly, use the lower-level component loader:
+The helper reads `model_index.json`, uses the model-specific Diffusers pipeline
+class for the supported native targets when available, loads the recorded source
+pipeline revision, and patches the artifact's recorded component. To control
+the source pipeline class or load steps directly, use the lower-level component
+loader:
 
 ```python
 import torch
