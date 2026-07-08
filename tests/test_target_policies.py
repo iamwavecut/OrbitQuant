@@ -68,6 +68,36 @@ class TinyFlux2Names(torch.nn.Module):
         self.context_embedder = torch.nn.Linear(16, 16)
 
 
+class TinyFlux2FalsePositiveNames(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.final_transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "attn": torch.nn.ModuleDict(
+                            {"to_q": torch.nn.Linear(16, 16)}
+                        )
+                    }
+                )
+            ]
+        )
+        self.transformer_blocks_final = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "attn": torch.nn.ModuleDict(
+                            {"to_q": torch.nn.Linear(16, 16)}
+                        )
+                    }
+                )
+            ]
+        )
+        self.prefix_single_stream_modulation = torch.nn.ModuleDict(
+            {"linear": torch.nn.Linear(16, 48)}
+        )
+
+
 def test_flux2_policy_covers_fused_and_text_conditioning_projections():
     decisions = classify_linear_modules(TinyFlux2Names(), OrbitQuantConfig(target_policy="flux2"))
 
@@ -79,6 +109,16 @@ def test_flux2_policy_covers_fused_and_text_conditioning_projections():
     assert decisions["single_stream_modulation.linear"].action == "adaln_int4_rtn"
     assert decisions["transformer_blocks.0.double_stream_modulation_img"].action == "adaln_int4_rtn"
     assert decisions["context_embedder"].action == "bf16_skip"
+
+
+def test_flux2_policy_does_not_match_boundary_or_prefixed_modulation_substrings():
+    decisions = classify_linear_modules(
+        TinyFlux2FalsePositiveNames(), OrbitQuantConfig(target_policy="flux2")
+    )
+
+    assert decisions["final_transformer_blocks.0.attn.to_q"].action == "bf16_skip"
+    assert decisions["transformer_blocks_final.0.attn.to_q"].action == "bf16_skip"
+    assert decisions["prefix_single_stream_modulation.linear"].action == "bf16_skip"
 
 
 class TinyZImageNames(torch.nn.Module):

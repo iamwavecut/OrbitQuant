@@ -141,6 +141,19 @@ def _contains_any(value: str, tokens: tuple[str, ...]) -> bool:
     return any(token in value for token in tokens)
 
 
+def _path_components(value: str) -> tuple[str, ...]:
+    return tuple(part for part in value.split(".") if part)
+
+
+def _contains_path_component(value: str, tokens: tuple[str, ...]) -> bool:
+    components = set(_path_components(value))
+    return any(token in components for token in tokens)
+
+
+def _contains_component_substring(value: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in component for component in _path_components(value) for token in tokens)
+
+
 def resolve_target_policy(model: torch.nn.Module, config: OrbitQuantConfig) -> str:
     if config.target_policy != "auto":
         return config.target_policy
@@ -162,19 +175,24 @@ def _policy_rules(model: torch.nn.Module, config: OrbitQuantConfig) -> PolicyRul
 
 
 def _is_top_level_modulation(lowered: str, rules: PolicyRules) -> bool:
-    return _contains_any(lowered, rules.top_level_modulation_tokens)
+    return _contains_path_component(lowered, rules.top_level_modulation_tokens)
 
 
 def _is_scoped_modulation(lowered: str, rules: PolicyRules) -> bool:
-    return _contains_any(lowered, rules.modulation_scopes) and _contains_any(
-        lowered, rules.modulation_tokens
+    return _contains_path_component(
+        lowered, rules.modulation_scopes
+    ) and _contains_component_substring(
+        lowered,
+        rules.modulation_tokens,
     )
 
 
 def _is_transformer_projection(lowered: str, rules: PolicyRules) -> bool:
-    if not _contains_any(lowered, rules.block_tokens):
+    if not _contains_path_component(lowered, rules.block_tokens):
         return False
-    return not rules.projection_tokens or _contains_any(lowered, rules.projection_tokens)
+    return not rules.projection_tokens or _contains_path_component(
+        lowered, rules.projection_tokens
+    )
 
 
 def classify_linear_modules(

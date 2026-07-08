@@ -992,7 +992,7 @@ def test_create_artifact_image_comparisons_can_filter_current_prompt_pack(tmp_pa
 
 def test_create_artifact_image_comparisons_pairs_video_contact_sheets(tmp_path):
     source = TinyArtifactModel()
-    config = OrbitQuantConfig(block_size=4, target_policy="wan")
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
     summary = quantize_linear_modules(source, config)
     save_orbitquant_artifact(
         source,
