@@ -78,6 +78,12 @@ URL, or signed-off audit note.
   `python -m twine check dist/*`, then uploaded with `python -m twine upload
   dist/*`. Credentials may require a user-provided PyPI token or browser
   action before upload can complete.
+  Current evidence: local build/check/smoke passed on 2026-07-08T16:06Z.
+  `uv run --with build python -m build` produced
+  `orbitquant-0.1.0.tar.gz` and `orbitquant-0.1.0-py3-none-any.whl`;
+  `uv run --with twine python -m twine check dist/*` passed for both files;
+  installing the wheel in a fresh venv, importing `orbitquant`, and running
+  `orbitquant --version` returned `0.1.0`. Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, and artifact metadata behavior.
   Evidence: ComfyUI-OrbitQuant commit `1d73b36` passed `uv run pytest -q`

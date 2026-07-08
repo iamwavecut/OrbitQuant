@@ -94,6 +94,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "python -m twine check dist/*" in release_gates
     assert "python -m twine upload\n  dist/*" in release_gates
     assert "PyPI token or browser\n  action" in release_gates
+    assert "local build/check/smoke passed on 2026-07-08T16:06Z" in release_gates
+    assert "`orbitquant-0.1.0.tar.gz`" in release_gates
+    assert "`orbitquant-0.1.0-py3-none-any.whl`" in release_gates
+    assert "returned `0.1.0`" in release_gates
+    assert "Upload remains pending" in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates
     assert "chronology" not in release_gates.lower()
