@@ -70,8 +70,12 @@ void matmul_packed_weight(
   TORCH_CHECK(packed_weight_indices.is_contiguous(), "packed weights must be contiguous");
   TORCH_CHECK(row_norms.is_contiguous(), "row norms must be contiguous");
   TORCH_CHECK(centroids.is_contiguous(), "centroids must be contiguous");
+  TORCH_CHECK(packed_weight_indices.scalar_type() == torch::kUInt8, "packed weights must be uint8");
+  TORCH_CHECK(row_norms.scalar_type() == torch::kFloat, "row_norms must be float32");
+  TORCH_CHECK(centroids.scalar_type() == torch::kFloat, "centroids must be float32");
   TORCH_CHECK(x.dim() == 2, "x must be rank 2");
   TORCH_CHECK(out.dim() == 2, "out must be rank 2");
+  TORCH_CHECK(out.scalar_type() == x.scalar_type(), "out dtype must match x dtype");
   TORCH_CHECK(bits > 0 && bits <= 8, "bits must be in [1, 8]");
   TORCH_CHECK(block_m > 0 && block_n > 0 && block_k > 0, "tile sizes must be positive");
   TORCH_CHECK(x.size(1) == in_features, "x has an unexpected input dimension");
@@ -84,6 +88,7 @@ void matmul_packed_weight(
   if (has_bias) {
     TORCH_CHECK(bias.device().is_cuda(), "bias must be a CUDA tensor");
     TORCH_CHECK(bias.is_contiguous(), "bias must be contiguous");
+    TORCH_CHECK(bias.scalar_type() == torch::kFloat, "bias must be float32");
     TORCH_CHECK(bias.numel() == out_features, "bias must match out_features");
   }
   if (x.numel() == 0 || out_features == 0) {

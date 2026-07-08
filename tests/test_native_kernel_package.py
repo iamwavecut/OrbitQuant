@@ -116,5 +116,15 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
         assert token in public_api
     assert re.search(r"byte_index\s*=\s*bit_start\s*>>\s*3", cuda_source)
     assert re.search(r"bit_offset\s*=\s*bit_start\s*&\s*7", cuda_source)
+    assert "packed_weight_indices.scalar_type() == torch::kUInt8" in cuda_source
+    assert "row_norms.scalar_type() == torch::kFloat" in cuda_source
+    assert "centroids.scalar_type() == torch::kFloat" in cuda_source
+    assert "bias.scalar_type() == torch::kFloat" in cuda_source
     assert "packed_matmul_forward_float" in metal_source
     assert "packed_matmul_forward_half" in metal_source
+
+
+def test_kernel_package_pytest_marks_runtime_test_for_kernel_builder_ci() -> None:
+    test_source = (KERNEL_ROOT / "tests/test_packed_matmul.py").read_text(encoding="utf-8")
+
+    assert "@pytest.mark.kernels_ci" in test_source

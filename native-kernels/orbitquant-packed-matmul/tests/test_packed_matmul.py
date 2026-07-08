@@ -26,6 +26,7 @@ def _device() -> str:
     pytest.skip("CUDA or MPS is required")
 
 
+@pytest.mark.kernels_ci
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])
 def test_matmul_packed_weight_matches_dequantized_reference(bits: int) -> None:
     device = _device()
