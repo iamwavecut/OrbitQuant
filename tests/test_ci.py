@@ -15,7 +15,8 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "HF integration tests" in text
     assert "scripts/run_hf_compat_checks.sh --mode current" in text
     assert "uv run pytest" in text
-    assert "uv build" in text
+    assert "uv run --with build python -m build" in text
+    assert "uv run --with twine python -m twine check dist/*" in text
     assert "uv pip install --python" in text
     assert "dist/orbitquant-0.1.0-py3-none-any.whl" in text
     assert "orbitquant --version" in text
