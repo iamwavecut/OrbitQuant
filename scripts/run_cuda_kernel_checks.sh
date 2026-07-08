@@ -62,6 +62,34 @@ stage kernel-tests-done
 
 stage kernel-info-start
 orbitquant kernel-info
+python - <<'PY'
+from orbitquant.kernels import backend_capabilities
+
+capability = backend_capabilities()["triton_cuda"]
+required_stages = {
+    "activation_norm_rpbh_quant_rescale",
+    "packed_weight_dequant",
+    "packed_weight_matmul",
+    "lowbit_pack",
+    "lowbit_unpack",
+    "weight_rotation_fwht_quant_pack",
+    "adaln_rtn_quant_pack",
+    "adaln_rtn_dequant",
+}
+stages = set(str(capability["optimized_stage"] or "").split(","))
+missing = sorted(required_stages - stages)
+if capability["claim_status"] != "partial_optimized":
+    raise SystemExit(f"unexpected triton_cuda claim_status: {capability['claim_status']}")
+if not capability["optimized"]:
+    raise SystemExit("triton_cuda backend is not optimized in this environment")
+if capability["full_fusion"]:
+    raise SystemExit("triton_cuda should not claim full_fusion")
+if capability["hf_kernel_builder_compliant"]:
+    raise SystemExit("triton_cuda should not claim HF kernel-builder compliance")
+if missing:
+    raise SystemExit(f"triton_cuda optimized_stage missing: {missing}")
+print("triton-cuda-kernel-contract-ok")
+PY
 stage kernel-info-done
 
 stage kernel-bench-start

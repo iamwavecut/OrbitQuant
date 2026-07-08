@@ -32,6 +32,18 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
         assert "REMOTE_STAGE" in text
         assert "orbitquant kernel-info" in text
 
+    cuda_script = Path("scripts/run_cuda_kernel_checks.sh").read_text(encoding="utf-8")
+    assert "triton-cuda-kernel-contract-ok" in cuda_script
+    assert "activation_norm_rpbh_quant_rescale" in cuda_script
+    assert "packed_weight_matmul" in cuda_script
+    assert "hf_kernel_builder_compliant" in cuda_script
+
+    mps_script = Path("scripts/run_mps_kernel_checks.sh").read_text(encoding="utf-8")
+    assert "MPS Metal compile_shader is not available" in mps_script
+    assert "mps-kernel-contract-ok" in mps_script
+    assert "codebook_lookup_rescale" in mps_script
+    assert "upstream_native_mps_op" in mps_script
+
 
 def test_hf_compatibility_script_is_executable_and_release_dev_aware():
     script = Path("scripts/run_hf_compat_checks.sh")

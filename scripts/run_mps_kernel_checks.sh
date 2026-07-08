@@ -39,6 +39,8 @@ import torch
 
 if not torch.backends.mps.is_available():
     raise SystemExit("MPS is not available in this Python environment")
+if not hasattr(torch.mps, "compile_shader"):
+    raise SystemExit("MPS Metal compile_shader is not available in this Python environment")
 
 print("python-env-ok")
 print("torch", torch.__version__)
@@ -53,6 +55,27 @@ stage kernel-tests-done
 
 stage kernel-info-start
 orbitquant kernel-info
+python - <<'PY'
+from orbitquant.kernels import backend_capabilities
+
+capability = backend_capabilities()["mps"]
+required_stages = {"codebook_lookup_rescale", "packed_weight_dequant"}
+stages = set(str(capability["optimized_stage"] or "").split(","))
+missing = sorted(required_stages - stages)
+if capability["claim_status"] != "partial_optimized":
+    raise SystemExit(f"unexpected mps claim_status: {capability['claim_status']}")
+if not capability["optimized"]:
+    raise SystemExit("mps backend is not optimized in this environment")
+if capability["full_fusion"]:
+    raise SystemExit("mps should not claim full_fusion")
+if capability["hf_kernel_builder_compliant"]:
+    raise SystemExit("mps should not claim HF kernel-builder compliance")
+if capability["upstream_native_mps_op"]:
+    raise SystemExit("mps should not claim an upstream native op")
+if missing:
+    raise SystemExit(f"mps optimized_stage missing: {missing}")
+print("mps-kernel-contract-ok")
+PY
 stage kernel-info-done
 
 stage kernel-bench-start
