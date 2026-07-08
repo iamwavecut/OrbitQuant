@@ -20,6 +20,7 @@ PACKED_MATMUL_BLOCK_M="${ORBITQUANT_PACKED_MATMUL_BLOCK_M:-32}"
 PACKED_MATMUL_BLOCK_N="${ORBITQUANT_PACKED_MATMUL_BLOCK_N:-64}"
 PACKED_MATMUL_BLOCK_K="${ORBITQUANT_PACKED_MATMUL_BLOCK_K:-64}"
 PACKED_MATMUL_NUM_WARPS="${ORBITQUANT_PACKED_MATMUL_NUM_WARPS:-8}"
+RUN_NATIVE_KERNEL_PACKAGE_CI="${ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI:-1}"
 
 cd "$ROOT_DIR"
 
@@ -55,6 +56,22 @@ print("triton", triton.__version__)
 print("device", torch.cuda.get_device_name(0))
 PY
 stage env-done
+
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
+  stage native-kernel-package-ci-start
+  if ! command -v nix >/dev/null 2>&1; then
+    printf '%s\n' \
+      "native kernel package CI requires nix for kernel-builder." \
+      "Install nix or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only for Triton-only diagnostics." \
+      >&2
+    exit 1
+  fi
+  (
+    cd native-kernels/orbitquant-packed-matmul
+    nix --option sandbox relaxed run .#ci-test -L
+  )
+  stage native-kernel-package-ci-done
+fi
 
 stage kernel-tests-start
 pytest tests/test_kernels.py tests/test_adaln_rtn.py tests/test_orbit_linear.py -q

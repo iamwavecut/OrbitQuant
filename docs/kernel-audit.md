@@ -19,8 +19,10 @@ for the current artifact format and runtime modes.
   `claim_status` values. `implemented_stage` describes code present in the
   package; `optimized_stage` is populated only when that backend is active in
   the current environment.
-- `scripts/run_cuda_kernel_checks.sh` is the CUDA/Triton correctness and
-  benchmark gate for GPU hosts.
+- `scripts/run_cuda_kernel_checks.sh` is the CUDA correctness and benchmark
+  gate for GPU hosts. By default it also runs
+  `native-kernels/orbitquant-packed-matmul` kernel-builder CI so the native
+  packed matmul package is validated together with the Python/Triton CUDA path.
 - `scripts/run_mps_kernel_checks.sh` is the MPS/Metal correctness and smoke
   benchmark gate for Apple Silicon hosts.
 - Full-model speedup claims require backend-specific benchmark artifacts from

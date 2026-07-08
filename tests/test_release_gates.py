@@ -87,6 +87,7 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "full activation-plus-matmul fusion" in kernel_audit
     assert "`claim_status` values" in kernel_audit
     assert "not itself a Hugging Face Kernels Hub `kernel-builder` package" in kernel_audit
+    assert "kernel-builder CI" in kernel_audit
     assert "`native_packed_matmul` runtime uses the separate" in kernel_audit
     assert "targets CUDA and Metal" in kernel_audit
 
