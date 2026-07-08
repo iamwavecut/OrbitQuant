@@ -167,7 +167,12 @@ URL, or signed-off audit note.
   `/tmp/orbitquant-build-verify-20260708T180719Z` produced both expected
   artifacts and `twine check` passed. GitHub CI for OrbitQuant commit
   `f0c4855` passed on 2026-07-08T18:42Z, including package build, metadata
-  check, and wheel smoke test after adding the RunPod SSH health preflight.
+  check, and wheel smoke test after adding the RunPod SSH health preflight. On
+  2026-07-08T22:14Z at OrbitQuant commit `f54beba`, a fresh temporary build in
+  `/tmp/orbitquant-build-verify-20260708T221429Z` produced both expected
+  artifacts, `twine check` passed, a fresh venv installed the wheel, importing
+  `orbitquant` returned version `0.1.0`, `OrbitQuantConfig()` defaulted to
+  `runtime_mode="auto_fused"`, and `orbitquant --version` returned `0.1.0`.
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
