@@ -37,6 +37,10 @@ URL, or signed-off audit note.
   a follow-up comment on 2026-07-08T18:03Z refreshed the review source snapshot
   to `6821e4cd5ff1894994d7137c1d861660cfeed1c8` and source archive SHA256
   `77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651`.
+  Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
+  2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
+  variants, passed ABI/get-kernel build checks, and still stopped at the same
+  Kernel Hub publish permission error.
   Approval remains pending. As of 2026-07-08T17:15Z, the linked
   `WaveCut/orbitquant-packed-matmul` source snapshot repo is still private; if
   reviewers cannot access it, provide a tracked source archive in the
