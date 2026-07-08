@@ -26,6 +26,12 @@ def _device() -> str:
     pytest.skip("CUDA or MPS is required")
 
 
+def _mps_device() -> str:
+    if not torch.backends.mps.is_available():
+        pytest.skip("MPS is required")
+    return "mps"
+
+
 @pytest.mark.kernels_ci
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])
 @pytest.mark.parametrize("in_features", [16, 19])
@@ -68,5 +74,46 @@ def test_matmul_packed_weight_matches_dequantized_reference(
 
     assert actual.device.type == device
     assert actual.dtype == x.dtype
+    assert actual.shape == (rows, out_features)
+    assert torch.allclose(actual.float().cpu(), expected, atol=2e-2, rtol=2e-2)
+
+
+@pytest.mark.kernels_ci
+def test_matmul_packed_weight_explicit_mps_path_matches_dequantized_reference() -> None:
+    device = _mps_device()
+    bits = 4
+    rows = 5
+    in_features = 19
+    out_features = 7
+    x = torch.randn(rows, in_features, device=device, dtype=torch.float16)
+    indices = (
+        torch.arange(out_features * in_features, dtype=torch.uint8).reshape(
+            out_features, in_features
+        )
+        % (2**bits)
+    )
+    packed = _pack(indices, bits).to(device)
+    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
+    bias = torch.randn(out_features, device=device, dtype=torch.float16)
+
+    expected_weight = row_norms.cpu()[:, None] * centroids.cpu()[indices.long()]
+    expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, bias.float().cpu())
+    actual = matmul_packed_weight(
+        x,
+        packed,
+        row_norms,
+        centroids,
+        bits=bits,
+        out_features=out_features,
+        in_features=in_features,
+        bias=bias,
+        block_m=16,
+        block_n=16,
+        block_k=32,
+    )
+
+    assert actual.device.type == "mps"
+    assert actual.dtype == torch.float16
     assert actual.shape == (rows, out_features)
     assert torch.allclose(actual.float().cpu(), expected, atol=2e-2, rtol=2e-2)

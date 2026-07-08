@@ -11,7 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <string>
+#include <mutex>
 
 struct PackedMatmulParams {
   int64_t rows;
@@ -23,6 +23,48 @@ struct PackedMatmulParams {
 
 static inline id<MTLBuffer> getMTLBufferStorage(const torch::Tensor &tensor) {
   return __builtin_bit_cast(id<MTLBuffer>, tensor.storage().data());
+}
+
+struct PackedMatmulPipelineCache {
+  id<MTLDevice> device;
+  id<MTLComputePipelineState> float_pipeline;
+  id<MTLComputePipelineState> half_pipeline;
+};
+
+static id<MTLComputePipelineState> create_pipeline(
+    id<MTLDevice> device,
+    id<MTLLibrary> library,
+    char const *kernel_name) {
+  NSError *error = nil;
+  id<MTLFunction> function =
+      [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name]];
+  TORCH_CHECK(function, "Failed to create Metal function ", kernel_name);
+  id<MTLComputePipelineState> pipeline =
+      [device newComputePipelineStateWithFunction:function error:&error];
+  TORCH_CHECK(pipeline, "Failed to create Metal pipeline ", kernel_name, ": ",
+              error.localizedDescription.UTF8String);
+  return pipeline;
+}
+
+static PackedMatmulPipelineCache &packed_matmul_pipeline_cache() {
+  static std::once_flag once;
+  static PackedMatmulPipelineCache cache{};
+  std::call_once(once, [] {
+    @autoreleasepool {
+      NSError *error = nil;
+      cache.device = MTLCreateSystemDefaultDevice();
+      TORCH_CHECK(cache.device, "Failed to create Metal device");
+      id<MTLLibrary> library =
+          EMBEDDED_METALLIB_NAMESPACE::createLibrary(cache.device, &error);
+      TORCH_CHECK(library, "Failed to create Metal library: ",
+                  error.localizedDescription.UTF8String);
+      cache.float_pipeline =
+          create_pipeline(cache.device, library, "packed_matmul_forward_float");
+      cache.half_pipeline =
+          create_pipeline(cache.device, library, "packed_matmul_forward_half");
+    }
+  });
+  return cache;
 }
 
 static void dispatch_packed_matmul_kernel(
@@ -39,20 +81,9 @@ static void dispatch_packed_matmul_kernel(
     int64_t block_m,
     int64_t block_n) {
   @autoreleasepool {
-    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-    NSError *error = nil;
-    id<MTLLibrary> library = EMBEDDED_METALLIB_NAMESPACE::createLibrary(device, &error);
-    TORCH_CHECK(library, "Failed to create Metal library: ", error.localizedDescription.UTF8String);
-
-    std::string kernel_name =
-        std::string("packed_matmul_forward_") + (x.scalar_type() == torch::kFloat ? "float" : "half");
-    id<MTLFunction> function =
-        [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name.c_str()]];
-    TORCH_CHECK(function, "Failed to create Metal function ", kernel_name.c_str());
-
+    PackedMatmulPipelineCache &cache = packed_matmul_pipeline_cache();
     id<MTLComputePipelineState> pipeline =
-        [device newComputePipelineStateWithFunction:function error:&error];
-    TORCH_CHECK(pipeline, error.localizedDescription.UTF8String);
+        x.scalar_type() == torch::kFloat ? cache.float_pipeline : cache.half_pipeline;
 
     id<MTLCommandBuffer> command_buffer = torch::mps::get_command_buffer();
     TORCH_CHECK(command_buffer, "Failed to retrieve MPS command buffer");

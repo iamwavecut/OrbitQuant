@@ -544,6 +544,50 @@ def test_orbit_linear_native_packed_matmul_runtime_avoids_weight_dequant_cache(m
     ]
 
 
+def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch):
+    if not torch.backends.mps.is_available():
+        pytest.skip("MPS backend is not available")
+    try:
+        from orbitquant_packed_matmul import matmul_packed_weight
+    except Exception:
+        pytest.skip("native packed matmul kernel package is not importable")
+
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    torch.manual_seed(17)
+    source = torch.nn.Linear(16, 7, bias=True, dtype=torch.float32)
+    x = torch.randn(2, 5, 16, device="mps", dtype=torch.float32)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        activation_kernel_backend="mps",
+        runtime_mode="dequant_bf16",
+        packed_matmul_block_m=16,
+        packed_matmul_block_n=16,
+        packed_matmul_block_k=32,
+    )
+    reference = OrbitQuantLinear.from_linear(
+        source, config=config, module_name="block.ff.linear"
+    ).to("mps")
+    packed = copy.deepcopy(reference).to("mps")
+    packed.runtime_mode = "native_packed_matmul"
+    monkeypatch.setattr(
+        native_module,
+        "_load_native_packed_matmul_kernel",
+        lambda: SimpleNamespace(matmul_packed_weight=matmul_packed_weight),
+    )
+
+    expected = reference(x)
+    actual = packed(x)
+
+    assert actual.device.type == "mps"
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    assert torch.allclose(actual.float().cpu(), expected.float().cpu(), atol=2e-2, rtol=2e-2)
+
+
 @pytest.mark.parametrize("use_bias", [True, False])
 def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias):
     if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:

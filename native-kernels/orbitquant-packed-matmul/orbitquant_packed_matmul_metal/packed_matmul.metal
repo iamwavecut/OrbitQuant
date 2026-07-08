@@ -27,7 +27,7 @@ inline void packed_matmul_value(
   }
 
   const uint mask = (1u << uint(params.bits)) - 1u;
-  float acc = params.has_bias != 0 ? bias[col] : 0.0f;
+  float acc = 0.0f;
   const float row_norm = row_norms[col];
   for (long k = 0; k < params.in_features; ++k) {
     const long value_offset = col * params.in_features + k;
@@ -39,9 +39,13 @@ inline void packed_matmul_value(
       raw |= uint(packed_weight_indices[byte_index + 1]) << 8;
     }
     const uint index = (raw >> uint(bit_offset)) & mask;
-    acc += float(x[row * params.in_features + k]) * row_norm * centroids[index];
+    acc += float(x[row * params.in_features + k]) * centroids[index];
   }
-  out[row * params.out_features + col] = scalar_t(acc);
+  float value = acc * row_norm;
+  if (params.has_bias != 0) {
+    value += bias[col];
+  }
+  out[row * params.out_features + col] = scalar_t(value);
 }
 
 kernel void packed_matmul_forward_float(
