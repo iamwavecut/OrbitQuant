@@ -160,6 +160,16 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Apache-2.0" in request
+    assert "Review-ready source package" in request
+    assert "git archive --format=tar" in request
+    assert "HEAD:native-kernels/orbitquant-packed-matmul" in request
+    assert "orbitquant-packed-matmul-source.tar" in request
+    assert "torch-ext/torch_binding.cpp" in request
+    assert "orbitquant_packed_matmul_cuda/packed_matmul.cu" in request
+    assert "orbitquant_packed_matmul_metal/packed_matmul.metal" in request
+    assert "Do not attach generated `build/`, local `.venv/`, `__pycache__/`" in (
+        request
+    )
     assert "packed low-bit matrix multiplication" in request
     assert "Hugging Face Diffusers" in request
     assert "Hugging Face Transformers" in request

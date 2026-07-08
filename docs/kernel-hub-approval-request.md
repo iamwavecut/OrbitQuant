@@ -20,6 +20,38 @@ Repository:
 - Source repository: `https://github.com/iamwavecut/OrbitQuant`
 - License: Apache-2.0
 
+Review-ready source package:
+
+If the source repository is still private when this request is posted, attach a
+source archive generated from the Git-tracked kernel package path:
+
+```bash
+git archive --format=tar \
+  --prefix=orbitquant-packed-matmul/ \
+  HEAD:native-kernels/orbitquant-packed-matmul \
+  > /tmp/orbitquant-packed-matmul-source.tar
+```
+
+The archive should contain only the tracked source and test files:
+
+- `build.toml`
+- `CARD.md`
+- `example.py`
+- `flake.nix`
+- `flake.lock`
+- `benchmarks/benchmark.py`
+- `tests/__init__.py`
+- `tests/test_packed_matmul.py`
+- `torch-ext/orbitquant_packed_matmul/__init__.py`
+- `torch-ext/torch_binding.cpp`
+- `torch-ext/torch_binding.h`
+- `orbitquant_packed_matmul_cuda/packed_matmul.cu`
+- `orbitquant_packed_matmul_metal/packed_matmul.mm`
+- `orbitquant_packed_matmul_metal/packed_matmul.metal`
+
+Do not attach generated `build/`, local `.venv/`, `__pycache__/`, or benchmark
+output directories as source material.
+
 Purpose:
 
 `orbitquant-packed-matmul` implements packed low-bit matrix multiplication for
