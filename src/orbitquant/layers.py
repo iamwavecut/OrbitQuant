@@ -107,8 +107,9 @@ def _triton_packed_matmul_import_error() -> Exception | None:
 class OrbitQuantLinear(nn.Module):
     """Linear layer with OrbitQuant-packed rotated weights.
 
-    The v1 runtime dequantizes weights before BF16/FP32 matmul. This validates
-    the paper's quantization path and artifact shape before fused kernels land.
+    The default runtime uses packed low-bit matmul on CUDA/MPS when the native
+    or Triton kernels are available. The explicit ``dequant_bf16`` mode keeps
+    the compatibility/debug reference path.
     """
 
     def __init__(
