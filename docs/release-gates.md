@@ -11,10 +11,12 @@ URL, or signed-off audit note.
   Current partial evidence: MPS/Metal passed
   `scripts/run_mps_kernel_checks.sh` on 2026-07-08T15:58Z, including native
   packed matmul load and explicit `runtime_mode="native_packed_matmul"`
-  benchmark execution. `native-kernels/orbitquant-packed-matmul` passed
-  `nix --option sandbox relaxed run .#ci-test -L` locally on
-  2026-07-08T16:31Z, including kernel-builder layout hooks, ABI compatibility
-  for macOS 15/Python ABI 3.9, get-kernel loading, and 17 package tests.
+  benchmark execution. After adding kernel `upstream`/`source` metadata,
+  `native-kernels/orbitquant-packed-matmul` passed
+  `nix --option sandbox relaxed run .#ci-test -L` locally again on
+  2026-07-08T16:59Z at OrbitQuant commit `5cc7d30`, including kernel-builder
+  layout hooks, ABI compatibility for macOS 15/Python ABI 3.9, get-kernel
+  loading, and 17 package tests.
   A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face, and
   its commit `062b934389dce9242e0a9185ed469cc3170e3e73` contains the
   reviewable source package from `native-kernels/orbitquant-packed-matmul`
