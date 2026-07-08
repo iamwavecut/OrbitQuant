@@ -227,6 +227,9 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "`claim_status` values" in kernel_audit
     assert "not itself a Hugging Face Kernels Hub `kernel-builder` package" in kernel_audit
     assert "kernel-builder CI" in kernel_audit
+    assert "scripts/runpod_ssh_health.sh" in kernel_audit
+    assert "ssh -F /dev/null -tt" in kernel_audit
+    assert "ignoring local SSH config and ControlMaster state" in kernel_audit
     assert "`native_packed_matmul` runtime uses the separate" in kernel_audit
     assert "targets CUDA and Metal" in kernel_audit
     assert "Current Verification Evidence" in kernel_audit

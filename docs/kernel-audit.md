@@ -26,6 +26,11 @@ for the current artifact format and runtime modes.
   The gate loads that native package through Hugging Face `kernels` and
   benchmarks `native_packed_matmul` explicitly, matching the `auto_fused`
   runtime priority.
+- `scripts/runpod_ssh_health.sh` is the preflight for RunPod basic SSH hosts.
+  It checks actual SSH authentication and remote command execution with
+  `ssh -F /dev/null -tt`, ignoring local SSH config and ControlMaster state.
+  Use it before starting the CUDA gate when the host comes from a RunPod
+  Connect-tab SSH command.
 - `scripts/run_mps_kernel_checks.sh` is the MPS/Metal correctness and smoke
   benchmark gate for Apple Silicon hosts.
 - Full-model speedup claims require backend-specific benchmark artifacts from
