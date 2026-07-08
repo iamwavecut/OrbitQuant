@@ -12,10 +12,19 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "passed on 2026-07-08T15:49Z against arXiv 2607.02461v1" in release_gates
     assert "paper-aligned subset" in release_gates
     assert "FLUX.2 Klein is\n  an additional target" in release_gates
+    assert "- [x] Native artifact validation" in release_gates
     assert "native-resolution BF16-vs-OrbitQuant\n  comparison assets" in release_gates
     assert "finite-output checks" in release_gates
     assert "`native_smoke` proof\n  block in `benchmark/summary.json`" in release_gates
     assert "raw generation records remain local-only" in release_gates
+    assert "audit-hf-artifacts --namespace WaveCut" in release_gates
+    assert "--fail-on-artifact-regression` passed on 2026-07-08T16:00Z" in (
+        release_gates
+    )
+    assert "14/14 artifact-ready" in release_gates
+    assert "14/14 native-smoke\n  ready" in release_gates
+    assert "zero remote checksum mismatches" in release_gates
+    assert "zero\n  forbidden remote files" in release_gates
     assert "paper reproduction or\n  metric-table claims" in release_gates
     assert "GenEval\n  overall and per-task scores" in release_gates
     assert "all required VBench\n  dimensions" in release_gates
@@ -24,8 +33,13 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "status instead of paper-reproduction metric claims" in release_gates
-    assert "Full-model module classification inventories" in release_gates
+    assert "- [x] Full-model module classification inventories" in release_gates
     assert "Raw inventory JSON may\n  remain unpublished" in release_gates
+    assert "`scripts/run_paper_methodology_checks.sh` produced and hash-checked" in (
+        release_gates
+    )
+    assert "policy_inventory_ready=14" in release_gates
+    assert "policy_inventory_error_count=0" in release_gates
     assert "CUDA/Triton partial optimized" in release_gates
     assert "Metal/MPS partial optimized" in release_gates
     assert "CPU\n  reference-only" in release_gates

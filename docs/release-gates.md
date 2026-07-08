@@ -24,16 +24,28 @@ URL, or signed-off audit note.
 - [ ] Release wording separates the paper-aligned subset from extra targets:
   FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 are paper targets; FLUX.2 Klein is
   an additional target unless the paper scope is expanded.
-- [ ] Native artifact validation is complete for every advertised release
+- [x] Native artifact validation is complete for every advertised release
   artifact. At minimum this includes native-resolution BF16-vs-OrbitQuant
   comparison assets, load validation, finite-output checks, manifests, and
   checksums. Published compact artifacts must include a `native_smoke` proof
   block in `benchmark/summary.json`; raw generation records remain local-only.
-- [ ] Full-model module classification inventories are captured for FLUX.2
+  Evidence: `orbitquant audit-hf-artifacts --namespace WaveCut
+  --policy-inventory-root reports/native/module-inventories
+  --fail-on-artifact-regression` passed on 2026-07-08T16:00Z for 14/14
+  private artifact repos. It reported 14/14 artifact-ready, 14/14 native-smoke
+  ready, 14/14 metadata-complete, zero manifest warnings, zero missing
+  metadata, zero remote checksum mismatches, zero README mismatches, and zero
+  forbidden remote files.
+- [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
   cross-checked against the captured summary for quantized, AdaLN INT4, and
   skipped modules.
+  Evidence: `scripts/run_paper_methodology_checks.sh` produced and hash-checked
+  config-mode transformer inventories for all four native suites. The same
+  2026-07-08T16:00Z HF artifact audit cross-checked those inventories against
+  all 14 published private artifact manifests with `policy_inventory_ready=14`
+  and `policy_inventory_error_count=0`.
 - [x] Compatibility is verified against the latest published releases and dev
   branches of Diffusers and Transformers with
   `scripts/run_hf_compat_checks.sh --mode all`, using the current Torch base.
