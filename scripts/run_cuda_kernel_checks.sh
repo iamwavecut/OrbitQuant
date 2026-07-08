@@ -21,6 +21,30 @@ PACKED_MATMUL_BLOCK_N="${ORBITQUANT_PACKED_MATMUL_BLOCK_N:-64}"
 PACKED_MATMUL_BLOCK_K="${ORBITQUANT_PACKED_MATMUL_BLOCK_K:-64}"
 PACKED_MATMUL_NUM_WARPS="${ORBITQUANT_PACKED_MATMUL_NUM_WARPS:-8}"
 RUN_NATIVE_KERNEL_PACKAGE_CI="${ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI:-1}"
+NATIVE_KERNEL_REPO_ID="WaveCut/orbitquant-packed-matmul"
+NATIVE_KERNEL_SOURCE_DIR="$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
+
+native_kernel_variant_dir() {
+  python - "$NATIVE_KERNEL_SOURCE_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_dir = Path(sys.argv[1])
+candidates = []
+for metadata_path in sorted((source_dir / "build").glob("*/metadata.json")):
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("backend", {}).get("type") == "cuda":
+        candidates.append(metadata_path.parent)
+
+if not candidates:
+    raise SystemExit(
+        f"no built CUDA kernel variant with metadata.json under {source_dir / 'build'}"
+    )
+
+print(candidates[-1])
+PY
+}
 
 cd "$ROOT_DIR"
 
@@ -132,10 +156,10 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
     exit 1
   fi
   (
-    cd native-kernels/orbitquant-packed-matmul
+    cd "$NATIVE_KERNEL_SOURCE_DIR"
     nix --option sandbox relaxed run .#ci-test -L
   )
-  export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
+  export LOCAL_KERNELS="$NATIVE_KERNEL_REPO_ID=$(native_kernel_variant_dir)"
   stage native-packed-matmul-load-start
   python - <<'PY'
 from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
@@ -149,22 +173,30 @@ PY
   stage native-kernel-package-ci-done
 fi
 
-stage native-packed-matmul-bench-start
-orbitquant kernel-bench \
-  --tokens "$TOKENS" \
-  --in-features "$IN_FEATURES" \
-  --out-features "$OUT_FEATURES" \
-  --weight-bits 4 \
-  --activation-bits 4 \
-  --block-size "$BLOCK_SIZE" \
-  --activation-kernel-backend triton_cuda \
-  --runtime-mode native_packed_matmul \
-  --packed-matmul-block-m "$PACKED_MATMUL_BLOCK_M" \
-  --packed-matmul-block-n "$PACKED_MATMUL_BLOCK_N" \
-  --packed-matmul-block-k "$PACKED_MATMUL_BLOCK_K" \
-  --packed-matmul-num-warps "$PACKED_MATMUL_NUM_WARPS" \
-  --device cuda \
-  --dtype bfloat16 \
-  --warmup "$WARMUP" \
-  --iterations "$ITERATIONS"
-stage native-packed-matmul-bench-done
+if [[ -n "${LOCAL_KERNELS:-}" ]]; then
+  stage native-packed-matmul-bench-start
+  orbitquant kernel-bench \
+    --tokens "$TOKENS" \
+    --in-features "$IN_FEATURES" \
+    --out-features "$OUT_FEATURES" \
+    --weight-bits 4 \
+    --activation-bits 4 \
+    --block-size "$BLOCK_SIZE" \
+    --activation-kernel-backend triton_cuda \
+    --runtime-mode native_packed_matmul \
+    --packed-matmul-block-m "$PACKED_MATMUL_BLOCK_M" \
+    --packed-matmul-block-n "$PACKED_MATMUL_BLOCK_N" \
+    --packed-matmul-block-k "$PACKED_MATMUL_BLOCK_K" \
+    --packed-matmul-num-warps "$PACKED_MATMUL_NUM_WARPS" \
+    --device cuda \
+    --dtype bfloat16 \
+    --warmup "$WARMUP" \
+    --iterations "$ITERATIONS"
+  stage native-packed-matmul-bench-done
+else
+  stage native-packed-matmul-bench-skipped-no-local-kernel
+  printf '%s\n' \
+    "native packed matmul bench skipped because LOCAL_KERNELS is not set." \
+    "Set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=1 on a host with nix, set LOCAL_KERNELS to a built CUDA kernel variant, or wait for the Hugging Face kernel repo to become loadable." \
+    >&2
+fi
