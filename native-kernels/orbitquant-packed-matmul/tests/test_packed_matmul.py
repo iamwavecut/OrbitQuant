@@ -28,11 +28,14 @@ def _device() -> str:
 
 @pytest.mark.kernels_ci
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])
-def test_matmul_packed_weight_matches_dequantized_reference(bits: int) -> None:
+@pytest.mark.parametrize("in_features", [16, 19])
+@pytest.mark.parametrize("with_bias", [False, True])
+def test_matmul_packed_weight_matches_dequantized_reference(
+    bits: int, in_features: int, with_bias: bool
+) -> None:
     device = _device()
     dtype = torch.float16 if device == "mps" else torch.bfloat16
     rows = 9
-    in_features = 16
     out_features = 7
     x = torch.randn(rows, in_features, device=device, dtype=dtype)
     indices = (
@@ -44,10 +47,11 @@ def test_matmul_packed_weight_matches_dequantized_reference(bits: int) -> None:
     packed = _pack(indices, bits).to(device)
     row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
     centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
-    bias = torch.randn(out_features, device=device, dtype=dtype)
+    bias = torch.randn(out_features, device=device, dtype=dtype) if with_bias else None
 
     expected_weight = row_norms.cpu()[:, None] * centroids.cpu()[indices.long()]
-    expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, bias.float().cpu())
+    expected_bias = None if bias is None else bias.float().cpu()
+    expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, expected_bias)
     actual = matmul_packed_weight(
         x,
         packed,
