@@ -49,6 +49,17 @@ heads remain in source precision by default.
 `auto_fused` does not silently fall back to full BF16/FP16 weight
 materialization on CUDA or MPS when packed kernels are unavailable.
 
+Install the optional kernel runtime dependencies on hosts that should use
+optimized CUDA or Hub-published native packed matmul kernels:
+
+```bash
+pip install "orbitquant[kernels]"
+```
+
+The `kernels` extra installs the Hugging Face `kernels` loader and Triton
+dependency used by the CUDA runtime path. CPU reference runs do not require
+this extra.
+
 ## Artifact Targets
 
 Paper-aligned targets:

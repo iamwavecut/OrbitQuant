@@ -201,6 +201,9 @@ def test_release_notes_are_artifact_focused_and_reproducible():
     assert "Implemented Quantization" in release_notes
     assert 'runtime_mode="auto_fused"' in release_notes
     assert "runtime_mode=\"dequant_bf16\"" in release_notes
+    assert 'pip install "orbitquant[kernels]"' in release_notes
+    assert "Hugging Face `kernels` loader and Triton" in release_notes
+    assert "CPU reference runs do not require\nthis extra" in release_notes
     assert "Paper-aligned targets" in release_notes
     assert "FLUX.1-schnell" in release_notes
     assert "Z-Image-Turbo" in release_notes
