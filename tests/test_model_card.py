@@ -57,8 +57,10 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     card = render_model_card(manifest)
 
     assert "snapshot_download" in card
-    assert "load_quantized_pipeline_component" in card
-    assert "component=\"transformer\"" in card
+    assert "load_quantized_pipeline_from_artifact" in card
+    assert "load_quantized_pipeline_component" not in card
+    assert "component=\"transformer\"" not in card
+    assert "with the quantized component patched in" in card
     assert "not used as a standalone Diffusers pipeline repository" in card
     assert "- Rotation seed: `9`" in card
     assert "- Block size: `paper`" in card
@@ -236,8 +238,8 @@ def test_model_card_marks_missing_promoted_comparison_assets_without_logs():
 def test_model_card_uses_flux2_native_code_example():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.2-klein-4B"))
 
-    assert "from diffusers import Flux2KleinPipeline" in card
-    assert "Flux2KleinPipeline.from_pretrained" in card
+    assert "load_quantized_pipeline_from_artifact" in card
+    assert "Flux2KleinPipeline.from_pretrained" not in card
     assert "height=1024" in card
     assert "width=1024" in card
     assert "num_inference_steps=4" in card
@@ -252,8 +254,8 @@ def test_model_card_uses_flux2_native_code_example():
 def test_model_card_uses_flux1_schnell_native_code_example():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    assert "from diffusers import FluxPipeline" in card
-    assert "FluxPipeline.from_pretrained" in card
+    assert "load_quantized_pipeline_from_artifact" in card
+    assert "FluxPipeline.from_pretrained" not in card
     assert "height=1024" in card
     assert "width=1024" in card
     assert "num_inference_steps=4" in card
@@ -268,8 +270,8 @@ def test_model_card_uses_flux1_schnell_native_code_example():
 def test_model_card_uses_z_image_native_code_example():
     card = render_model_card(_manifest_for_model("Tongyi-MAI/Z-Image-Turbo"))
 
-    assert "from diffusers import ZImagePipeline" in card
-    assert "ZImagePipeline.from_pretrained" in card
+    assert "load_quantized_pipeline_from_artifact" in card
+    assert "ZImagePipeline.from_pretrained" not in card
     assert "height=1024" in card
     assert "width=1024" in card
     assert "num_inference_steps=10" in card
@@ -286,9 +288,9 @@ def test_model_card_uses_wan_native_code_example():
         _manifest_for_model("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", bits=(4, 6))
     )
 
-    assert "from diffusers import WanPipeline" in card
     assert "from diffusers.utils import export_to_video" in card
-    assert "WanPipeline.from_pretrained" in card
+    assert "load_quantized_pipeline_from_artifact" in card
+    assert "WanPipeline.from_pretrained" not in card
     assert "height=480" in card
     assert "width=832" in card
     assert "num_frames=81" in card

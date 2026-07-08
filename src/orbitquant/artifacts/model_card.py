@@ -47,182 +47,77 @@ def _install_snippet() -> str:
 
 def _usage_snippet(source_model_id: str, bits: str) -> str:
     placeholder_repo = f"WaveCut/{_artifact_slug(source_model_id, bits)}"
-    if source_model_id == "black-forest-labs/FLUX.2-klein-4B":
-        return "\n".join(
-            [
-                "```python",
-                "import torch",
-                "from diffusers import Flux2KleinPipeline",
-                "from huggingface_hub import snapshot_download",
-                "from orbitquant import load_quantized_pipeline_component",
-                "",
-                f'base_model = "{source_model_id}"',
-                f'artifact_id = "{placeholder_repo}"',
-                "",
-                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
-                "pipe = Flux2KleinPipeline.from_pretrained(",
-                "    base_model,",
-                "    torch_dtype=torch.bfloat16,",
-                ")",
-                "load_quantized_pipeline_component(",
-                "    pipe,",
-                "    artifact_dir,",
-                "    component=\"transformer\",",
-                "    device=\"cuda\",",
-                ")",
-                "pipe.to(\"cuda\")",
-                "",
-                "image = pipe(",
-                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
-                "    height=1024,",
-                "    width=1024,",
-                "    num_inference_steps=4,",
-                "    guidance_scale=1.0,",
-                ").images[0]",
-                "image.save(\"flux2-klein-orbitquant.png\")",
-                "```",
-            ]
-        )
-    if source_model_id == "black-forest-labs/FLUX.1-schnell":
-        return "\n".join(
-            [
-                "```python",
-                "import torch",
-                "from diffusers import FluxPipeline",
-                "from huggingface_hub import snapshot_download",
-                "from orbitquant import load_quantized_pipeline_component",
-                "",
-                f'base_model = "{source_model_id}"',
-                f'artifact_id = "{placeholder_repo}"',
-                "",
-                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
-                "pipe = FluxPipeline.from_pretrained(",
-                "    base_model,",
-                "    torch_dtype=torch.bfloat16,",
-                ")",
-                "load_quantized_pipeline_component(",
-                "    pipe,",
-                "    artifact_dir,",
-                "    component=\"transformer\",",
-                "    device=\"cuda\",",
-                ")",
-                "pipe.to(\"cuda\")",
-                "",
-                "image = pipe(",
-                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
-                "    height=1024,",
-                "    width=1024,",
-                "    num_inference_steps=4,",
-                "    guidance_scale=0.0,",
-                ").images[0]",
-                "image.save(\"flux1-schnell-orbitquant.png\")",
-                "```",
-            ]
-        )
-    if source_model_id == "Tongyi-MAI/Z-Image-Turbo":
-        return "\n".join(
-            [
-                "```python",
-                "import torch",
-                "from diffusers import ZImagePipeline",
-                "from huggingface_hub import snapshot_download",
-                "from orbitquant import load_quantized_pipeline_component",
-                "",
-                f'base_model = "{source_model_id}"',
-                f'artifact_id = "{placeholder_repo}"',
-                "",
-                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
-                "pipe = ZImagePipeline.from_pretrained(",
-                "    base_model,",
-                "    torch_dtype=torch.bfloat16,",
-                ")",
-                "load_quantized_pipeline_component(",
-                "    pipe,",
-                "    artifact_dir,",
-                "    component=\"transformer\",",
-                "    device=\"cuda\",",
-                ")",
-                "pipe.to(\"cuda\")",
-                "",
-                "image = pipe(",
-                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
-                "    height=1024,",
-                "    width=1024,",
-                "    num_inference_steps=10,",
-                "    guidance_scale=0.0,",
-                ").images[0]",
-                "image.save(\"z-image-orbitquant.png\")",
-                "```",
-            ]
-        )
-    if source_model_id == "Wan-AI/Wan2.1-T2V-1.3B-Diffusers":
-        return "\n".join(
-            [
-                "```python",
-                "import torch",
-                "from diffusers import WanPipeline",
-                "from diffusers.utils import export_to_video",
-                "from huggingface_hub import snapshot_download",
-                "from orbitquant import load_quantized_pipeline_component",
-                "",
-                f'base_model = "{source_model_id}"',
-                f'artifact_id = "{placeholder_repo}"',
-                "",
-                "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
-                "pipe = WanPipeline.from_pretrained(",
-                "    base_model,",
-                "    torch_dtype=torch.bfloat16,",
-                ")",
-                "load_quantized_pipeline_component(",
-                "    pipe,",
-                "    artifact_dir,",
-                "    component=\"transformer\",",
-                "    device=\"cuda\",",
-                ")",
-                "pipe.to(\"cuda\")",
-                "",
-                "frames = pipe(",
-                "    prompt=\"A cinematic shot of a small robot walking through a neon market\",",
-                "    height=480,",
-                "    width=832,",
-                "    num_frames=81,",
-                "    num_inference_steps=50,",
-                "    guidance_scale=5.0,",
-                ").frames[0]",
-                "export_to_video(frames, \"wan-orbitquant.mp4\", fps=16)",
-                "```",
-            ]
-        )
-    return "\n".join(
+    suite = _native_suite_for_source_model(source_model_id)
+    lines = [
+        "```python",
+        "import torch",
+    ]
+    if suite is not None and suite.frames is not None:
+        lines.append("from diffusers.utils import export_to_video")
+    lines.extend(
         [
-            "```python",
-            "import torch",
-            "from diffusers import DiffusionPipeline",
             "from huggingface_hub import snapshot_download",
-            "from orbitquant import load_quantized_pipeline_component",
+            "from orbitquant import load_quantized_pipeline_from_artifact",
             "",
-            f'base_model = "{source_model_id}"',
             f'artifact_id = "{placeholder_repo}"',
             "",
             "artifact_dir = snapshot_download(artifact_id, repo_type=\"model\")",
-            "pipe = DiffusionPipeline.from_pretrained(",
-            "    base_model,",
-            "    torch_dtype=torch.bfloat16,",
-            ")",
-            "load_quantized_pipeline_component(",
-            "    pipe,",
+            "pipe = load_quantized_pipeline_from_artifact(",
             "    artifact_dir,",
-            "    component=\"transformer\",",
+            "    torch_dtype=torch.bfloat16,",
             "    device=\"cuda\",",
             ")",
-            "pipe.to(\"cuda\")",
             "",
-            "result = pipe(",
-            "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
-            ")",
+        ]
+    )
+    if suite is None:
+        lines.extend(
+            [
+                "result = pipe(",
+                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
+                ")",
+                "```",
+            ]
+        )
+        return "\n".join(lines)
+
+    if suite.frames is None:
+        output_name = {
+            "black-forest-labs/FLUX.2-klein-4B": "flux2-klein-orbitquant.png",
+            "black-forest-labs/FLUX.1-schnell": "flux1-schnell-orbitquant.png",
+            "Tongyi-MAI/Z-Image-Turbo": "z-image-orbitquant.png",
+        }.get(source_model_id, "orbitquant.png")
+        lines.extend(
+            [
+                "image = pipe(",
+                "    prompt=\"A precise product photo of a red ceramic mug on a wooden desk\",",
+                f"    height={suite.height},",
+                f"    width={suite.width},",
+                f"    num_inference_steps={suite.steps},",
+                f"    guidance_scale={suite.guidance},",
+                ").images[0]",
+                f'image.save("{output_name}")',
+                "```",
+            ]
+        )
+        return "\n".join(lines)
+
+    export_fps = suite.export_fps or 16
+    lines.extend(
+        [
+            "frames = pipe(",
+            "    prompt=\"A cinematic shot of a small robot walking through a neon market\",",
+            f"    height={suite.height},",
+            f"    width={suite.width},",
+            f"    num_frames={suite.frames},",
+            f"    num_inference_steps={suite.steps},",
+            f"    guidance_scale={suite.guidance},",
+            ").frames[0]",
+            f'export_to_video(frames, "wan-orbitquant.mp4", fps={export_fps})',
             "```",
         ]
     )
+    return "\n".join(lines)
 
 
 def _native_settings_section(source_model_id: str) -> list[str]:
@@ -421,8 +316,8 @@ def render_model_card(
             "",
             _install_snippet(),
             "",
-            "Load the base Diffusers pipeline, download this model repository as "
-            "an OrbitQuant artifact, then patch the transformer component:",
+            "Download this model repository as an OrbitQuant artifact, then load "
+            "the source Diffusers pipeline with the quantized component patched in:",
             "",
             _usage_snippet(data["source_model_id"], bits),
             "",
