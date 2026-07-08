@@ -28,6 +28,9 @@ def test_source_distribution_keeps_kernel_source_without_generated_artifacts() -
     tracked_strings = {path.as_posix() for path in tracked}
 
     required_source_paths = {
+        "scripts/run_cuda_kernel_checks.sh",
+        "scripts/run_mps_kernel_checks.sh",
+        "scripts/runpod_ssh_health.sh",
         "native-kernels/orbitquant-packed-matmul/build.toml",
         "native-kernels/orbitquant-packed-matmul/CARD.md",
         "native-kernels/orbitquant-packed-matmul/flake.nix",
