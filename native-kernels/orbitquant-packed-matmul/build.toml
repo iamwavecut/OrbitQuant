@@ -1,0 +1,28 @@
+[general]
+name = "orbitquant-packed-matmul"
+version = 1
+edition = 5
+license = "Apache-2.0"
+backends = ["cuda", "metal"]
+
+[general.hub]
+repo-id = "WaveCut/orbitquant-packed-matmul"
+
+[torch]
+src = [
+  "torch-ext/torch_binding.cpp",
+  "torch-ext/torch_binding.h",
+]
+
+[kernel.packed_matmul_cuda]
+backend = "cuda"
+depends = ["torch"]
+src = ["orbitquant_packed_matmul_cuda/packed_matmul.cu"]
+
+[kernel.packed_matmul_metal]
+backend = "metal"
+depends = ["torch"]
+src = [
+  "orbitquant_packed_matmul_metal/packed_matmul.mm",
+  "orbitquant_packed_matmul_metal/packed_matmul.metal",
+]
