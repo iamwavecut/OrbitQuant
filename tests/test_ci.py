@@ -80,6 +80,27 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "--runtime-mode native_packed_matmul" in mps_script
 
 
+def test_runpod_ssh_health_script_uses_sterile_ssh_probe():
+    script = Path("scripts/runpod_ssh_health.sh")
+
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+
+    text = script.read_text(encoding="utf-8")
+    assert "It does not\nquery, create, stop, or modify pods." in text
+    assert "-F /dev/null" in text
+    assert "-tt" in text
+    assert "-o IdentitiesOnly=yes" in text
+    assert "-o ControlMaster=no" in text
+    assert "-o ControlPath=none" in text
+    assert "-o PreferredAuthentications=publickey" in text
+    assert "-o PasswordAuthentication=no" in text
+    assert "-o KbdInteractiveAuthentication=no" in text
+    assert "__RUNPOD_SSH_HEALTH_OK__" in text
+    assert "RUNPOD_SSH_HEALTH_READY" in text
+    assert "runpodctl pod" not in text
+
+
 def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant():
     package_root = Path("native-kernels/orbitquant-packed-matmul")
     tracked_files = _tracked_native_kernel_files(package_root)
