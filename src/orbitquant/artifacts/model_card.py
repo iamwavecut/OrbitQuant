@@ -39,8 +39,7 @@ def _install_snippet() -> str:
     return "\n".join(
         [
             "```bash",
-            "pip install git+https://github.com/iamwavecut/OrbitQuant.git "
-            "diffusers transformers accelerate huggingface_hub safetensors",
+            "pip install \"orbitquant[hf]\"",
             "```",
         ]
     )

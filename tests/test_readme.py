@@ -5,6 +5,7 @@ def test_readme_documents_component_artifact_usage():
     readme = Path("README.md").read_text(encoding="utf-8")
 
     assert "snapshot_download" in readme
+    assert 'pip install "orbitquant[hf]"' in readme
     assert (
         'pip install "orbitquant[hf] @ git+https://github.com/iamwavecut/OrbitQuant.git"'
         in readme

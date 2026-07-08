@@ -119,10 +119,8 @@ def test_model_card_renders_native_validation_evidence_without_raw_records():
 def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    assert "pip install git+https://github.com/iamwavecut/OrbitQuant.git" in card
-    assert "diffusers" in card
-    assert "transformers" in card
-    assert "accelerate" in card
+    assert 'pip install "orbitquant[hf]"' in card
+    assert "git+https://github.com/iamwavecut/OrbitQuant.git" not in card
     for forbidden in (
         "reports/",
         "terminal.log",
