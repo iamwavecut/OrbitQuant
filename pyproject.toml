@@ -10,6 +10,17 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "WaveCut" }]
+keywords = ["diffusion", "quantization", "transformers", "diffusers", "orbitquant"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "huggingface_hub>=0.33",
   "numpy>=2.0",
@@ -41,6 +52,12 @@ dev = [
 
 [project.scripts]
 orbitquant = "orbitquant.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/iamwavecut/OrbitQuant"
+Repository = "https://github.com/iamwavecut/OrbitQuant"
+Issues = "https://github.com/iamwavecut/OrbitQuant/issues"
+Paper = "https://arxiv.org/abs/2607.02461"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/orbitquant"]

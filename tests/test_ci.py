@@ -1,4 +1,5 @@
 import os
+import tomllib
 from pathlib import Path
 
 
@@ -86,3 +87,18 @@ def test_paper_methodology_script_is_executable_and_scope_limited():
     assert "GenEval" in text
     assert "VBench" in text
     assert "model generation" in text
+
+
+def test_pyproject_has_release_package_metadata():
+    payload = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    project = payload["project"]
+
+    assert project["license"] == "Apache-2.0"
+    assert "diffusion" in project["keywords"]
+    assert "quantization" in project["keywords"]
+    assert "License :: OSI Approved :: Apache Software License" in project["classifiers"]
+    assert "Topic :: Scientific/Engineering :: Artificial Intelligence" in (
+        project["classifiers"]
+    )
+    assert project["urls"]["Repository"] == "https://github.com/iamwavecut/OrbitQuant"
+    assert project["urls"]["Paper"] == "https://arxiv.org/abs/2607.02461"
