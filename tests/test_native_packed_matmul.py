@@ -29,8 +29,8 @@ def test_native_packed_matmul_loader_uses_versioned_hf_kernel(monkeypatch):
     fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
     fake_direct_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
 
-    def fake_get_kernel(repo_id, *, version):
-        calls.append((repo_id, version))
+    def fake_get_kernel(repo_id, *, version, trust_remote_code):
+        calls.append((repo_id, version, trust_remote_code))
         return fake_kernel
 
     monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
@@ -38,7 +38,7 @@ def test_native_packed_matmul_loader_uses_versioned_hf_kernel(monkeypatch):
     monkeypatch.setitem(sys.modules, "kernels", SimpleNamespace(get_kernel=fake_get_kernel))
 
     assert native_module._load_native_packed_matmul_kernel() is fake_kernel
-    assert calls == [("WaveCut/orbitquant-packed-matmul", 1)]
+    assert calls == [("WaveCut/orbitquant-packed-matmul", 1, True)]
 
 
 def test_native_packed_matmul_loader_falls_back_to_importable_package_without_hf_kernels(

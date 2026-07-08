@@ -38,7 +38,11 @@ def _load_native_packed_matmul_kernel() -> Any:
         ) from exc
 
     try:
-        _NATIVE_KERNEL = get_kernel(_KERNEL_REPO_ID, version=_KERNEL_VERSION)
+        _NATIVE_KERNEL = get_kernel(
+            _KERNEL_REPO_ID,
+            version=_KERNEL_VERSION,
+            trust_remote_code=True,
+        )
     except Exception as exc:  # pragma: no cover - environment and Hub dependent
         _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
         if _NATIVE_KERNEL is not None:
