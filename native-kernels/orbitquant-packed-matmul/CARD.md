@@ -33,3 +33,14 @@ Inputs:
 - `bias`: optional projection bias.
 
 The output has shape `[..., out_features]` and the same dtype as `x`.
+
+## Build And Test
+
+```bash
+nix --option sandbox relaxed run .#build-and-copy -L
+nix --option sandbox relaxed run .#ci-test -L
+```
+
+The build produces ABI3 Hugging Face Kernels artifacts under `build/` for the
+supported backend variants on the current platform. On macOS, `sandbox relaxed`
+or enabled Nix sandboxing is required by `kernel-builder`.
