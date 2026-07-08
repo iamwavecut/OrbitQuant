@@ -57,6 +57,8 @@ def load_orbitquant_artifact(
     strict: bool = True,
     validate_checksums: bool = True,
     device: str | torch.device | None = None,
+    runtime_mode: str | None = None,
+    activation_kernel_backend: str | None = None,
 ) -> OrbitQuantManifest:
     artifact_path = Path(artifact_dir)
     validate_required_artifact_files(artifact_path)
@@ -67,6 +69,13 @@ def load_orbitquant_artifact(
         json.loads((artifact_path / "orbitquant_manifest.json").read_text(encoding="utf-8"))
     )
     _validate_config_manifest(config, manifest)
+    if runtime_mode is not None or activation_kernel_backend is not None:
+        config_payload = config.to_dict()
+        if runtime_mode is not None:
+            config_payload["runtime_mode"] = runtime_mode
+        if activation_kernel_backend is not None:
+            config_payload["activation_kernel_backend"] = activation_kernel_backend
+        config = OrbitQuantConfig.from_dict(config_payload)
     if validate_checksums:
         validate_artifact_checksums(artifact_path, manifest.checksums)
         validate_sha256sums(

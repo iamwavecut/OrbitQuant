@@ -165,6 +165,8 @@ def load_quantized_pipeline_component(
     strict: bool = True,
     validate_checksums: bool = True,
     device: str | torch.device | None = None,
+    runtime_mode: str | None = None,
+    activation_kernel_backend: str | None = None,
 ) -> OrbitQuantManifest:
     _validate_artifact_component(artifact_dir, component)
     target = _get_pipeline_component(pipeline, component)
@@ -174,6 +176,8 @@ def load_quantized_pipeline_component(
         strict=strict,
         validate_checksums=validate_checksums,
         device=device,
+        runtime_mode=runtime_mode,
+        activation_kernel_backend=activation_kernel_backend,
     )
 
 
@@ -185,6 +189,8 @@ def load_quantized_pipeline_from_artifact(
     strict: bool = True,
     validate_checksums: bool = True,
     device: str | torch.device | None = None,
+    runtime_mode: str | None = None,
+    activation_kernel_backend: str | None = None,
     torch_dtype: torch.dtype | None = None,
     **from_pretrained_kwargs: Any,
 ) -> Any:
@@ -220,6 +226,8 @@ def load_quantized_pipeline_from_artifact(
         strict=strict,
         validate_checksums=validate_checksums,
         device=device,
+        runtime_mode=runtime_mode,
+        activation_kernel_backend=activation_kernel_backend,
     )
     pipeline.orbitquant_manifest = manifest
     pipeline.orbitquant_artifact_dir = str(artifact_path)

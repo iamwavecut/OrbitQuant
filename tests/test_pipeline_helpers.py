@@ -166,6 +166,44 @@ def test_load_quantized_pipeline_component_restores_saved_component_artifact(tmp
     assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
 
 
+def test_load_quantized_pipeline_component_applies_runtime_override_without_rewriting_manifest(
+    tmp_path,
+):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(
+        block_size=4,
+        target_policy="generic_dit",
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="cpu",
+    )
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    restored_pipeline = TinyPipeline()
+    manifest = load_quantized_pipeline_component(
+        restored_pipeline,
+        tmp_path,
+        component="transformer",
+        runtime_mode="debug_no_activation_quant",
+        activation_kernel_backend="auto",
+    )
+
+    restored_layer = restored_pipeline.transformer.transformer_blocks[0]["attn"]["to_q"]
+    assert manifest.runtime_mode == "dequant_bf16"
+    assert isinstance(restored_layer, OrbitQuantLinear)
+    assert restored_layer.runtime_mode == "debug_no_activation_quant"
+    assert restored_layer.activation_kernel_backend == "auto"
+
+
 def test_load_quantized_pipeline_from_artifact_loads_source_pipeline_and_component(tmp_path):
     source_pipeline = TinyPipeline()
     config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
@@ -209,6 +247,44 @@ def test_load_quantized_pipeline_from_artifact_loads_source_pipeline_and_compone
     assert pipeline.orbitquant_manifest.source_model_id == "example/model"
     assert pipeline.orbitquant_artifact_dir == str(tmp_path)
     assert torch.isfinite(restored_layer(torch.randn(1, 2, 8))).all()
+
+
+def test_load_quantized_pipeline_from_artifact_passes_runtime_override_to_component(tmp_path):
+    source_pipeline = TinyPipeline()
+    config = OrbitQuantConfig(
+        block_size=4,
+        target_policy="generic_dit",
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="cpu",
+    )
+    summary = quantize_pipeline(source_pipeline, config, component="transformer")
+    save_quantized_pipeline_component(
+        source_pipeline,
+        tmp_path,
+        config=config,
+        component="transformer",
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            return TinyPipeline()
+
+    pipeline = load_quantized_pipeline_from_artifact(
+        tmp_path,
+        pipeline_cls=FakePipeline,
+        runtime_mode="debug_no_activation_quant",
+        activation_kernel_backend="auto",
+    )
+
+    restored_layer = pipeline.transformer.transformer_blocks[0]["attn"]["to_q"]
+    assert isinstance(restored_layer, OrbitQuantLinear)
+    assert restored_layer.runtime_mode == "debug_no_activation_quant"
+    assert restored_layer.activation_kernel_backend == "auto"
 
 
 def test_load_quantized_pipeline_from_artifact_uses_native_pipeline_class(
