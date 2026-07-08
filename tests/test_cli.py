@@ -263,6 +263,8 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys
                 str(tmp_path / "artifacts"),
                 "--seeds",
                 "0",
+                "--runtime-mode",
+                "triton_packed_matmul",
             ]
         )
         == 0
@@ -278,6 +280,7 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(capsys
         "wan-native",
     }
     assert sum(1 for job in jobs if job["suite"] == "wan-native") == 2
+    assert {job["runtime_mode"] for job in jobs} == {"triton_packed_matmul"}
     wan_w4a6 = next(
         job
         for job in jobs
@@ -418,6 +421,8 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
                 "bfloat16",
                 "--activation-kernel-backend",
                 "triton_cuda",
+                "--runtime-mode",
+                "triton_packed_matmul",
             ]
         )
         == 0
@@ -447,6 +452,7 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--weight-bits 4 --activation-bits 6" in script
     assert "--weight-bits 4 --activation-bits 4" in script
     assert "--activation-kernel-backend triton_cuda" in script
+    assert "--runtime-mode triton_packed_matmul" in script
     assert "--staging-mode component" in script
     assert script.count("\norbitquant generate-pack") == 4
     assert "--split original" in script
@@ -656,6 +662,8 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
                 "W4A6",
                 "--activation-kernel-backend",
                 "cpu",
+                "--runtime-mode",
+                "triton_packed_matmul",
                 "--dry-run",
             ]
         )
@@ -668,7 +676,65 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path):
     assert '"weight_bits": 4' in output
     assert '"activation_bits": 6' in output
     assert '"activation_kernel_backend": "cpu"' in output
+    assert '"runtime_mode": "triton_packed_matmul"' in output
     assert '"target_policy": "wan"' in output
+
+
+def test_cli_generate_with_packed_runtime_on_the_fly_quantization_skips_dequant_prewarm(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "blue")])
+
+    def fake_apply_quantization(pipeline, suite, config):
+        assert config.runtime_mode == "triton_packed_matmul"
+        return SimpleNamespace(
+            quantized_modules=["transformer_blocks.0.attn.to_q"],
+            adaln_modules=[],
+            skipped_modules=[],
+        )
+
+    def fail_prewarm(*args, **kwargs):
+        raise AssertionError("packed runtime must not materialize dequant prewarm")
+
+    monkeypatch.setattr(cli_main, "load_pipeline_for_suite", lambda *args, **kwargs: TinyPipeline())
+    monkeypatch.setattr(cli_main, "apply_quantization_to_pipeline", fake_apply_quantization)
+    monkeypatch.setattr(cli_main, "_prewarm_pipeline_component", fail_prewarm)
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "flux2-native",
+                "--prompt",
+                "A native prompt",
+                "--output",
+                str(tmp_path),
+                "--bit-setting",
+                "W4A4",
+                "--runtime-mode",
+                "triton_packed_matmul",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["output_path"].endswith("flux2-native_seed0_W4A4.png")
 
 
 def test_cli_validate_generation_reports_valid_native_output(capsys, tmp_path):
@@ -902,6 +968,86 @@ def test_cli_generate_with_artifact_loads_component_and_records_metrics(
     assert "assets/flux2-native_seed3_W4A4.png" in manifest["checksums"]
     assert "assets/flux2-native_seed3_W4A4.png.json" in manifest["checksums"]
     assert restored.device == "cpu"
+
+
+def test_cli_generate_with_packed_runtime_artifact_skips_dequant_prewarm(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "blue")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(
+        block_size=4,
+        target_policy="generic_dit",
+        runtime_mode="triton_packed_matmul",
+    )
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            return TinyPipeline()
+
+    def fail_prewarm(*args, **kwargs):
+        raise AssertionError("packed runtime must not materialize dequant prewarm")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+    monkeypatch.setattr(cli_main, "_prewarm_pipeline_component", fail_prewarm)
+
+    assert (
+        main(
+            [
+                "generate",
+                "--suite",
+                "flux2-native",
+                "--prompt",
+                "A native prompt",
+                "--artifact",
+                str(tmp_path),
+                "--seed",
+                "3",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["output_path"].endswith("flux2-native_seed3_W4A4.png")
 
 
 def test_cli_generate_with_artifact_original_split_skips_quantized_component(
@@ -1390,6 +1536,89 @@ def test_cli_generate_pack_runs_jobs_once_per_prompt_seed_and_records_artifacts(
     assert "assets/flux2-native_seed3_W4A4_counting.png" in manifest["checksums"]
     assert len(metrics_rows) == 2
     assert json.loads(metrics_rows[0])["metadata"]["prompt_record"]["id"] == "simple-object"
+
+
+def test_cli_generate_pack_with_packed_runtime_artifact_skips_dequant_prewarm(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), "green")])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(
+        block_size=4,
+        target_policy="generic_dit",
+        runtime_mode="triton_packed_matmul",
+    )
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    class FakeDiffusionPipeline:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            assert model_id == "example/artifact-model"
+            return TinyPipeline()
+
+    def fail_prewarm(*args, **kwargs):
+        raise AssertionError("packed runtime must not materialize dequant prewarm")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(Flux2KleinPipeline=FakeDiffusionPipeline),
+    )
+    monkeypatch.setattr(cli_main, "_prewarm_pipeline_component", fail_prewarm)
+
+    assert (
+        main(
+            [
+                "generate-pack",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt-id",
+                "simple-object",
+                "--seeds",
+                "3",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["run_count"] == 1
+    assert output["outputs"][0]["output_path"].endswith(
+        "flux2-native_seed3_W4A4_simple-object.png"
+    )
 
 
 def test_cli_generate_pack_skip_checksums_refreshes_artifact_once_at_end(

@@ -73,6 +73,13 @@ from orbitquant.modeling import (
 )
 from orbitquant.pipeline import load_quantized_pipeline_component
 
+_RUNTIME_MODE_CHOICES = [
+    "dequant_bf16",
+    "debug_no_quant",
+    "debug_no_activation_quant",
+    "triton_packed_matmul",
+]
+
 
 def _torch_dtype(name: str) -> torch.dtype:
     return {
@@ -112,6 +119,10 @@ def _prewarm_pipeline_component(
         "device": summary.device,
         "dtype": summary.dtype,
     }
+
+
+def _should_prewarm_quantized_weights(config: OrbitQuantConfig | None) -> bool:
+    return config is None or config.runtime_mode != "triton_packed_matmul"
 
 
 def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
@@ -433,6 +444,11 @@ def main(argv: list[str] | None = None) -> int:
     native_plan_parser.add_argument("--suite", action="append")
     native_plan_parser.add_argument("--output-root", default="artifacts/native")
     native_plan_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
+    native_plan_parser.add_argument(
+        "--runtime-mode",
+        default="dequant_bf16",
+        choices=_RUNTIME_MODE_CHOICES,
+    )
 
     external_eval_plan_parser = subparsers.add_parser(
         "external-eval-plan", help="print GenEval/VBench runner and metric import jobs"
@@ -508,6 +524,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=["auto", "cpu", "mps", "triton_cuda"],
     )
     native_script_parser.add_argument(
+        "--runtime-mode",
+        default="dequant_bf16",
+        choices=_RUNTIME_MODE_CHOICES,
+    )
+    native_script_parser.add_argument(
         "--staging-mode",
         default="component",
         choices=["streaming", "component"],
@@ -528,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     quantize_parser.add_argument(
         "--runtime-mode",
         default="dequant_bf16",
-        choices=["dequant_bf16", "debug_no_quant", "debug_no_activation_quant"],
+        choices=_RUNTIME_MODE_CHOICES,
     )
     quantize_parser.add_argument(
         "--activation-kernel-backend",
@@ -763,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument(
         "--runtime-mode",
         default="dequant_bf16",
-        choices=["dequant_bf16", "debug_no_quant", "debug_no_activation_quant"],
+        choices=_RUNTIME_MODE_CHOICES,
     )
     generate_parser.add_argument(
         "--activation-kernel-backend",
@@ -955,6 +976,7 @@ def main(argv: list[str] | None = None) -> int:
                     suites=suites,
                     output_root=args.output_root,
                     seeds=args.seeds,
+                    runtime_mode=args.runtime_mode,
                 ),
                 indent=2,
             )
@@ -1033,6 +1055,7 @@ def main(argv: list[str] | None = None) -> int:
                 device=args.device,
                 dtype=args.dtype,
                 activation_kernel_backend=args.activation_kernel_backend,
+                runtime_mode=args.runtime_mode,
                 staging_mode=args.staging_mode,
                 resume=args.resume,
             )
@@ -1510,7 +1533,7 @@ def main(argv: list[str] | None = None) -> int:
                 validate_checksums=not args.skip_artifact_checksums,
                 device=args.device,
             )
-            if not args.no_prewarm:
+            if not args.no_prewarm and _should_prewarm_quantized_weights(artifact_config):
                 prewarm_metadata = _prewarm_pipeline_component(
                     pipeline,
                     args.component,
@@ -1712,7 +1735,9 @@ def main(argv: list[str] | None = None) -> int:
                     component=args.component,
                     device=args.device,
                 )
-                if not args.no_prewarm:
+                if not args.no_prewarm and _should_prewarm_quantized_weights(
+                    quantization_config
+                ):
                     prewarm_metadata = _prewarm_pipeline_component(
                         pipeline,
                         args.component,
@@ -1723,7 +1748,9 @@ def main(argv: list[str] | None = None) -> int:
             quantization_summary = apply_quantization_to_pipeline(
                 pipeline, suite, quantization_config
             )
-            if not args.no_prewarm:
+            if not args.no_prewarm and _should_prewarm_quantized_weights(
+                quantization_config
+            ):
                 prewarm_metadata = _prewarm_pipeline_component(
                     pipeline,
                     args.component,

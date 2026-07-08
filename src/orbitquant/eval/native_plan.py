@@ -17,6 +17,7 @@ def build_native_eval_plan(
     suites: list[NativeSuite] | None = None,
     output_root: str | Path = "artifacts/native",
     seeds: list[int] | None = None,
+    runtime_mode: str = "dequant_bf16",
 ) -> dict[str, Any]:
     selected_suites = list_native_suites() if suites is None else suites
     selected_seeds = [0] if seeds is None else seeds
@@ -41,6 +42,7 @@ def build_native_eval_plan(
                         "steps": suite.steps,
                         "guidance": suite.guidance,
                         "metric": suite.metric,
+                        "runtime_mode": runtime_mode,
                     }
                 )
     return {"job_count": len(jobs), "jobs": jobs}
@@ -109,6 +111,7 @@ def _kernel_preflight_lines(
     device: str,
     dtype: str,
     activation_kernel_backend: str,
+    runtime_mode: str,
 ) -> list[str]:
     lines = [
         "# Kernel preflight",
@@ -136,6 +139,8 @@ def _kernel_preflight_lines(
                     activation_bits,
                     "--activation-kernel-backend",
                     activation_kernel_backend,
+                    "--runtime-mode",
+                    runtime_mode,
                     "--device",
                     device,
                     "--dtype",
@@ -197,6 +202,7 @@ def build_native_run_script(
     device: str = "cuda",
     dtype: str = "bfloat16",
     activation_kernel_backend: str = "triton_cuda",
+    runtime_mode: str = "dequant_bf16",
     staging_mode: str = "component",
     resume: bool = False,
 ) -> str:
@@ -225,6 +231,7 @@ def build_native_run_script(
             device=device,
             dtype=dtype,
             activation_kernel_backend=activation_kernel_backend,
+            runtime_mode=runtime_mode,
         )
     )
     lines.append(_cmd(["stage_log", "END", "kernel preflight"]))
@@ -259,6 +266,8 @@ def build_native_run_script(
                     activation_bits,
                     "--activation-kernel-backend",
                     activation_kernel_backend,
+                    "--runtime-mode",
+                    runtime_mode,
                     "--device",
                     device,
                     "--staging-mode",
