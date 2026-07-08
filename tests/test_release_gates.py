@@ -56,6 +56,13 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "explicit `runtime_mode=\"native_packed_matmul\"`\n  benchmark execution" in (
         release_gates
     )
+    assert "reviewable source package from `native-kernels/orbitquant-packed-matmul`" in (
+        release_gates
+    )
+    assert "without generated `build/`, local `.venv/`, `__pycache__/`" in release_gates
+    assert "Kernel Hub binary publication still requires account\n  approval" in (
+        release_gates
+    )
     assert "CUDA/Triton remains pending on a CUDA host" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
@@ -161,6 +168,7 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request
+    assert "huggingface.co/WaveCut/orbitquant-packed-matmul/commit" in request
     assert "git archive --format=tar" in request
     assert "HEAD:native-kernels/orbitquant-packed-matmul" in request
     assert "orbitquant-packed-matmul-source.tar" in request

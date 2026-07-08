@@ -15,10 +15,13 @@ URL, or signed-off audit note.
   `nix --option sandbox relaxed run .#ci-test -L` locally on
   2026-07-08T16:31Z, including kernel-builder layout hooks, ABI compatibility
   for macOS 15/Python ABI 3.9, get-kernel loading, and 17 package tests.
-  A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face,
-  but Kernel Hub publication requires account approval; `build-and-upload`
-  built the Metal variants for commit `a4d927c` and then failed with the
-  Kernel Hub approval error. The request draft is
+  A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face, and
+  its commit `f7eb3fa912caa27ad682c7ea1757f580a2751a01` contains the
+  reviewable source package from `native-kernels/orbitquant-packed-matmul`
+  without generated `build/`, local `.venv/`, `__pycache__/`, or benchmark
+  output directories. Kernel Hub binary publication still requires account
+  approval; `build-and-upload` built the Metal variants for commit `a4d927c`
+  and then failed with the Kernel Hub approval error. The request draft is
   [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
   CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
