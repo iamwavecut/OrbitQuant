@@ -18,7 +18,8 @@ URL, or signed-off audit note.
   A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face,
   but Kernel Hub publication requires account approval; `build-and-upload`
   built the Metal variants for commit `a4d927c` and then failed with the
-  Kernel Hub approval error.
+  Kernel Hub approval error. The request draft is
+  [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
   CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted

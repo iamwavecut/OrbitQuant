@@ -51,8 +51,10 @@ for the current artifact format and runtime modes.
   approved for the account. `nix --option sandbox relaxed --option max-jobs 1
   --option cores 1 run .#build-and-upload -L` built the three Metal variants
   for commit `a4d927c` and then failed at upload with the Kernel Hub approval
-  error. Do not treat the native package as remotely loadable through
-  `get_kernel` until that approval is granted and upload verification passes.
+  error. The approval request draft is
+  [kernel-hub-approval-request.md](kernel-hub-approval-request.md). Do not treat
+  the native package as remotely loadable through `get_kernel` until that
+  approval is granted and upload verification passes.
 - CUDA/Triton must still be verified on a CUDA host with
   `scripts/run_cuda_kernel_checks.sh` before the overall kernel audit release
   gate can be closed.

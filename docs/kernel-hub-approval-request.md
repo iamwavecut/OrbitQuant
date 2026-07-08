@@ -1,0 +1,78 @@
+# Kernel Hub Approval Request
+
+Use this as the source text for a Hugging Face Kernel Hub approval discussion.
+Before posting, ensure the referenced source URI is visible to the reviewer or
+attach the kernel source directly in the discussion.
+
+## Title
+
+Request Kernel Hub publish approval for `WaveCut/orbitquant-packed-matmul`
+
+## Body
+
+We would like approval to publish `WaveCut/orbitquant-packed-matmul` as a Hugging
+Face Kernel Hub package.
+
+Repository:
+
+- Kernel Hub repo id: `WaveCut/orbitquant-packed-matmul`
+- Source package path: `native-kernels/orbitquant-packed-matmul`
+- Source repository: `https://github.com/iamwavecut/OrbitQuant`
+- License: Apache-2.0
+
+Purpose:
+
+`orbitquant-packed-matmul` implements packed low-bit matrix multiplication for
+OrbitQuant inference. It consumes packed OrbitQuant weight codebook indices,
+per-row norms, Lloyd-Max centroids, and optional bias directly, avoiding a full
+BF16/FP16 dequantized weight matrix before the linear projection.
+
+Ecosystem fit:
+
+- Primary library: `orbitquant`
+- Target integrations: Hugging Face Diffusers, Hugging Face Transformers, and
+  ComfyUI-OrbitQuant
+- Target model families: image and video diffusion transformers, including
+  FLUX.2 Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 T2V
+- Runtime role: default `auto_fused` path prefers this native packed matmul
+  package on CUDA/MPS, with explicit `dequant_bf16` available as reference mode
+
+Kernel-builder compliance:
+
+- Uses `build.toml` and `kernel-builder`
+- Uses ABI3-safe `TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)` bindings
+- Does not use pybind11, `torch/extension.h`, `setup.py`, or hardcoded
+  `torch.ops` namespaces
+- Package tests cover 2/3/4/6-bit packed matmul with and without bias
+
+Current build and verification status:
+
+- Local kernel-builder CI passed with
+  `nix --option sandbox relaxed run .#ci-test -L`
+- Local Metal builds passed ABI compatibility checks for Python ABI 3.9
+- Local MPS OrbitQuant gate passed with `runtime_mode="native_packed_matmul"`
+  through `LOCAL_KERNELS`
+- `build-and-upload` currently builds the local Metal variants and then stops at
+  Kernel Hub publish permission, which is why this approval request is needed
+
+Benchmark status:
+
+- MPS smoke benchmarks are available from the OrbitQuant kernel gate.
+- CUDA host benchmark evidence is pending a stable CUDA host. We can provide
+  CUDA benchmark output after the Kernel Hub approval process if required.
+
+Requested approval:
+
+Please enable Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
+or for the `WaveCut` publisher namespace so this package can be uploaded and
+loaded with:
+
+```python
+from kernels import get_kernel
+
+kernel = get_kernel(
+    "WaveCut/orbitquant-packed-matmul",
+    version=1,
+    trust_remote_code=True,
+)
+```

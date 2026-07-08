@@ -148,7 +148,26 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "explicit `runtime_mode=\"native_packed_matmul\"`\n  benchmark execution" in (
         kernel_audit
     )
+    assert "[kernel-hub-approval-request.md]" in kernel_audit
     assert "CUDA/Triton must still be verified on a CUDA host" in kernel_audit
+
+
+def test_kernel_hub_approval_request_contains_required_review_fields():
+    request = Path("docs/kernel-hub-approval-request.md").read_text(encoding="utf-8")
+
+    assert "Request Kernel Hub publish approval" in request
+    assert "WaveCut/orbitquant-packed-matmul" in request
+    assert "native-kernels/orbitquant-packed-matmul" in request
+    assert "https://github.com/iamwavecut/OrbitQuant" in request
+    assert "Apache-2.0" in request
+    assert "packed low-bit matrix multiplication" in request
+    assert "Hugging Face Diffusers" in request
+    assert "Hugging Face Transformers" in request
+    assert "ComfyUI-OrbitQuant" in request
+    assert "TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in request
+    assert "Python ABI 3.9" in request
+    assert "CUDA host benchmark evidence is pending" in request
+    assert "trust_remote_code=True" in request
 
 
 def test_paper_methodology_audit_uses_claim_boundary_language():
