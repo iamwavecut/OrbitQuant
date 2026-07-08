@@ -77,7 +77,10 @@ URL, or signed-off audit note.
   private artifact repos. It reported 14/14 artifact-ready, 14/14 native-smoke
   ready, 14/14 metadata-complete, zero manifest warnings, zero missing
   metadata, zero remote checksum mismatches, zero README mismatches, and zero
-  forbidden remote files.
+  forbidden remote files. The same audit was re-run on 2026-07-08T17:27Z and
+  again reported 14/14 artifact-ready, 14/14 native-smoke-ready, 14/14
+  metadata-complete, 14/14 policy-inventory-ready, zero forbidden files, zero
+  remote checksum mismatches, and zero README mismatches.
 - [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
@@ -87,7 +90,9 @@ URL, or signed-off audit note.
   config-mode transformer inventories for all four native suites. The same
   2026-07-08T16:00Z HF artifact audit cross-checked those inventories against
   all 14 published private artifact manifests with `policy_inventory_ready=14`
-  and `policy_inventory_error_count=0`.
+  and `policy_inventory_error_count=0`. The 2026-07-08T17:27Z re-check again
+  reported `policy_inventory_ready_count=14` and
+  `policy_inventory_error_count=0`.
 - [x] Compatibility is verified against the latest published releases and dev
   branches of Diffusers and Transformers with
   `scripts/run_hf_compat_checks.sh --mode all`, using the current Torch base.
@@ -106,7 +111,9 @@ URL, or signed-off audit note.
   Evidence: the 2026-07-08T16:00Z HF artifact audit passed with
   `repo_count=14`, `artifact_ready_count=14`, `metadata_complete_ready_count=14`,
   `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
-  `readme_mismatch_count=0`, and `forbidden_file_count=0`.
+  `readme_mismatch_count=0`, and `forbidden_file_count=0`. The
+  2026-07-08T17:27Z re-check reported the same zero-regression counts and
+  `policy_inventory_ready_count=14`.
 - [ ] The GitHub repository is public, tagged, and includes the release docs,
   license, source distribution expectations, and reproducible verification
   commands.
@@ -119,7 +126,11 @@ URL, or signed-off audit note.
   `orbitquant-0.1.0.tar.gz` and `orbitquant-0.1.0-py3-none-any.whl`;
   `uv run --with twine python -m twine check dist/*` passed for both files;
   installing the wheel in a fresh venv, importing `orbitquant`, and running
-  `orbitquant --version` returned `0.1.0`. Upload remains pending.
+  `orbitquant --version` returned `0.1.0`. Re-checked on 2026-07-08T17:27Z
+  using a temporary build output directory: `twine check` passed for both
+  artifacts, fresh wheel install/import succeeded, `OrbitQuantConfig()` defaulted
+  to `runtime_mode="auto_fused"`, and `orbitquant --version` returned `0.1.0`.
+  Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, and artifact metadata behavior.
   Evidence: ComfyUI-OrbitQuant commit `1d73b36` passed `uv run pytest -q`

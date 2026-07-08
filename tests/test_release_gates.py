@@ -32,6 +32,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "14/14 native-smoke\n  ready" in release_gates
     assert "zero remote checksum mismatches" in release_gates
     assert "zero\n  forbidden remote files" in release_gates
+    assert "re-run on 2026-07-08T17:27Z" in release_gates
+    assert "14/14 policy-inventory-ready" in release_gates
     assert "paper reproduction or\n  metric-table claims" in release_gates
     assert "GenEval\n  overall and per-task scores" in release_gates
     assert "all required VBench\n  dimensions" in release_gates
@@ -47,6 +49,7 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "policy_inventory_ready=14" in release_gates
     assert "policy_inventory_error_count=0" in release_gates
+    assert "`policy_inventory_ready_count=14`" in release_gates
     assert "CUDA/Triton partial optimized" in release_gates
     assert "Metal/MPS partial optimized" in release_gates
     assert "CPU\n  reference-only" in release_gates
@@ -121,6 +124,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`native_smoke_ready_count=14`" in release_gates
     assert "`remote_checksum_mismatch_count=0`" in release_gates
     assert "`forbidden_file_count=0`" in release_gates
+    assert "zero-regression counts" in release_gates
     assert "not host logs, raw eval dumps, or terminal transcripts" in release_gates
     assert "The GitHub repository is public" in release_gates
     assert "python -m build" in release_gates
@@ -131,6 +135,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`orbitquant-0.1.0.tar.gz`" in release_gates
     assert "`orbitquant-0.1.0-py3-none-any.whl`" in release_gates
     assert "returned `0.1.0`" in release_gates
+    assert "Re-checked on 2026-07-08T17:27Z" in release_gates
+    assert "using a temporary build output directory" in release_gates
+    assert "`OrbitQuantConfig()` defaulted\n  to `runtime_mode=\"auto_fused\"`" in (
+        release_gates
+    )
     assert "Upload remains pending" in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates
