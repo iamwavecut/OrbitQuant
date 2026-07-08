@@ -146,7 +146,9 @@ URL, or signed-off audit note.
   kernel source and excludes generated `build/`, `.venv/`, `__pycache__/`,
   `.pyc`, `.so`, local artifact, and report paths. A fresh build in
   `/tmp/orbitquant-build-verify-20260708T180719Z` produced both expected
-  artifacts and `twine check` passed.
+  artifacts and `twine check` passed. GitHub CI for OrbitQuant commit
+  `f0c4855` passed on 2026-07-08T18:42Z, including package build, metadata
+  check, and wheel smoke test after adding the RunPod SSH health preflight.
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, and artifact metadata behavior.

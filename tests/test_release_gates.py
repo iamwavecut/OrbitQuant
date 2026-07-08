@@ -154,6 +154,10 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`tests/test_distribution.py` verifies" in release_gates
     assert "source distribution keeps the tracked native\n  kernel source" in release_gates
     assert "`/tmp/orbitquant-build-verify-20260708T180719Z`" in release_gates
+    assert "GitHub CI for OrbitQuant commit\n  `f0c4855` passed on 2026-07-08T18:42Z" in (
+        release_gates
+    )
+    assert "package build, metadata\n  check, and wheel smoke test" in release_gates
     assert "Upload remains pending" in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates
