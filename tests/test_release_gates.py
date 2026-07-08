@@ -74,6 +74,11 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "stopped only at the Hugging Face permission error" in release_gates
+    assert "matching\n  `torch212-metal-aarch64-darwin` variant" in release_gates
+    assert "W4 512x1024x1024 float16" in release_gates
+    assert "0.00764581459807232" in release_gates
+    assert "W4\n  512x3072x3072 float16" in release_gates
+    assert "0.10189520000712946" in release_gates
     assert "CUDA/Triton remains pending on a CUDA host" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
@@ -200,6 +205,9 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "Python ABI 3.9" in request
     assert "`build-and-copy` currently builds 3 local Metal variants" in request
     assert "publish access is needed" in request
+    assert "torch212-metal-aarch64-darwin" in request
+    assert "0.00764581459807232" in request
+    assert "0.10189520000712946" in request
     assert "CUDA host benchmark evidence is pending" in request
     assert "uploaded as a `kernel`-type repository" in request
     assert "trust_remote_code=True" in request

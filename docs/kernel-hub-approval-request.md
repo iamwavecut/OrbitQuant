@@ -100,7 +100,12 @@ Current build and verification status:
 
 Benchmark status:
 
-- MPS smoke benchmarks are available from the OrbitQuant kernel gate.
+- MPS smoke benchmarks from the local `torch212-metal-aarch64-darwin` package
+  variant on Apple Silicon with Torch 2.12.1:
+  - W4, 512 rows, 1024 input features, 1024 output features, float16:
+    `0.00764581459807232` seconds/iteration over 20 iterations.
+  - W4, 512 rows, 3072 input features, 3072 output features, float16:
+    `0.10189520000712946` seconds/iteration over 10 iterations.
 - CUDA host benchmark evidence is pending a stable CUDA host. We can provide
   CUDA benchmark output after the Kernel Hub approval process if required.
 

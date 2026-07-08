@@ -32,6 +32,11 @@ URL, or signed-off audit note.
   `nix --option sandbox relaxed run .#build-and-upload -L` found those 3
   variants and stopped only at the Hugging Face permission error. The request
   draft is [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
+  The request includes local MPS smoke benchmark numbers from the matching
+  `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
+  `0.00764581459807232` seconds/iteration over 20 iterations, and W4
+  512x3072x3072 float16 at `0.10189520000712946` seconds/iteration over
+  10 iterations.
   CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
