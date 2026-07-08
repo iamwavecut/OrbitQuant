@@ -448,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     native_plan_parser.add_argument("--seeds", type=_parse_seed_list, default=[0])
     native_plan_parser.add_argument(
         "--runtime-mode",
-        default="dequant_bf16",
+        default="auto_fused",
         choices=_RUNTIME_MODE_CHOICES,
     )
 
@@ -527,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     native_script_parser.add_argument(
         "--runtime-mode",
-        default="dequant_bf16",
+        default="auto_fused",
         choices=_RUNTIME_MODE_CHOICES,
     )
     native_script_parser.add_argument(

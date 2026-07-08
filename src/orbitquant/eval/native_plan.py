@@ -17,7 +17,7 @@ def build_native_eval_plan(
     suites: list[NativeSuite] | None = None,
     output_root: str | Path = "artifacts/native",
     seeds: list[int] | None = None,
-    runtime_mode: str = "dequant_bf16",
+    runtime_mode: str = "auto_fused",
 ) -> dict[str, Any]:
     selected_suites = list_native_suites() if suites is None else suites
     selected_seeds = [0] if seeds is None else seeds
@@ -202,7 +202,7 @@ def build_native_run_script(
     device: str = "cuda",
     dtype: str = "bfloat16",
     activation_kernel_backend: str = "triton_cuda",
-    runtime_mode: str = "dequant_bf16",
+    runtime_mode: str = "auto_fused",
     staging_mode: str = "component",
     resume: bool = False,
 ) -> str:

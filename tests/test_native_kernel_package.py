@@ -6,6 +6,15 @@ import tomllib
 from pathlib import Path
 
 KERNEL_ROOT = Path("native-kernels/orbitquant-packed-matmul")
+_GENERATED_DIRS = {".venv", "__pycache__", "build"}
+
+
+def _kernel_source_files() -> list[Path]:
+    return [
+        path
+        for path in KERNEL_ROOT.rglob("*")
+        if path.is_file() and _GENERATED_DIRS.isdisjoint(path.relative_to(KERNEL_ROOT).parts)
+    ]
 
 
 def test_kernel_builder_manifest_targets_cuda_and_metal() -> None:
@@ -61,8 +70,7 @@ def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
 def test_kernel_builder_package_has_no_setuptools_extension_path() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")
-        for path in KERNEL_ROOT.rglob("*")
-        if path.is_file()
+        for path in _kernel_source_files()
     )
     banned = [
         "setup.py",

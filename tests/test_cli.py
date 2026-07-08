@@ -331,6 +331,26 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(
     assert "range" not in json.dumps(payload).lower()
 
 
+def test_cli_native_plan_defaults_to_auto_fused_runtime(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "native-plan",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--seeds",
+                "0",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["job_count"] == 14
+    assert {job["runtime_mode"] for job in payload["jobs"]} == {"auto_fused"}
+
+
 def test_cli_external_eval_plan_lists_metric_runner_import_commands(capsys, tmp_path):
     assert (
         main(
@@ -557,7 +577,7 @@ def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_pat
     inventory_path = "reports/native/module-inventories/flux2-native-policy.json"
     assert (
         f"if orbitquant validate-artifact --artifact {artifact_dir} "
-        f"--policy-inventory {inventory_path} --runtime-mode dequant_bf16"
+        f"--policy-inventory {inventory_path} --runtime-mode auto_fused"
     ) in script
     assert f"echo 'Skipping existing valid artifact: {artifact_dir}'" in script
     assert "else\norbitquant quantize --suite flux2-native" in script

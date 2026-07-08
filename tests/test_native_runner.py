@@ -112,6 +112,14 @@ def test_build_quantization_config_for_suite_rejects_unsupported_native_bit_sett
         build_quantization_config_for_suite(suite, "W8A8")
 
 
+def test_build_quantization_config_for_suite_defaults_to_auto_fused_runtime():
+    suite = get_native_suite("flux2-native")
+
+    config = build_quantization_config_for_suite(suite, "W4A4")
+
+    assert config.runtime_mode == "auto_fused"
+
+
 def test_target_policy_for_suite_covers_all_native_targets():
     assert target_policy_for_suite(get_native_suite("flux2-native")) == "flux2"
     assert target_policy_for_suite(get_native_suite("flux1-schnell-native")) == "flux"

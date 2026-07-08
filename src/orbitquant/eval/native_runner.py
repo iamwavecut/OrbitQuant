@@ -117,7 +117,7 @@ def build_quantization_config_for_suite(
     bit_setting: str,
     *,
     rotation_seed: int = 0,
-    runtime_mode: str = "dequant_bf16",
+    runtime_mode: str = "auto_fused",
     activation_kernel_backend: str = "auto",
 ) -> OrbitQuantConfig:
     normalized = bit_setting.upper()
