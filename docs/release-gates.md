@@ -18,8 +18,9 @@ URL, or signed-off audit note.
   layout hooks, ABI compatibility for macOS 15/Python ABI 3.9, get-kernel
   loading, and 17 package tests.
   A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face, and
-  its commit `062b934389dce9242e0a9185ed469cc3170e3e73` contains the
-  reviewable source package from `native-kernels/orbitquant-packed-matmul`
+  its commit `6821e4cd5ff1894994d7137c1d861660cfeed1c8` contains the
+  reviewable source package from `native-kernels/orbitquant-packed-matmul`,
+  refreshed on 2026-07-08T18:00Z after adding CUDA launch-error checks,
   without generated `build/`, local `.venv/`, `__pycache__/`, or benchmark
   output directories. This source snapshot is review evidence only; the final
   loadable Kernel Hub artifact must be a `kernel`-type repository with

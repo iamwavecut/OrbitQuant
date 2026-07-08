@@ -1,5 +1,6 @@
 #include <ATen/Dispatch.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAGuard.h>
 
 #include "../torch-ext/torch_binding.h"
@@ -415,6 +416,7 @@ void matmul_packed_weight(
         break;
     }
 #undef ORBITQUANT_LAUNCH_BF16
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
     return;
   }
 
@@ -466,6 +468,7 @@ void matmul_packed_weight(
         break;
     }
 #undef ORBITQUANT_LAUNCH_HALF
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
     return;
   }
 
@@ -485,4 +488,5 @@ void matmul_packed_weight(
             bits,
             tile_k);
       });
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

@@ -125,6 +125,12 @@ def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant
     assert "TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in binding
     assert "REGISTER_EXTENSION(TORCH_EXTENSION_NAME)" in binding
 
+    cuda_source = (
+        package_root / "orbitquant_packed_matmul_cuda/packed_matmul.cu"
+    ).read_text(encoding="utf-8")
+    assert "#include <c10/cuda/CUDAException.h>" in cuda_source
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK();") == 3
+
     package_api = (
         package_root / "torch-ext/orbitquant_packed_matmul/__init__.py"
     ).read_text(encoding="utf-8")

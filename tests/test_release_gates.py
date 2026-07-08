@@ -226,7 +226,8 @@ def test_kernel_audit_documents_backend_claim_boundaries():
         kernel_audit
     )
     assert "2026-07-08T16:59Z" in kernel_audit
-    assert "062b934389dce9242e0a9185ed469cc3170e3e73" in kernel_audit
+    assert "6821e4cd5ff1894994d7137c1d861660cfeed1c8" in kernel_audit
+    assert "adding CUDA launch-error checks" in kernel_audit
     assert "kernels-community/README/discussions/15" in kernel_audit
     assert "W4 512x1024x1024 float16" in kernel_audit
     assert "0.10189520000712946" in kernel_audit
@@ -247,8 +248,8 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "Source visibility follow-up" in request
     assert "still a private\nsource snapshot repo" in request
     assert "make only this source-only kernel repo public" in request
-    assert "locally prepared and checked on 2026-07-08T17:39Z" in request
-    assert "9dcd6896a4d9e259d29d17589e230ce1ed7aec2cf2de715a43e47ba55edb37a7" in (
+    assert "locally prepared and checked on 2026-07-08T18:00Z" in request
+    assert "77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651" in (
         request
     )
     assert "21 tar entries" in request
@@ -257,7 +258,7 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Review source snapshot:" in request
-    assert "062b934389dce9242e0a9185ed469cc3170e3e73" in request
+    assert "6821e4cd5ff1894994d7137c1d861660cfeed1c8" in request
     assert "f7eb3fa912caa27ad682c7ea1757f580a2751a01" not in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request

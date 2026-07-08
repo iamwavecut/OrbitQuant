@@ -49,8 +49,9 @@ for the current artifact format and runtime modes.
   tests for the Metal build.
 - A private Hugging Face source snapshot exists at
   `WaveCut/orbitquant-packed-matmul` commit
-  `062b934389dce9242e0a9185ed469cc3170e3e73`, but Kernel Hub publication is
-  not yet approved for the account. On 2026-07-08T17:02Z,
+  `6821e4cd5ff1894994d7137c1d861660cfeed1c8`, refreshed on
+  2026-07-08T18:00Z after adding CUDA launch-error checks, but Kernel Hub
+  publication is not yet approved for the account. On 2026-07-08T17:02Z,
   `nix --option sandbox relaxed run .#build-and-copy -L` built and copied the
   three Metal variants, and
   `nix --option sandbox relaxed run .#build-and-upload -L` found those variants
