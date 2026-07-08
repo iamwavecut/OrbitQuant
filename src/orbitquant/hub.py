@@ -762,6 +762,28 @@ def _remote_checksum_mismatches(
     return mismatches
 
 
+def _remote_readme_mismatches(
+    manifest: dict[str, Any],
+    benchmark_summary: dict[str, Any],
+    readme_text: str,
+) -> list[str]:
+    if not manifest:
+        return []
+    manifest_payload = dict(manifest)
+    manifest_payload.setdefault("source_revision", "unknown")
+    manifest_payload.setdefault("source_license", "unknown")
+    try:
+        expected_readme = render_model_card(
+            OrbitQuantManifest.from_dict(manifest_payload),
+            benchmark_summary=benchmark_summary,
+        )
+    except Exception as exc:
+        return [f"README.md expected render failed: {type(exc).__name__}: {str(exc)}"]
+    if readme_text != expected_readme:
+        return ["README.md does not match generated OrbitQuant model card"]
+    return []
+
+
 def _json_bytes(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, indent=2) + "\n").encode("utf-8")
 
@@ -1007,9 +1029,10 @@ def _is_raw_eval_asset(relative_path: str) -> bool:
 
 
 def _is_published_card_asset(relative_path: str) -> bool:
-    if not relative_path.startswith("assets/"):
+    parts = Path(relative_path).parts
+    if len(parts) != 2 or parts[0] != "assets":
         return False
-    return Path(relative_path).name.lower().endswith("_generation_comparison_matrix.webp")
+    return parts[1].lower().endswith("_generation_comparison_matrix.webp")
 
 
 def _published_card_assets(relative_paths: set[str] | list[str]) -> list[str]:
@@ -1342,6 +1365,15 @@ def audit_hf_artifact_repos(
                     )
                 except Exception as exc:
                     benchmark_summary_error = f"{type(exc).__name__}: {str(exc)}"
+            readme_text = ""
+            readme_error = None
+            if "README.md" in file_names:
+                try:
+                    readme_text = _read_remote_bytes(
+                        repo_id, "README.md", revision=revision
+                    ).decode("utf-8")
+                except Exception as exc:
+                    readme_error = f"{type(exc).__name__}: {str(exc)}"
             metrics = _metrics_by_split(
                 repo_id,
                 file_names,
@@ -1364,6 +1396,13 @@ def audit_hf_artifact_repos(
                 sha256sums_entries,
                 lfs_sha256_by_file=_lfs_sha256_by_file(siblings_by_file),
             )
+            readme_mismatches = []
+            if readme_error is None:
+                readme_mismatches = _remote_readme_mismatches(
+                    manifest,
+                    benchmark_summary,
+                    readme_text,
+                )
             generated_splits = sorted(
                 split for split, values in metrics.items() if values.get("generated_samples")
             )
@@ -1394,6 +1433,8 @@ def audit_hf_artifact_repos(
                     "manifest_warnings": _manifest_warnings(manifest),
                     "model_index_error": model_index_error,
                     "benchmark_summary_error": benchmark_summary_error,
+                    "readme_error": readme_error,
+                    "readme_mismatches": readme_mismatches,
                     "policy_inventory_path": (
                         None if policy_inventory_file is None else str(policy_inventory_file)
                     ),
@@ -1424,6 +1465,7 @@ def audit_hf_artifact_repos(
                 and not manifest_error
                 and not model_index_error
                 and not benchmark_summary_error
+                and not readme_error
                 and (
                     policy_inventory_path is None
                     or (
@@ -1435,6 +1477,7 @@ def audit_hf_artifact_repos(
                 and not forbidden_files
                 and not sha256sums_error
                 and not remote_checksum_mismatches
+                and not readme_mismatches
             )
             row["native_smoke_ready"] = (
                 row["artifact_ready"]
@@ -1480,6 +1523,10 @@ def audit_hf_artifact_repos(
             len(row.get("remote_checksum_mismatches", [])) for row in rows
         )
         + sum(1 for row in rows if row.get("sha256sums_error")),
+        "readme_mismatch_count": sum(
+            len(row.get("readme_mismatches", [])) for row in rows
+        )
+        + sum(1 for row in rows if row.get("readme_error")),
         "forbidden_file_count": sum(row.get("forbidden_file_count", 0) for row in rows),
         "rows": rows,
     }
@@ -1547,6 +1594,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Manifest warnings: {payload.get('manifest_warning_count', 0)}",
         f"- Metadata missing fields: {payload.get('metadata_missing_count', 0)}",
         f"- Remote checksum mismatches: {payload.get('remote_checksum_mismatch_count', 0)}",
+        f"- README mismatches: {payload.get('readme_mismatch_count', 0)}",
         f"- Forbidden files: {payload.get('forbidden_file_count', 0)}",
         "",
         "## Readiness Semantics",
@@ -2375,6 +2423,8 @@ def upload_orbitquant_artifact(
     artifact_path = Path(artifact_dir)
     if upload_profile != "compact":
         raise ValueError(f"unsupported upload profile: {upload_profile}")
+    if not replace_repo_files:
+        raise ValueError("compact artifact uploads must replace remote files")
     temp_staging = None
     if staging_dir is None:
         temp_staging = tempfile.TemporaryDirectory(prefix="orbitquant-hf-upload-")

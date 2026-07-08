@@ -187,13 +187,28 @@ def _audit_file_map(
     sha256sums_path,
     summary_path,
     model_index_path,
+    readme_path=None,
     quantization_config_path=None,
 ):
+    if readme_path is None:
+        readme_path = Path(manifest_path).parent / "README.md"
+        manifest_payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        manifest_payload.setdefault("source_revision", "unknown")
+        manifest_payload.setdefault("source_license", "unknown")
+        manifest = hub_module.OrbitQuantManifest.from_dict(
+            manifest_payload
+        )
+        benchmark_summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+        Path(readme_path).write_text(
+            hub_module.render_model_card(manifest, benchmark_summary=benchmark_summary),
+            encoding="utf-8",
+        )
     file_map = {
         (repo_id, "orbitquant_manifest.json"): manifest_path,
         (repo_id, "model_index.json"): model_index_path,
         (repo_id, "SHA256SUMS"): sha256sums_path,
         (repo_id, "benchmark/summary.json"): summary_path,
+        (repo_id, "README.md"): readme_path,
     }
     if quantization_config_path is not None:
         file_map[(repo_id, "quantization_config.json")] = quantization_config_path
@@ -634,6 +649,9 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
     raw_video = tmp_path / "assets" / "wan-native_seed0_W4A4_motion.mp4"
     raw_video_sidecar = raw_video.with_suffix(".mp4.json")
     nested_raw = tmp_path / "assets" / "nested" / "debug_frame.png"
+    nested_matrix = (
+        tmp_path / "assets" / "nested" / "debug_generation_comparison_matrix.webp"
+    )
     unexpected_file = tmp_path / "debug.txt"
     ignored_cache = tmp_path / ".cache" / "upload.tmp"
     for path, payload in (
@@ -646,6 +664,7 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
         (raw_video, b"mp4"),
         (raw_video_sidecar, b"mp4 json"),
         (nested_raw, b"nested"),
+        (nested_matrix, b"nested matrix"),
         (unexpected_file, b"debug"),
         (ignored_cache, b"ignored"),
     ):
@@ -686,6 +705,7 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
     assert "assets/original_vs_orbitquant_seed0.webp" not in staged_files
     assert "assets/wan_contact_sheet.webp" not in staged_files
     assert "assets/nested/debug_frame.png" not in staged_files
+    assert "assets/nested/debug_generation_comparison_matrix.webp" not in staged_files
     assert "debug.txt" not in staged_files
     assert ".cache/upload.tmp" not in staged_files
     assert result["omitted_unexpected_file_count"] == 1
@@ -699,6 +719,7 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
         "assets/wan-native_seed0_W4A4_motion.mp4",
         "assets/wan-native_seed0_W4A4_motion.mp4.json",
         "assets/nested/debug_frame.png",
+        "assets/nested/debug_generation_comparison_matrix.webp",
     }
 
 
@@ -1692,21 +1713,22 @@ def test_upload_orbitquant_artifact_defaults_to_compact_staged_copy(tmp_path):
     assert upload_path != tmp_path
 
 
-def test_upload_orbitquant_artifact_can_opt_out_of_remote_file_replacement(tmp_path):
+def test_upload_orbitquant_artifact_rejects_remote_file_replacement_opt_out(tmp_path):
     _write_artifact(tmp_path)
     fake_api = FakeHfApi()
 
-    result = upload_orbitquant_artifact(
-        tmp_path,
-        repo_id="WaveCut/example-orbitquant",
-        replace_repo_files=False,
-        validate_tensors=False,
-        api=fake_api,
-    )
+    with pytest.raises(ValueError, match="must replace remote files"):
+        upload_orbitquant_artifact(
+            tmp_path,
+            repo_id="WaveCut/example-orbitquant",
+            replace_repo_files=False,
+            validate_tensors=False,
+            api=fake_api,
+        )
 
-    assert result["replace_repo_files"] is False
-    assert result["upload_kwargs"]["delete_patterns"] is None
-    assert fake_api.upload_folder_calls[0]["delete_patterns"] is None
+    assert fake_api.create_repo_calls == []
+    assert fake_api.upload_folder_calls == []
+    assert fake_api.model_info_calls == []
 
 
 def test_upload_orbitquant_artifact_rejects_invalid_artifact_before_hub_calls(tmp_path):
@@ -2503,6 +2525,78 @@ def test_render_hf_artifact_audit_markdown_reports_checksum_mismatch_count():
     assert "- Remote checksum mismatches: 2" in markdown
 
 
+def test_audit_hf_artifact_repos_flags_stale_remote_readme(tmp_path, monkeypatch):
+    suite = NativeSuite(
+        name="flux2-native",
+        model_id="black-forest-labs/FLUX.2-klein-4B",
+        pipeline="Flux2KleinPipeline",
+        width=1024,
+        height=1024,
+        steps=4,
+        guidance=1.0,
+        bit_settings=["W4A4"],
+    )
+    repo_id = "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4"
+    siblings = _required_remote_files()
+    siblings.update(
+        {
+            "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
+            "assets/image_generation_comparison_matrix.webp": 10,
+        }
+    )
+    api = FakeAuditHfApi({repo_id: siblings})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        """{
+          "source_model_id": "black-forest-labs/FLUX.2-klein-4B",
+          "weight_bits": 4,
+          "activation_bits": 4,
+          "target_policy": "flux2",
+          "quantized_modules": ["block.attn.to_q"],
+          "adaln_modules": [],
+          "checksums": {
+            "model.safetensors": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }"""
+    )
+    sha256sums_path = tmp_path / "SHA256SUMS"
+    sha256sums_path.write_text(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  model.safetensors\n"
+    )
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(_native_smoke_summary(suite), encoding="utf-8")
+    model_index_path = tmp_path / "model_index.json"
+    _write_remote_model_index(model_index_path)
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text(
+        "# Stale card\n\nRunPod logs and reports/native/debug output.\n",
+        encoding="utf-8",
+    )
+    file_map = _audit_file_map(
+        repo_id,
+        manifest_path=manifest_path,
+        sha256sums_path=sha256sums_path,
+        summary_path=summary_path,
+        model_index_path=model_index_path,
+        readme_path=readme_path,
+    )
+
+    def fake_download(repo, filename, **kwargs):
+        return str(file_map[(repo, filename)])
+
+    monkeypatch.setattr(hub_module, "hf_hub_download", fake_download)
+
+    result = audit_hf_artifact_repos(suites=[suite], api=api)
+    row = result["rows"][0]
+
+    assert result["artifact_ready_count"] == 0
+    assert result["readme_mismatch_count"] == 1
+    assert row["artifact_ready"] is False
+    assert row["readme_mismatches"] == [
+        "README.md does not match generated OrbitQuant model card"
+    ]
+
+
 def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(
     tmp_path, monkeypatch
 ):
@@ -2593,6 +2687,7 @@ def test_audit_hf_artifact_repos_flags_forbidden_remote_assets(tmp_path, monkeyp
             "model.safetensors": {"size": 123, "lfs_sha256": "a" * 64},
             "assets/image_generation_comparison_matrix.webp": 10,
             "assets/flux2-native_seed0_W4A4_simple-object.png": 10,
+            "assets/nested/debug_generation_comparison_matrix.webp": 10,
         }
     )
     api = FakeAuditHfApi({repo_id: siblings})
@@ -2641,10 +2736,13 @@ def test_audit_hf_artifact_repos_flags_forbidden_remote_assets(tmp_path, monkeyp
     result = audit_hf_artifact_repos(suites=[suite], api=api)
     row = result["rows"][0]
 
-    assert result["forbidden_file_count"] == 1
+    assert result["forbidden_file_count"] == 2
     assert result["artifact_ready_count"] == 0
     assert row["artifact_ready"] is False
-    assert row["forbidden_files"] == ["assets/flux2-native_seed0_W4A4_simple-object.png"]
+    assert row["forbidden_files"] == [
+        "assets/flux2-native_seed0_W4A4_simple-object.png",
+        "assets/nested/debug_generation_comparison_matrix.webp",
+    ]
 
 
 def test_audit_hf_artifact_repos_reports_missing_repo_without_downloading():

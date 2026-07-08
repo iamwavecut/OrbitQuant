@@ -215,6 +215,7 @@ def test_model_card_marks_missing_promoted_comparison_assets_without_logs():
             checksums={
                 "assets/terminal.log": "0" * 64,
                 "assets/run.jsonl": "1" * 64,
+                "assets/nested/debug_generation_comparison_matrix.webp": "2" * 64,
                 "reports/native/stage_log/image_generation_comparison_matrix.webp": "2" * 64,
             },
             quantization_staging_mode="REMOTE_STAGE",
@@ -227,6 +228,7 @@ def test_model_card_marks_missing_promoted_comparison_assets_without_logs():
         "reports/",
         "terminal.log",
         "run.jsonl",
+        "debug_generation_comparison_matrix.webp",
         "stage_log",
         "runner logs",
         "RunPod",

@@ -9,9 +9,10 @@ from orbitquant.eval.native_settings import NativeSuite, list_native_suites
 def _comparison_assets(checksums: dict[str, str]) -> list[str]:
     assets = []
     for path in checksums:
-        if not path.startswith("assets/"):
+        parts = path.split("/")
+        if len(parts) != 2 or parts[0] != "assets":
             continue
-        name = path.rsplit("/", maxsplit=1)[-1].lower()
+        name = parts[1].lower()
         if name.endswith("_generation_comparison_matrix.webp"):
             assets.append(path)
     assets = sorted(assets)
