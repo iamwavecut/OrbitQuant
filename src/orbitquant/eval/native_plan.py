@@ -286,6 +286,8 @@ def build_native_run_script(
                     artifact_dir,
                     "--policy-inventory",
                     policy_inventory_paths[suite.name],
+                    "--runtime-mode",
+                    runtime_mode,
                 ]
             )
             if resume:

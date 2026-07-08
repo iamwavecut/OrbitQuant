@@ -591,6 +591,7 @@ def main(argv: list[str] | None = None) -> int:
             "against the captured policy inventory"
         ),
     )
+    validate_parser.add_argument("--runtime-mode", choices=_RUNTIME_MODE_CHOICES)
 
     repair_parser = subparsers.add_parser(
         "repair-artifact-metadata",
@@ -1154,6 +1155,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate-artifact":
         payload = validate_orbitquant_artifact(args.artifact)
+        if args.runtime_mode is not None and payload["runtime_mode"] != args.runtime_mode:
+            print(
+                (
+                    "artifact runtime_mode mismatch: "
+                    f"expected {args.runtime_mode}, got {payload['runtime_mode']}"
+                ),
+                file=sys.stderr,
+            )
+            return 1
         if args.policy_inventory is not None:
             payload["policy_inventory_validation"] = validate_artifact_policy_inventory(
                 args.artifact,

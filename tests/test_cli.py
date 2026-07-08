@@ -453,6 +453,10 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--weight-bits 4 --activation-bits 4" in script
     assert "--activation-kernel-backend triton_cuda" in script
     assert "--runtime-mode triton_packed_matmul" in script
+    assert (
+        "--policy-inventory reports/native/module-inventories/wan-native-policy.json "
+        "--runtime-mode triton_packed_matmul"
+    ) in script
     assert "--staging-mode component" in script
     assert script.count("\norbitquant generate-pack") == 4
     assert "--split original" in script
@@ -524,7 +528,7 @@ def test_cli_native_script_resume_skips_valid_existing_artifacts(capsys, tmp_pat
     inventory_path = "reports/native/module-inventories/flux2-native-policy.json"
     assert (
         f"if orbitquant validate-artifact --artifact {artifact_dir} "
-        f"--policy-inventory {inventory_path}"
+        f"--policy-inventory {inventory_path} --runtime-mode dequant_bf16"
     ) in script
     assert f"echo 'Skipping existing valid artifact: {artifact_dir}'" in script
     assert "else\norbitquant quantize --suite flux2-native" in script
@@ -2468,6 +2472,39 @@ def test_cli_validate_artifact_reports_valid_component_artifact(capsys, tmp_path
     assert output["source_model_id"] == "example/model"
     assert output["tensor_count"] > 0
     assert output["quantized_module_count"] == 1
+
+
+def test_cli_validate_artifact_rejects_unexpected_runtime_mode(capsys, tmp_path):
+    model = torch.nn.Module()
+    model.transformer_blocks = torch.nn.ModuleList(
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})})]
+    )
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(model, config)
+    save_orbitquant_artifact(
+        model,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert (
+        main(
+            [
+                "validate-artifact",
+                "--artifact",
+                str(tmp_path),
+                "--runtime-mode",
+                "triton_packed_matmul",
+            ]
+        )
+        == 1
+    )
+
+    assert "runtime_mode mismatch" in capsys.readouterr().err
 
 
 def test_cli_validate_artifact_checks_policy_inventory(capsys, tmp_path):
