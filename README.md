@@ -170,6 +170,17 @@ the native packed low-bit matmul kernel first, then the Triton packed matmul
 kernel. On MPS it requires the native Metal packed low-bit matmul kernel. On CPU
 it uses the reference path.
 
+Install the optional Hugging Face Kernels loader when using Hub-published native
+kernels:
+
+```bash
+pip install "orbitquant[kernels]"
+```
+
+For local native-kernel builds, either add the matching
+`native-kernels/orbitquant-packed-matmul/build/torch*-<backend>-<platform>`
+directory to `PYTHONPATH`, or set `LOCAL_KERNELS` before importing OrbitQuant.
+
 CUDA and MPS `auto_fused` inference does not silently fall back to materializing
 the full dequantized weight matrix. If a packed kernel is unavailable,
 OrbitQuant raises an error that names the missing backend and points to the

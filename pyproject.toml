@@ -25,6 +25,9 @@ hf = [
   "diffusers>=0.35",
   "transformers>=4.53",
 ]
+kernels = [
+  "kernels>=0.16",
+]
 eval = [
   "imageio>=2.37",
   "imageio-ffmpeg>=0.6",
