@@ -125,3 +125,23 @@ def test_paper_activation_path_stores_no_calibration_statistics():
     )
 
     assert set(quantized.state_dict()) == {"bias", "packed_weight_indices", "row_norms"}
+
+
+def test_paper_codebook_is_shared_by_dimension_and_bitwidth_for_weights_and_activations():
+    torch.manual_seed(1)
+    source = torch.nn.Linear(16, 8)
+
+    w4a4 = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(weight_bits=4, activation_bits=4, block_size=8),
+        module_name="transformer_blocks.0.attn.to_q",
+    )
+    w2a4 = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(weight_bits=2, activation_bits=4, block_size=8),
+        module_name="transformer_blocks.0.attn.to_q",
+    )
+
+    assert w4a4.weight_codebook is w4a4.activation_codebook
+    assert w2a4.weight_codebook is not w2a4.activation_codebook
+    assert w2a4.activation_codebook is w4a4.activation_codebook
