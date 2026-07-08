@@ -1,23 +1,25 @@
 # Kernel Hub Approval Request
 
-Use this as the source text for a Hugging Face Kernel Hub approval discussion.
-Before posting, ensure the referenced source URI is visible to the reviewer or
-attach the kernel source directly in the discussion.
+Use this as the source text for the Hugging Face account-level "Request Kernels
+Creation" flow or a Hugging Face support/discussion follow-up. Before posting,
+ensure the referenced source URI is visible to the reviewer or attach the kernel
+source directly.
 
 ## Title
 
-Request Kernel Hub publish approval for `WaveCut/orbitquant-packed-matmul`
+Request Kernels Creation access for `WaveCut/orbitquant-packed-matmul`
 
 ## Body
 
-We would like approval to publish `WaveCut/orbitquant-packed-matmul` as a Hugging
-Face Kernel Hub package.
+We would like Kernels Creation access to publish
+`WaveCut/orbitquant-packed-matmul` as a Hugging Face Kernel Hub package.
 
 Repository:
 
 - Kernel Hub repo id: `WaveCut/orbitquant-packed-matmul`
 - Source package path: `native-kernels/orbitquant-packed-matmul`
 - Source repository: `https://github.com/iamwavecut/OrbitQuant`
+- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/f7eb3fa912caa27ad682c7ea1757f580a2751a01`
 - License: Apache-2.0
 
 Review-ready source package:
@@ -89,8 +91,8 @@ Current build and verification status:
 - Local Metal builds passed ABI compatibility checks for Python ABI 3.9
 - Local MPS OrbitQuant gate passed with `runtime_mode="native_packed_matmul"`
   through `LOCAL_KERNELS`
-- `build-and-upload` currently builds the local Metal variants and then stops at
-  Kernel Hub publish permission, which is why this approval request is needed
+- `build-and-upload` currently builds the local variants and then stops at
+  Kernel Hub publish permission, which is why Kernels Creation access is needed
 
 Benchmark status:
 
@@ -100,9 +102,8 @@ Benchmark status:
 
 Requested approval:
 
-Please enable Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
-or for the `WaveCut` publisher namespace so this package can be uploaded and
-loaded with:
+Please enable Kernels Creation access for the `WaveCut` publisher namespace so
+this package can be uploaded as a `kernel`-type repository and loaded with:
 
 ```python
 from kernels import get_kernel

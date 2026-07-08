@@ -113,6 +113,11 @@ def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant
     assert "_" not in build_config["general"]["name"]
     assert build_config["general"]["license"] == "Apache-2.0"
     assert build_config["general"]["backends"] == ["cuda", "metal"]
+    assert build_config["general"]["upstream"] == "https://github.com/iamwavecut/OrbitQuant"
+    assert (
+        build_config["general"]["source"]
+        == "https://huggingface.co/WaveCut/orbitquant-packed-matmul"
+    )
 
     binding = (package_root / "torch-ext/torch_binding.cpp").read_text(encoding="utf-8")
     assert "#include <torch/library.h>" in binding

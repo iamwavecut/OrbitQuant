@@ -19,9 +19,14 @@ URL, or signed-off audit note.
   its commit `f7eb3fa912caa27ad682c7ea1757f580a2751a01` contains the
   reviewable source package from `native-kernels/orbitquant-packed-matmul`
   without generated `build/`, local `.venv/`, `__pycache__/`, or benchmark
-  output directories. Kernel Hub binary publication still requires account
-  approval; `build-and-upload` built the Metal variants for commit `a4d927c`
-  and then failed with the Kernel Hub approval error. The request draft is
+  output directories. This source snapshot is review evidence only; the final
+  loadable Kernel Hub artifact must be a `kernel`-type repository with
+  `build/` variants uploaded by `kernel-builder build-and-upload`. Hugging Face
+  documents this as account-level Kernels Creation access from
+  `https://huggingface.co/settings/account` ("Request Kernels Creation").
+  Kernel Hub binary publication still requires that account approval;
+  `build-and-upload` built the local variants for commit `a4d927c` and then
+  failed with the Kernel Hub approval error. The request draft is
   [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
   CUDA/Triton remains pending on a CUDA host.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with

@@ -4,6 +4,8 @@ version = 1
 edition = 5
 license = "Apache-2.0"
 backends = ["cuda", "metal"]
+upstream = "https://github.com/iamwavecut/OrbitQuant"
+source = "https://huggingface.co/WaveCut/orbitquant-packed-matmul"
 
 [general.hub]
 repo-id = "WaveCut/orbitquant-packed-matmul"

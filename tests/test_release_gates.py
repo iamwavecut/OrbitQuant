@@ -60,9 +60,13 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "without generated `build/`, local `.venv/`, `__pycache__/`" in release_gates
-    assert "Kernel Hub binary publication still requires account\n  approval" in (
+    assert "loadable Kernel Hub artifact must be a `kernel`-type repository" in (
         release_gates
     )
+    assert "Kernels Creation access from\n  `https://huggingface.co/settings/account`" in (
+        release_gates
+    )
+    assert "Kernel Hub binary publication still requires that account approval" in release_gates
     assert "CUDA/Triton remains pending on a CUDA host" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
@@ -162,10 +166,12 @@ def test_kernel_audit_documents_backend_claim_boundaries():
 def test_kernel_hub_approval_request_contains_required_review_fields():
     request = Path("docs/kernel-hub-approval-request.md").read_text(encoding="utf-8")
 
-    assert "Request Kernel Hub publish approval" in request
+    assert "Request Kernels Creation access" in request
+    assert "account-level \"Request Kernels\nCreation\" flow" in request
     assert "WaveCut/orbitquant-packed-matmul" in request
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
+    assert "Review source snapshot:" in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request
     assert "huggingface.co/WaveCut/orbitquant-packed-matmul/commit" in request
@@ -184,7 +190,9 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "ComfyUI-OrbitQuant" in request
     assert "TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in request
     assert "Python ABI 3.9" in request
+    assert "Kernels Creation access is needed" in request
     assert "CUDA host benchmark evidence is pending" in request
+    assert "uploaded as a `kernel`-type repository" in request
     assert "trust_remote_code=True" in request
 
 
