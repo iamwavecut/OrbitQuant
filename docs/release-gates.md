@@ -52,8 +52,13 @@ URL, or signed-off audit note.
   `python -m twine check dist/*`, then uploaded with `python -m twine upload
   dist/*`. Credentials may require a user-provided PyPI token or browser
   action before upload can complete.
-- [ ] ComfyUI compatibility is verified after the relevant schema stabilizes,
+- [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, and artifact metadata behavior.
+  Evidence: ComfyUI-OrbitQuant commit `1d73b36` passed `uv run pytest -q`
+  and `uv run ruff check .` on 2026-07-08T15:54Z. The package smoke covers
+  legacy node mappings, V3 entrypoint/schema/delegation, real OrbitQuant
+  artifact load, inspector-to-loader node graph behavior, metadata propagation,
+  and finite forward execution through the restored `OrbitQuantLinear`.
 - [ ] Release-grade metrics are complete before making paper reproduction or
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench
