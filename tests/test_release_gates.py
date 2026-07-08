@@ -114,12 +114,18 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "Diffusers 0.40.0.dev0" in release_gates
     assert "Transformers 5.14.0.dev0" in release_gates
     assert "- [x] ComfyUI compatibility is verified" in release_gates
-    assert "ComfyUI-OrbitQuant commit `1d73b36`" in release_gates
-    assert "passed `uv run pytest -q`\n  and `uv run ruff check .`" in release_gates
+    assert "kernel extra\n  install guidance for the default `auto_fused` runtime" in (
+        release_gates
+    )
+    assert "ComfyUI-OrbitQuant commit `3f2ea7a`" in release_gates
+    assert "GitHub CI run\n  `28977790874`" in release_gates
+    assert "`uv run pytest -q`, `uv run ruff check .`, package build, and\n  `twine check`" in (
+        release_gates
+    )
     assert "legacy node mappings" in release_gates
     assert "V3 entrypoint/schema/delegation" in release_gates
     assert "inspector-to-loader node graph behavior" in release_gates
-    assert "finite forward execution through the restored `OrbitQuantLinear`" in (
+    assert "finite\n  forward execution through the restored `OrbitQuantLinear`" in (
         release_gates
     )
     assert "- [x] Checkpoint and model repositories are published" in release_gates

@@ -169,12 +169,15 @@ URL, or signed-off audit note.
   check, and wheel smoke test after adding the RunPod SSH health preflight.
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
-  including load, graph execution, and artifact metadata behavior.
-  Evidence: ComfyUI-OrbitQuant commit `1d73b36` passed `uv run pytest -q`
-  and `uv run ruff check .` on 2026-07-08T15:54Z. The package smoke covers
-  legacy node mappings, V3 entrypoint/schema/delegation, real OrbitQuant
-  artifact load, inspector-to-loader node graph behavior, metadata propagation,
-  and finite forward execution through the restored `OrbitQuantLinear`.
+  including load, graph execution, artifact metadata behavior, and kernel extra
+  install guidance for the default `auto_fused` runtime.
+  Evidence: ComfyUI-OrbitQuant commit `3f2ea7a` passed GitHub CI run
+  `28977790874` on 2026-07-08T21:42Z. Local checks also passed
+  `uv run pytest -q`, `uv run ruff check .`, package build, and
+  `twine check`. The package smoke covers legacy node mappings,
+  V3 entrypoint/schema/delegation, real OrbitQuant artifact load,
+  inspector-to-loader node graph behavior, metadata propagation, and finite
+  forward execution through the restored `OrbitQuantLinear`.
 - [ ] Release-grade metrics are complete before making paper reproduction or
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench
