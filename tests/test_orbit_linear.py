@@ -796,6 +796,62 @@ def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch)
     assert torch.allclose(actual.float().cpu(), expected.float().cpu(), atol=2e-2, rtol=2e-2)
 
 
+def test_orbit_linear_auto_fused_native_packed_matmul_matches_reference_without_dequant(
+    monkeypatch,
+):
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        dtype = torch.bfloat16
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+        dtype = torch.float32
+    else:
+        pytest.skip("CUDA or MPS backend is required")
+    try:
+        import orbitquant_packed_matmul  # noqa: F401
+    except Exception:
+        pytest.skip("native packed matmul kernel package is not importable")
+
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    torch.manual_seed(31)
+    source = torch.nn.Linear(16, 7, bias=True, dtype=torch.float32)
+    x = torch.randn(2, 5, 16, device=device, dtype=dtype)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="dequant_bf16",
+        packed_matmul_block_m=16,
+        packed_matmul_block_n=16,
+        packed_matmul_block_k=32,
+    )
+    reference = OrbitQuantLinear.from_linear(
+        source, config=config, module_name="block.ff.linear"
+    ).to(device)
+    packed = copy.deepcopy(reference).to(device)
+    packed.runtime_mode = "auto_fused"
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
+
+    def fail_dequantize_weight(*args, **kwargs):
+        raise AssertionError("auto_fused native runtime materialized dequantized weights")
+
+    monkeypatch.setattr(packed, "_dequantize_weight", fail_dequantize_weight)
+
+    expected = reference(x)
+    actual = packed(x)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+    assert actual.device.type == device.type
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    assert torch.allclose(actual.float().cpu(), expected.float().cpu(), atol=2e-2, rtol=2e-2)
+
+
 @pytest.mark.parametrize("use_bias", [True, False])
 def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias):
     if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
