@@ -503,6 +503,21 @@ URL, or signed-off audit note.
   benchmark. The reported optimized stages were limited to
   `codebook_lookup_rescale,packed_weight_dequant`; native packed matmul stages
   were explicitly skipped.
+- [x] Native run orchestration is ready for GPU execution without range smoke
+  substitutions. Evidence: a 2026-07-09T18:21Z dry-run check invoked
+  `uv run orbitquant native-plan` and `uv run orbitquant native-script` with
+  `--runtime-mode auto_fused`, `--device cuda`, `--dtype bfloat16`,
+  `--staging-mode streaming`, `--prompt-pack artifact`, and `--resume`. The
+  generated native plan contained 14 jobs: W4A4/W3A3/W2A4/W2A3 for
+  `flux2-native`, `flux1-schnell-native`, and `z-image-native`, plus
+  W4A6/W4A4 for `wan-native`. The generated script included stage logging for
+  preflight, kernel preflight, policy inventories, quantization, original and
+  OrbitQuant native generation packs, artifact validation, and report
+  generation. It contained 14 `orbitquant quantize` commands, 28
+  `orbitquant generate-pack` commands, 42 `orbitquant validate-artifact`
+  mentions including resume guards, 5 `orbitquant kernel-bench` commands, and
+  4 `orbitquant inspect-policy` commands; the generated script contained no
+  range-smoke path.
 - [ ] Release-grade metrics are complete before making paper reproduction or
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench

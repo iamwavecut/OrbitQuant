@@ -98,6 +98,20 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "explicit `runtime_mode=\"native_packed_matmul\"`\n  benchmark execution" in (
         release_gates
     )
+    assert "- [x] Native run orchestration is ready for GPU execution" in release_gates
+    assert "2026-07-09T18:21Z dry-run check" in release_gates
+    assert "`--staging-mode streaming`, `--prompt-pack artifact`, and `--resume`" in (
+        release_gates
+    )
+    assert "The\n  generated native plan contained 14 jobs" in release_gates
+    assert "W4A4/W3A3/W2A4/W2A3 for\n  `flux2-native`" in release_gates
+    assert "W4A6/W4A4 for `wan-native`" in release_gates
+    assert "14 `orbitquant quantize` commands" in release_gates
+    assert "28\n  `orbitquant generate-pack` commands" in release_gates
+    assert "42 `orbitquant validate-artifact`\n  mentions" in release_gates
+    assert "5 `orbitquant kernel-bench` commands" in release_gates
+    assert "4 `orbitquant inspect-policy` commands" in release_gates
+    assert "the generated script contained no\n  range-smoke path" in release_gates
     assert "After adding kernel `upstream`/`source` metadata" in release_gates
     assert "2026-07-08T16:59Z at OrbitQuant commit `5cc7d30`" in release_gates
     assert "get-kernel\n  loading, and package tests" in release_gates
