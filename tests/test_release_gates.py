@@ -212,6 +212,8 @@ def test_publication_checklist_contains_gated_release_commands():
     )
     assert "OrbitQuantConfig().runtime_mode" in checklist
     assert "gh repo edit iamwavecut/OrbitQuant" in checklist
+    assert "https://pypi.org/pypi/orbitquant/json" in checklist
+    assert "PyPI project name `orbitquant` already exists" in checklist
     assert "--visibility public" in checklist
     assert "--accept-visibility-change-consequences" in checklist
     assert "git tag -a v0.1.0" in checklist

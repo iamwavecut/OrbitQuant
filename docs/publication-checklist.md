@@ -27,6 +27,19 @@ PY
 )" = "0.1.0"
 test "$(git tag --list v0.1.0)" = ""
 gh repo view iamwavecut/OrbitQuant --json nameWithOwner,visibility,isPrivate,defaultBranchRef
+python - <<'PY'
+import urllib.error
+import urllib.request
+
+try:
+    urllib.request.urlopen("https://pypi.org/pypi/orbitquant/json", timeout=20)
+except urllib.error.HTTPError as exc:
+    if exc.code == 404:
+        raise SystemExit(0)
+    raise
+
+raise SystemExit("PyPI project name `orbitquant` already exists")
+PY
 ```
 
 ## Verification
