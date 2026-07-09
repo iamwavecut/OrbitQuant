@@ -82,6 +82,16 @@ URL, or signed-off audit note.
   `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`.
   A follow-up comment was posted to discussion 15 on 2026-07-09T12:58Z with
   the verifier command and JSON result summary.
+  The same published artifact layer was re-verified on 2026-07-09T13:05Z with
+  `runtime_mode="auto_fused"` and the same local
+  `torch212-metal-aarch64-darwin` package. It again reported `finite=true`,
+  `allclose_to_dequant_bf16=true`,
+  `max_abs_error_vs_dequant_bf16=0.001953125`, and
+  `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`,
+  proving the default optimized dispatch reaches the native packed matmul path
+  for this real published artifact when the local Metal kernel package is
+  available. Another follow-up comment was posted to discussion 15 on
+  2026-07-09T13:05Z with the `auto_fused` command and JSON result summary.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4

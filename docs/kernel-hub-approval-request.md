@@ -119,6 +119,17 @@ the `torch212-metal-aarch64-darwin` local kernel variant and the published
 On 2026-07-09T12:58Z, `WaveCut` posted that verifier command and JSON result
 summary in discussion 15.
 
+On 2026-07-09T13:05Z, the same published artifact layer was re-verified with
+`runtime_mode="auto_fused"` and the same local `torch212-metal-aarch64-darwin`
+package. It again reported `finite=true`, `allclose_to_dequant_bf16=true`,
+`max_abs_error_vs_dequant_bf16=0.001953125`, and
+`packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`. This
+checks the default optimized dispatch path, not only the explicit
+`native_packed_matmul` mode.
+
+On 2026-07-09T13:05Z, `WaveCut` posted that `auto_fused` verifier command and
+JSON result summary in discussion 15.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`

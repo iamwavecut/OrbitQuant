@@ -137,6 +137,16 @@ for the current artifact format and runtime modes.
   `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`.
   A seventh follow-up comment on 2026-07-09T12:58Z posted the verifier command
   and JSON result summary to discussion 15.
+  On 2026-07-09T13:05Z, the same published artifact layer was re-verified with
+  `runtime_mode="auto_fused"` and the same local
+  `torch212-metal-aarch64-darwin` package. It again reported `finite=true`,
+  `allclose_to_dequant_bf16=true`,
+  `max_abs_error_vs_dequant_bf16=0.001953125`, and
+  `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`.
+  This proves that default optimized dispatch reaches the native packed matmul
+  path for a real published artifact when the local Metal package is available.
+  An eighth follow-up comment on 2026-07-09T13:05Z posted the `auto_fused`
+  command and JSON result summary to discussion 15.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same

@@ -376,6 +376,12 @@ def test_kernel_audit_documents_backend_claim_boundaries():
         kernel_audit
     )
     assert "seventh follow-up comment on 2026-07-09T12:58Z" in kernel_audit
+    assert "On 2026-07-09T13:05Z" in kernel_audit
+    assert "`runtime_mode=\"auto_fused\"`" in kernel_audit
+    assert "default optimized dispatch reaches the native packed matmul" in (
+        kernel_audit
+    )
+    assert "eighth follow-up comment on 2026-07-09T13:05Z" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -446,6 +452,12 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "`allclose_to_dequant_bf16=true`" in request
     assert "On 2026-07-09T12:58Z" in request
     assert "posted that verifier command and JSON result\nsummary" in request
+    assert "On 2026-07-09T13:05Z" in request
+    assert "`runtime_mode=\"auto_fused\"`" in request
+    assert "default optimized dispatch path" in request
+    assert "posted that `auto_fused` verifier command and\nJSON result summary" in (
+        request
+    )
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )
