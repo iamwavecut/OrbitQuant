@@ -358,6 +358,26 @@ reproduction targets:
 User-facing comparison assets are generated at the native settings above. Small
 low-resolution checks are not accepted as published quality evidence.
 
+To create a local original-vs-OrbitQuant evidence bundle without writing raw
+samples into the model artifact repository, run `compare-native` against a local
+OrbitQuant artifact:
+
+```bash
+orbitquant compare-native \
+  --suite flux2-native \
+  --artifact ./artifacts/flux2-klein-w4a4 \
+  --prompt-id simple-object \
+  --output ./reports/native/flux2-klein-w4a4-comparison \
+  --device cuda \
+  --dtype bfloat16 \
+  --runtime-mode auto_fused
+```
+
+The output directory contains the BF16 sample, the OrbitQuant sample, a
+side-by-side WebP comparison, per-split metadata, and `summary.json` with native
+settings, wall time, peak VRAM, requested runtime mode, and available local
+kernel backends.
+
 ## Release Metrics
 
 Full GenEval and VBench runs are release evidence for paper reproduction,

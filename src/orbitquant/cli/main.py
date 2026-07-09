@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 import time
@@ -24,6 +25,7 @@ from orbitquant.artifacts import (
 from orbitquant.benchmarks import benchmark_model_quantization, benchmark_orbit_linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
+from orbitquant.eval.assets import create_image_comparison_sheet
 from orbitquant.eval.external_export import export_geneval_artifact, export_vbench_artifact
 from orbitquant.eval.external_metrics import (
     summarize_geneval_results,
@@ -65,7 +67,7 @@ from orbitquant.hub import (
     repair_hf_native_smoke_proof_matrix,
     upload_orbitquant_artifact,
 )
-from orbitquant.kernels import backend_capabilities
+from orbitquant.kernels import available_backends, backend_capabilities
 from orbitquant.modeling import (
     inspect_linear_module_policy,
     prewarm_quantized_linear_modules,
@@ -148,6 +150,40 @@ def _place_pipeline_for_generation(
         pipeline.enable_model_cpu_offload(device=device)
         return
     pipeline.to(device)
+
+
+def _release_generation_pipeline(pipeline: Any, *, device: str) -> None:
+    del pipeline
+    gc.collect()
+    torch_device = torch.device(device)
+    if torch_device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif torch_device.type == "mps" and hasattr(torch, "mps"):
+        empty_cache = getattr(torch.mps, "empty_cache", None)
+        if callable(empty_cache):
+            empty_cache()
+
+
+def _with_runtime_overrides(
+    config: OrbitQuantConfig,
+    *,
+    runtime_mode: str | None,
+    activation_kernel_backend: str | None,
+) -> OrbitQuantConfig:
+    payload = config.to_dict()
+    if runtime_mode is not None:
+        payload["runtime_mode"] = runtime_mode
+    if activation_kernel_backend is not None:
+        payload["activation_kernel_backend"] = activation_kernel_backend
+    return OrbitQuantConfig.from_dict(payload)
+
+
+def _comparison_image_source(result: Any, *, is_video: bool) -> Path:
+    if is_video:
+        if not result.asset_paths:
+            raise RuntimeError("video comparison requires generated contact sheet assets")
+        return result.asset_paths[0]
+    return result.output_path
 
 
 def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
@@ -877,6 +913,53 @@ def main(argv: list[str] | None = None) -> int:
     )
     generate_parser.add_argument("--dry-run", action="store_true")
 
+    compare_native_parser = subparsers.add_parser(
+        "compare-native",
+        help="run original and OrbitQuant native generation into a local comparison bundle",
+    )
+    compare_native_parser.add_argument("--suite", required=True)
+    compare_native_parser.add_argument("--artifact", required=True)
+    compare_native_parser.add_argument("--prompt")
+    compare_native_parser.add_argument("--prompt-id")
+    compare_native_parser.add_argument("--prompt-index", type=int)
+    compare_native_parser.add_argument("--output", required=True)
+    compare_native_parser.add_argument("--component", default="transformer")
+    compare_native_parser.add_argument("--seed", type=int, default=0)
+    compare_native_parser.add_argument("--device", default="cuda")
+    compare_native_parser.add_argument(
+        "--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"]
+    )
+    compare_native_parser.add_argument(
+        "--runtime-mode",
+        default="auto_fused",
+        choices=_RUNTIME_MODE_CHOICES,
+        help="runtime override used for the OrbitQuant split",
+    )
+    compare_native_parser.add_argument(
+        "--activation-kernel-backend",
+        default="auto",
+        choices=["auto", "cpu", "mps", "triton_cuda"],
+    )
+    compare_native_parser.add_argument(
+        "--no-prewarm",
+        action="store_true",
+        help="do not prewarm quantized weight caches before the OrbitQuant split",
+    )
+    compare_native_parser.add_argument(
+        "--enable-model-cpu-offload",
+        action="store_true",
+        help=(
+            "use Diffusers model CPU offload instead of moving the whole pipeline to "
+            "the generation device"
+        ),
+    )
+    compare_native_parser.add_argument(
+        "--skip-artifact-checksums",
+        action="store_true",
+        help="skip SHA256 validation while loading the local OrbitQuant artifact",
+    )
+    compare_native_parser.add_argument("--dry-run", action="store_true")
+
     generate_pack_parser = subparsers.add_parser(
         "generate-pack", help="run native generation for artifact prompt pack"
     )
@@ -1492,6 +1575,241 @@ def main(argv: list[str] | None = None) -> int:
                     "split": args.split,
                     "metrics": record["metrics"],
                     "metadata": record["metadata"],
+                }
+            )
+        )
+        return 0
+    if args.command == "compare-native":
+        suite = get_native_suite(args.suite)
+        artifact_path = Path(args.artifact)
+        artifact_validation = validate_orbitquant_artifact(
+            artifact_path,
+            validate_checksums_enabled=not args.skip_artifact_checksums,
+            validate_tensors=False,
+        )
+        artifact_config = OrbitQuantConfig.from_dict(
+            json.loads((artifact_path / "quantization_config.json").read_text(encoding="utf-8"))
+        )
+        effective_config = _with_runtime_overrides(
+            artifact_config,
+            runtime_mode=args.runtime_mode,
+            activation_kernel_backend=args.activation_kernel_backend,
+        )
+        bit_setting = (
+            f"W{artifact_validation['weight_bits']}A"
+            f"{artifact_validation['activation_bits']}"
+        )
+        model_id = artifact_validation["source_model_id"]
+        output_dir = Path(args.output)
+
+        prompt = args.prompt
+        prompt_record = None
+        if args.prompt_id is not None or args.prompt_index is not None:
+            if prompt is not None:
+                raise ValueError(
+                    "compare-native accepts either --prompt or a prompt selector, not both"
+                )
+            prompt_payload = json.loads(
+                (artifact_path / "prompts.json").read_text(encoding="utf-8")
+            )
+            prompt_record = select_prompt_record(
+                prompt_payload,
+                prompt_id=args.prompt_id,
+                prompt_index=args.prompt_index,
+            )
+            prompt = prompt_record["prompt"]
+        if prompt is None:
+            raise ValueError("compare-native requires --prompt or a prompt selector")
+
+        pipeline_kwargs = build_pipeline_kwargs(
+            suite, prompt=prompt, seed=args.seed, device=args.device
+        )
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {
+                        "suite": suite.__dict__,
+                        "model_id": model_id,
+                        "artifact": str(artifact_path),
+                        "component": args.component,
+                        "output": str(output_dir),
+                        "prompt_record": prompt_record,
+                        "seed": args.seed,
+                        "device": args.device,
+                        "dtype": args.dtype,
+                        "enable_model_cpu_offload": args.enable_model_cpu_offload,
+                        "bit_setting": bit_setting,
+                        "runtime_mode": effective_config.runtime_mode,
+                        "activation_kernel_backend": effective_config.activation_kernel_backend,
+                        "pipeline_kwargs": {
+                            key: value
+                            for key, value in pipeline_kwargs.items()
+                            if key != "generator"
+                        },
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(
+            f"[orbitquant] compare-native original start suite={suite.name} seed={args.seed}",
+            file=sys.stderr,
+        )
+        original_pipeline = load_pipeline_for_suite(
+            suite,
+            model_id=model_id,
+            torch_dtype=_torch_dtype(args.dtype),
+        )
+        _place_pipeline_for_generation(
+            original_pipeline,
+            device=args.device,
+            enable_model_cpu_offload=args.enable_model_cpu_offload,
+        )
+        original_result = run_native_generation(
+            original_pipeline,
+            suite,
+            prompt=prompt,
+            seed=args.seed,
+            output_dir=output_dir,
+            device=args.device,
+            quantization_label="original",
+            runtime_dtype=args.dtype,
+            model_id=model_id,
+        )
+        validate_native_generation_output(
+            original_result.output_path,
+            original_result.metadata_path,
+            suite,
+            seed=args.seed,
+            bit_setting="original",
+            prompt=prompt,
+            model_id=model_id,
+        )
+        _release_generation_pipeline(original_pipeline, device=args.device)
+        original_pipeline = None
+        print(
+            f"[orbitquant] compare-native original done output={original_result.output_path}",
+            file=sys.stderr,
+        )
+
+        print(
+            f"[orbitquant] compare-native orbitquant start suite={suite.name} "
+            f"seed={args.seed} bit_setting={bit_setting} runtime={effective_config.runtime_mode}",
+            file=sys.stderr,
+        )
+        quantized_pipeline = load_pipeline_for_suite(
+            suite,
+            model_id=model_id,
+            torch_dtype=_torch_dtype(args.dtype),
+        )
+        load_quantized_pipeline_component(
+            quantized_pipeline,
+            artifact_path,
+            component=args.component,
+            validate_checksums=not args.skip_artifact_checksums,
+            runtime_mode=effective_config.runtime_mode,
+            activation_kernel_backend=effective_config.activation_kernel_backend,
+        )
+        _place_pipeline_for_generation(
+            quantized_pipeline,
+            device=args.device,
+            enable_model_cpu_offload=args.enable_model_cpu_offload,
+        )
+        prewarm_metadata = None
+        if not args.no_prewarm and _should_prewarm_quantized_weights(effective_config):
+            prewarm_metadata = _prewarm_pipeline_component(
+                quantized_pipeline,
+                args.component,
+                device=args.device,
+                dtype=_torch_dtype(args.dtype),
+            )
+        orbitquant_result = run_native_generation(
+            quantized_pipeline,
+            suite,
+            prompt=prompt,
+            seed=args.seed,
+            output_dir=output_dir,
+            device=args.device,
+            quantization_config=effective_config,
+            quantization_summary=None,
+            quantization_label=bit_setting,
+            prewarm_metadata=prewarm_metadata,
+            runtime_dtype=args.dtype,
+            model_id=model_id,
+        )
+        validate_native_generation_output(
+            orbitquant_result.output_path,
+            orbitquant_result.metadata_path,
+            suite,
+            seed=args.seed,
+            bit_setting=bit_setting,
+            prompt=prompt,
+            model_id=model_id,
+        )
+        _release_generation_pipeline(quantized_pipeline, device=args.device)
+        quantized_pipeline = None
+        print(
+            f"[orbitquant] compare-native orbitquant done output={orbitquant_result.output_path}",
+            file=sys.stderr,
+        )
+
+        comparison_path = (
+            output_dir
+            / f"{suite.name}_seed{args.seed}_{bit_setting}_original_vs_orbitquant.webp"
+        )
+        create_image_comparison_sheet(
+            _comparison_image_source(original_result, is_video=suite.frames is not None),
+            _comparison_image_source(orbitquant_result, is_video=suite.frames is not None),
+            comparison_path,
+            labels=("BF16", f"OrbitQuant {bit_setting}"),
+        )
+        summary_path = output_dir / "summary.json"
+        summary = {
+            "suite": suite.name,
+            "model_id": model_id,
+            "artifact": str(artifact_path),
+            "component": args.component,
+            "prompt": prompt,
+            "prompt_record": prompt_record,
+            "seed": args.seed,
+            "height": suite.height,
+            "width": suite.width,
+            "frames": suite.frames,
+            "steps": suite.steps,
+            "guidance": suite.guidance,
+            "dtype": args.dtype,
+            "device": args.device,
+            "bit_setting": bit_setting,
+            "runtime_mode": effective_config.runtime_mode,
+            "activation_kernel_backend": effective_config.activation_kernel_backend,
+            "available_backends": available_backends(),
+            "original": {
+                "output_path": str(original_result.output_path),
+                "metadata_path": str(original_result.metadata_path),
+                "wall_time_seconds": original_result.metadata["wall_time_seconds"],
+                "peak_vram_bytes": original_result.metadata["peak_vram_bytes"],
+            },
+            "orbitquant": {
+                "output_path": str(orbitquant_result.output_path),
+                "metadata_path": str(orbitquant_result.metadata_path),
+                "wall_time_seconds": orbitquant_result.metadata["wall_time_seconds"],
+                "peak_vram_bytes": orbitquant_result.metadata["peak_vram_bytes"],
+                "prewarm": prewarm_metadata,
+            },
+            "comparison_path": str(comparison_path),
+        }
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        print(
+            json.dumps(
+                {
+                    "summary_path": str(summary_path),
+                    "comparison_path": str(comparison_path),
+                    "original_output_path": str(original_result.output_path),
+                    "orbitquant_output_path": str(orbitquant_result.output_path),
+                    "runtime_mode": effective_config.runtime_mode,
+                    "activation_kernel_backend": effective_config.activation_kernel_backend,
                 }
             )
         )

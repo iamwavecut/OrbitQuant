@@ -785,6 +785,157 @@ def test_cli_generate_dry_run_prints_quantized_native_request(capsys, tmp_path, 
     assert '"target_policy": "wan"' in output
 
 
+def test_cli_compare_native_dry_run_prints_artifact_and_native_settings(capsys, tmp_path):
+    class TinyPipeline:
+        def __init__(self):
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path,
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    assert (
+        main(
+            [
+                "compare-native",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path),
+                "--prompt",
+                "A native prompt",
+                "--output",
+                str(tmp_path / "comparison"),
+                "--seed",
+                "11",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+                "--runtime-mode",
+                "triton_packed_matmul",
+                "--activation-kernel-backend",
+                "cpu",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["model_id"] == "example/artifact-model"
+    assert output["bit_setting"] == "W4A4"
+    assert output["runtime_mode"] == "triton_packed_matmul"
+    assert output["activation_kernel_backend"] == "cpu"
+    assert output["pipeline_kwargs"]["height"] == 1024
+    assert output["pipeline_kwargs"]["width"] == 1024
+
+
+def test_cli_compare_native_runs_original_and_quantized_side_by_side(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self, color="red"):
+            self.color = color
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+            self.device = None
+
+        def to(self, device):
+            self.device = device
+            return self
+
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), self.color)])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path / "artifact",
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    pipelines = iter([TinyPipeline("red"), TinyPipeline("blue")])
+
+    def fake_load_pipeline_for_suite(suite, *, model_id=None, **kwargs):
+        assert suite.name == "flux2-native"
+        assert model_id == "example/artifact-model"
+        assert kwargs["torch_dtype"] is torch.float32
+        return next(pipelines)
+
+    monkeypatch.setattr(cli_main, "load_pipeline_for_suite", fake_load_pipeline_for_suite)
+
+    assert (
+        main(
+            [
+                "compare-native",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path / "artifact"),
+                "--prompt",
+                "A native prompt",
+                "--output",
+                str(tmp_path / "comparison"),
+                "--seed",
+                "4",
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    summary = json.loads((tmp_path / "comparison" / "summary.json").read_text())
+    comparison_path = (
+        tmp_path
+        / "comparison"
+        / "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
+    )
+    assert output["summary_path"] == str(tmp_path / "comparison" / "summary.json")
+    assert output["comparison_path"] == str(comparison_path)
+    assert comparison_path.is_file()
+    assert summary["original"]["output_path"].endswith("flux2-native_seed4_original.png")
+    assert summary["orbitquant"]["output_path"].endswith("flux2-native_seed4_W4A4.png")
+    assert summary["runtime_mode"] == "auto_fused"
+    assert summary["available_backends"]["cpu"] is True
+    assert not any((tmp_path / "artifact" / "assets").iterdir())
+
+
 def test_cli_generate_with_packed_runtime_on_the_fly_quantization_skips_dequant_prewarm(
     monkeypatch,
     capsys,
