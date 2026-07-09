@@ -186,8 +186,13 @@ def test_external_metric_summarizers_write_numeric_json(tmp_path):
     geneval_results.write_text(
         "\n".join(
             [
-                json.dumps({"tag": "single_object", "correct": True}),
-                json.dumps({"tag": "single_object", "correct": False}),
+                json.dumps(
+                    {"tag": "single_object", "correct": True, "metadata": "prompt-a"}
+                ),
+                json.dumps(
+                    {"tag": "single_object", "correct": False, "metadata": "prompt-a"}
+                ),
+                json.dumps({"tag": "counting", "correct": False, "metadata": "prompt-b"}),
             ]
         )
         + "\n",
@@ -201,11 +206,18 @@ def test_external_metric_summarizers_write_numeric_json(tmp_path):
         tmp_path / "geneval-summary.json",
         metric_prefix="geneval",
     )
-    assert geneval_summary["overall"] == 0.5
+    assert geneval_summary["overall"] == 0.25
+    assert geneval_summary["image_accuracy"] == 1 / 3
+    assert geneval_summary["prompt_accuracy"] == 0.5
+    assert geneval_summary["prompts"] == 2
     assert geneval_summary["per_task"]["single_object"] == 0.5
+    assert geneval_summary["per_task"]["counting"] == 0.0
     assert geneval_summary["tags"]["single_object"]["total"] == 2
-    assert imported_geneval_metrics["geneval_overall"] == 0.5
+    assert imported_geneval_metrics["geneval_overall"] == 0.25
+    assert imported_geneval_metrics["geneval_image_accuracy"] == 1 / 3
+    assert imported_geneval_metrics["geneval_prompt_accuracy"] == 0.5
     assert imported_geneval_metrics["geneval_per_task_single_object"] == 0.5
+    assert imported_geneval_metrics["geneval_per_task_counting"] == 0.0
 
     vbench_dir = tmp_path / "vbench"
     vbench_dir.mkdir()
