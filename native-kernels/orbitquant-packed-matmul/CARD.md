@@ -84,3 +84,10 @@ The script prints JSON with `packed_seconds_per_iter`,
 `packed_vs_dequantize_then_f_linear_speedup`, compatibility aliases
 `reference_seconds_per_iter` and `packed_vs_reference_speedup`, and
 `max_abs_error`.
+
+It also reports storage accounting for the packed weight path:
+`packed_weight_indices_bytes`, `row_norms_bytes`, `centroid_bytes`,
+`packed_weight_path_bytes`, `materialized_weight_bytes`, and
+`packed_weight_path_vs_materialized_weight_ratio`. These values describe only
+the weight-side storage used by this operator; they are not end-to-end model
+VRAM measurements.

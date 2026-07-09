@@ -184,6 +184,12 @@ def test_kernel_benchmark_reports_reference_comparison() -> None:
     assert "packed_seconds_per_iter" in benchmark_source
     assert "predequantized_f_linear_seconds_per_iter" in benchmark_source
     assert "dequantize_then_f_linear_seconds_per_iter" in benchmark_source
+    assert "packed_weight_indices_bytes" in benchmark_source
+    assert "row_norms_bytes" in benchmark_source
+    assert "centroid_bytes" in benchmark_source
+    assert "packed_weight_path_bytes" in benchmark_source
+    assert "materialized_weight_bytes" in benchmark_source
+    assert "packed_weight_path_vs_materialized_weight_ratio" in benchmark_source
     assert "packed_vs_predequantized_f_linear_speedup" in benchmark_source
     assert "packed_vs_dequantize_then_f_linear_speedup" in benchmark_source
     assert "reference_seconds_per_iter" in benchmark_source

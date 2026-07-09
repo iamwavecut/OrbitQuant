@@ -74,6 +74,11 @@ def main() -> None:
         return (row_norms[:, None] * centroids[indices_device]).to(dtype)
 
     reference_weight = materialize_reference_weight()
+    packed_weight_indices_bytes = packed.numel() * packed.element_size()
+    row_norms_bytes = row_norms.numel() * row_norms.element_size()
+    centroid_bytes = centroids.numel() * centroids.element_size()
+    packed_weight_path_bytes = packed_weight_indices_bytes + row_norms_bytes + centroid_bytes
+    materialized_weight_bytes = reference_weight.numel() * reference_weight.element_size()
 
     def packed_call() -> torch.Tensor:
         return matmul_packed_weight(
@@ -128,6 +133,15 @@ def main() -> None:
         "packed_seconds_per_iter": packed_seconds,
         "predequantized_f_linear_seconds_per_iter": predequantized_linear_seconds,
         "dequantize_then_f_linear_seconds_per_iter": dequantize_then_linear_seconds,
+        "packed_weight_indices_bytes": packed_weight_indices_bytes,
+        "row_norms_bytes": row_norms_bytes,
+        "centroid_bytes": centroid_bytes,
+        "packed_weight_path_bytes": packed_weight_path_bytes,
+        "materialized_weight_bytes": materialized_weight_bytes,
+        "packed_weight_path_vs_materialized_weight_ratio": packed_weight_path_bytes
+        / materialized_weight_bytes
+        if materialized_weight_bytes > 0
+        else None,
         "packed_vs_predequantized_f_linear_speedup": predequantized_linear_seconds
         / packed_seconds
         if packed_seconds > 0
