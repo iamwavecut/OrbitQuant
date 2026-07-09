@@ -537,6 +537,27 @@ def test_release_013_notes_document_platform_kernel_extra_fix_only():
     assert "chronology" not in release_notes.lower()
 
 
+def test_release_014_notes_document_external_metric_import_fixes_only():
+    release_notes = Path("docs/release-0.1.4.md").read_text(encoding="utf-8")
+
+    assert "OrbitQuant 0.1.4 Release Notes" in release_notes
+    assert "external GenEval and VBench\nmetric import" in release_notes
+    assert 'pip install "orbitquant[hf]==0.1.4"' in release_notes
+    assert 'pip install "orbitquant[kernels]==0.1.4"' in release_notes
+    assert "`geneval_overall`" in release_notes
+    assert "average over task scores" in release_notes
+    assert "`geneval_image_accuracy`" in release_notes
+    assert "`geneval_prompt_accuracy`" in release_notes
+    assert "VBench external eval commands" in release_notes
+    assert "separate CLI\n  arguments" in release_notes
+    assert "exported video filenames" in release_notes
+    assert "does not change quantization math" in release_notes
+    assert "runtime\ndispatch" in release_notes
+    assert "Release-grade\nGenEval/VBench runs remain separate" in release_notes
+    assert "RunPod" not in release_notes
+    assert "chronology" not in release_notes.lower()
+
+
 def test_kernel_audit_documents_backend_claim_boundaries():
     kernel_audit = Path("docs/kernel-audit.md").read_text(encoding="utf-8")
 

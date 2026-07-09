@@ -12,7 +12,7 @@ from orbitquant.pipeline import (
 )
 from orbitquant.quantizer import register_hf_quantizers
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 register_hf_quantizers()
 
