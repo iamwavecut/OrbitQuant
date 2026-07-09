@@ -237,14 +237,14 @@ PY
       printf '%s\n' \
         "native kernel package CI could not load a compatible prebuilt native packed-matmul kernel." \
         "The script will not start a kernel-builder/Nix source build unless ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1 is set, because uncached CUDA builds can compile the CUDA/NCCL stack on paid GPU hosts." \
-        "Use a loadable Hugging Face Kernel Hub artifact, set LOCAL_KERNELS to a compatible built CUDA variant, or rerun with ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1 only on a host where the build cache/toolchain is intentional." \
+        "Make a compatible orbitquant_packed_matmul package importable, use a loadable Hugging Face Kernel Hub artifact, set LOCAL_KERNELS to a compatible built CUDA variant, or rerun with ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1 only on a host where the build cache/toolchain is intentional." \
         >&2
       exit 1
     fi
     if ! command -v nix >/dev/null 2>&1; then
       printf '%s\n' \
         "native kernel package CI requires either a loadable prebuilt native packed-matmul kernel or nix for kernel-builder." \
-        "Install nix, use a GPU image with nix, set LOCAL_KERNELS to a compatible built variant, wait for the Hugging Face kernel repo to become loadable, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when intentionally skipping native package closure." \
+        "Install nix, make a compatible orbitquant_packed_matmul package importable, set LOCAL_KERNELS to a compatible built variant, wait for the Hugging Face kernel repo to become loadable, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when intentionally skipping native package closure." \
         >&2
       exit 1
     fi

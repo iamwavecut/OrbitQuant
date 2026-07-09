@@ -94,7 +94,7 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" && -z "${LOCAL_KERNELS:-}" ]]; then
     stage "native-packed-matmul-local-variant-missing status=$native_kernel_variant_status"
     printf '%s\n' \
       "native packed matmul local variant was not found for this MPS runtime." \
-      "Set LOCAL_KERNELS=$NATIVE_KERNEL_REPO_ID=/absolute/path/to/a/built/variant containing metadata.json, build the matching kernel-builder variant, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 to run only the inline Metal shader checks." \
+      "Make a compatible orbitquant_packed_matmul package importable, set LOCAL_KERNELS=$NATIVE_KERNEL_REPO_ID=/absolute/path/to/a/built/variant containing metadata.json, build the matching kernel-builder variant, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 to run only the inline Metal shader checks." \
       >&2
   fi
 fi

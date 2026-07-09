@@ -24,7 +24,9 @@ def test_native_packed_matmul_rejects_cpu_before_loading_kernel():
         )
 
 
-def test_native_packed_matmul_loader_uses_versioned_hf_kernel(monkeypatch):
+def test_native_packed_matmul_loader_prefers_importable_package_before_hf_kernel(
+    monkeypatch,
+):
     calls = []
     fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
     fake_direct_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
@@ -36,6 +38,31 @@ def test_native_packed_matmul_loader_uses_versioned_hf_kernel(monkeypatch):
     monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
     monkeypatch.setitem(sys.modules, "orbitquant_packed_matmul", fake_direct_kernel)
     monkeypatch.setitem(sys.modules, "kernels", SimpleNamespace(get_kernel=fake_get_kernel))
+
+    assert native_module._load_native_packed_matmul_kernel() is fake_direct_kernel
+    assert calls == []
+
+
+def test_native_packed_matmul_loader_uses_versioned_hf_kernel_when_import_missing(
+    monkeypatch,
+):
+    calls = []
+    fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
+    real_import = builtins.__import__
+
+    def fake_get_kernel(repo_id, *, version, trust_remote_code):
+        calls.append((repo_id, version, trust_remote_code))
+        return fake_kernel
+
+    def fake_import(name, *args, **kwargs):
+        if name == "orbitquant_packed_matmul":
+            raise ImportError("missing importable native package")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
+    monkeypatch.delitem(sys.modules, "orbitquant_packed_matmul", raising=False)
+    monkeypatch.setitem(sys.modules, "kernels", SimpleNamespace(get_kernel=fake_get_kernel))
+    monkeypatch.setattr(builtins, "__import__", fake_import)
 
     assert native_module._load_native_packed_matmul_kernel() is fake_kernel
     assert calls == [("WaveCut/orbitquant-packed-matmul", 1, True)]
@@ -61,13 +88,13 @@ def test_native_packed_matmul_loader_falls_back_to_importable_package_without_hf
     assert native_module._load_native_packed_matmul_kernel() is fake_kernel
 
 
-def test_native_packed_matmul_loader_falls_back_to_importable_package_after_hf_error(
+def test_native_packed_matmul_loader_does_not_probe_hf_when_importable_package_exists(
     monkeypatch,
 ):
     fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
 
     def fail_get_kernel(*args, **kwargs):
-        raise RuntimeError("Hub kernel unavailable")
+        raise AssertionError("Hub kernel should not be probed")
 
     monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
     monkeypatch.setitem(sys.modules, "orbitquant_packed_matmul", fake_kernel)

@@ -21,9 +21,9 @@ for the current artifact format and runtime modes.
   the current environment.
 - `scripts/run_cuda_kernel_checks.sh` is the CUDA correctness and benchmark
   gate for GPU hosts. It first tries to load a prebuilt
-  `native_packed_matmul` package through Hugging Face `kernels`,
-  `LOCAL_KERNELS`, or an importable package. If no compatible prebuilt package
-  is available, it fails before starting a source build unless
+  `native_packed_matmul` package from an importable `orbitquant_packed_matmul`
+  module, then through Hugging Face `kernels`/`LOCAL_KERNELS`. If no compatible
+  prebuilt package is available, it fails before starting a source build unless
   `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. With that explicit opt-in,
   it builds the exact
   `native-kernels/orbitquant-packed-matmul` kernel-builder redistributable

@@ -46,12 +46,13 @@ def _load_native_packed_matmul_kernel() -> Any:
     if _NATIVE_KERNEL is not None:
         return _NATIVE_KERNEL
 
+    _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
+    if _NATIVE_KERNEL is not None:
+        return _NATIVE_KERNEL
+
     try:
         from kernels import get_kernel
     except Exception as exc:  # pragma: no cover - optional dependency
-        _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
-        if _NATIVE_KERNEL is not None:
-            return _NATIVE_KERNEL
         raise RuntimeError(
             "native_packed_matmul runtime requires either an importable "
             "orbitquant_packed_matmul kernel package or the Hugging Face kernels package. "
@@ -68,9 +69,6 @@ def _load_native_packed_matmul_kernel() -> Any:
             trust_remote_code=True,
         )
     except Exception as exc:  # pragma: no cover - environment and Hub dependent
-        _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
-        if _NATIVE_KERNEL is not None:
-            return _NATIVE_KERNEL
         raise RuntimeError(
             "native_packed_matmul runtime could not load "
             f"{_KERNEL_REPO_ID} version {_KERNEL_VERSION}. For local development, set "
