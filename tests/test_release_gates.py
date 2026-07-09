@@ -336,6 +336,14 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "huggingface.co/spaces/kernels-community/README/discussions/15" in request
     assert "Follow-up comment" in request
     assert "On 2026-07-08T18:03Z" in request
+    assert "Reviewer follow-up" in request
+    assert "On 2026-07-09T07:29Z" in request
+    assert "`sayakpaul` reported" in request
+    assert "On 2026-07-09T09:59Z" in request
+    assert "without changing repository visibility" in request
+    assert "public source-only snapshot repo or a source archive" in request
+    assert "MPS native\npacked matmul smoke benchmark numbers" in request
+    assert "native CUDA package numbers pending" in request
     assert "Source visibility follow-up" in request
     assert "still a private\nsource snapshot repo" in request
     assert "make only this source-only kernel repo public" in request
