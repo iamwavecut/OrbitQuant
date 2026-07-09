@@ -30,6 +30,7 @@ def test_source_distribution_keeps_kernel_source_without_generated_artifacts() -
     required_source_paths = {
         "scripts/run_cuda_kernel_checks.sh",
         "scripts/run_mps_kernel_checks.sh",
+        "scripts/verify_hf_kernel_model_artifact.py",
         "scripts/runpod_ssh_health.sh",
         "native-kernels/orbitquant-packed-matmul/build.toml",
         "native-kernels/orbitquant-packed-matmul/CARD.md",

@@ -95,6 +95,13 @@ the same claim boundary: the new fields are weight-side storage accounting,
 not throughput proof; native CUDA package benchmark evidence remains pending a
 compatible Kernel Hub/CUDA build path.
 
+On 2026-07-09T12:42Z, `sayakpaul` asked for a way to try optimizing one target
+model with these kernels. The repository now includes
+`scripts/verify_hf_kernel_model_artifact.py`, which verifies one published
+OrbitQuant artifact layer through `runtime_mode="native_packed_matmul"` and
+compares it with `dequant_bf16` without loading the full Diffusers pipeline or
+running image/video generation.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`

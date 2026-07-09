@@ -467,6 +467,20 @@ Apple Silicon. Full-model speedup claims still require backend-specific
 benchmark artifacts for the target model and native settings. See
 [docs/kernel-audit.md](docs/kernel-audit.md) for the release claim boundary.
 
+To verify that a published OrbitQuant model artifact executes through the
+native packed matmul runtime without running full image/video generation:
+
+```bash
+LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/build/torch212-metal-aarch64-darwin" \
+  uv run python scripts/verify_hf_kernel_model_artifact.py --device mps
+```
+
+The default artifact is `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4`. The script
+loads one quantized transformer projection from the artifact, runs it with
+`runtime_mode="native_packed_matmul"`, compares it with `dequant_bf16`, and
+prints JSON with finite-output, allclose, error, and packed-vs-materialized
+weight storage fields.
+
 ## License
 
 Code in this repository is Apache-2.0. Quantized artifacts also record the

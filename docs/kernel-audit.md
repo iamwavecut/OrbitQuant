@@ -45,6 +45,13 @@ for the current artifact format and runtime modes.
   packed matmul package. Set `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` only
   to verify the inline Metal shader stages without closing the native packed
   matmul package gate.
+- `scripts/verify_hf_kernel_model_artifact.py` is a model-artifact verification
+  script for reviewers. It downloads one published OrbitQuant artifact by
+  default, restores one real packed `OrbitQuantLinear` transformer projection,
+  runs it through `runtime_mode="native_packed_matmul"`, compares against
+  `dequant_bf16`, and prints finite-output, allclose, error, and weight-side
+  storage accounting JSON. It intentionally avoids full Diffusers pipeline
+  loading and image/video generation.
 - Full-model speedup claims require backend-specific benchmark artifacts from
   the target model class and native settings. Synthetic kernel benchmarks are
   useful diagnostics, not release evidence for FLUX, Z-Image, or Wan throughput.
@@ -113,6 +120,10 @@ for the current artifact format and runtime modes.
   A fifth follow-up comment on 2026-07-09T12:41Z points reviewers to this
   snapshot and repeats that the storage fields are memory-path accounting, not
   large-matrix throughput proof.
+  After reviewer asked for model-level verification scripts,
+  `scripts/verify_hf_kernel_model_artifact.py` was added to verify the default
+  `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact at one restored packed
+  transformer projection without running full generation.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same

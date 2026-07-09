@@ -64,6 +64,11 @@ URL, or signed-off audit note.
   accounting explicit. A follow-up comment was posted to discussion 15 on
   2026-07-09T12:41Z with the new snapshot URL and the same non-throughput
   claim boundary.
+  A reviewer then asked for a way to try one model with these kernels.
+  `scripts/verify_hf_kernel_model_artifact.py` was added to verify the default
+  `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact at one restored packed
+  transformer projection using `runtime_mode="native_packed_matmul"`, with
+  `dequant_bf16` comparison and storage accounting, without full generation.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4

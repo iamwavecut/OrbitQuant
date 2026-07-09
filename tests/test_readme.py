@@ -71,6 +71,9 @@ def test_readme_documents_component_artifact_usage():
     assert "CUDA/Triton is partially optimized" in readme
     assert "ROCm and XPU are not implemented backends" in readme
     assert "scripts/run_mps_kernel_checks.sh" in readme
+    assert "scripts/verify_hf_kernel_model_artifact.py" in readme
+    assert "native packed matmul runtime" in readme
+    assert "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4" in readme
     assert "[docs/kernel-audit.md](docs/kernel-audit.md)" in readme
     assert "stage_log START/END" not in readme
     assert "RunPod" not in readme
