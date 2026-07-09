@@ -254,9 +254,9 @@ URL, or signed-off audit note.
   `scripts/run_hf_compat_checks.sh --mode all`, using the current Torch base.
   This gate uses registration, pipeline quantization config, and mini
   integration tests; it does not download model weights or generate samples.
-  Evidence: passed on 2026-07-08T15:47Z with Torch 2.12.1, current/release
-  Diffusers 0.39.0 and Transformers 5.13.0, and dev Diffusers 0.40.0.dev0 plus
-  Transformers 5.14.0.dev0.
+  Evidence: passed on 2026-07-09T17:18Z with Torch 2.12.1, current/release
+  Diffusers 0.39.0 and Transformers 5.13.0, and dev Diffusers 0.40.0.dev0
+  at `208704a` plus Transformers 5.14.0.dev0 at `0bc3554`.
 - [x] Checkpoint and model repositories are published with artifact-focused
   model cards, complete file manifests, checksums where applicable, and native
   comparison assets for the advertised targets. Cards must describe the

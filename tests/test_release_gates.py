@@ -183,9 +183,11 @@ def test_release_gates_document_final_acceptance_checklist():
         in release_gates
     )
     assert "- [x] Compatibility is verified" in release_gates
-    assert "passed on 2026-07-08T15:47Z" in release_gates
+    assert "passed on 2026-07-09T17:18Z" in release_gates
     assert "Diffusers 0.40.0.dev0" in release_gates
+    assert "`208704a`" in release_gates
     assert "Transformers 5.14.0.dev0" in release_gates
+    assert "`0bc3554`" in release_gates
     assert "- [x] ComfyUI compatibility is verified" in release_gates
     assert "kernel extra\n  install guidance for the default `auto_fused` runtime" in (
         release_gates
