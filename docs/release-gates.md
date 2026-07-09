@@ -311,7 +311,17 @@ URL, or signed-off audit note.
   `4afc15589fe713345dfa47be30dc078d943484a1f4bbd4861a413532a6ec8377` and
   `orbitquant-0.1.2-py3-none-any.whl` SHA256
   `3bdddebaa46f60307ed50e2ebf4b7ff4fef7817845b512ecfbb6fbf8ba71c91c`.
-- [x] The PyPI package is published as `orbitquant==0.1.2`.
+  Patch release notes for the cross-platform kernel-extra dependency fix are
+  [release-0.1.3.md](release-0.1.3.md). GitHub CI for commit `02166ec`
+  passed as run `29034308427`, tag `v0.1.3` points at commit
+  `02166ec6bdcd8920b0012a1ff930dce8dd976fdb`, and GitHub Release
+  `https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.3` was published
+  on 2026-07-09 with exact PyPI-matching assets:
+  `orbitquant-0.1.3.tar.gz` SHA256
+  `008f949641d00df46f840580c424b9e9fad0d853b4345d454a0b8042c61f3366` and
+  `orbitquant-0.1.3-py3-none-any.whl` SHA256
+  `181e9b532a07312ec47b54091d651b5a62d5aefd32c88d40830bd8529a0fdc53`.
+- [x] The PyPI package is published as `orbitquant==0.1.3`.
   Evidence: commit `ce5c232` added the manual
   `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI
   pending publisher was registered for project `orbitquant`, owner
@@ -351,6 +361,17 @@ URL, or signed-off audit note.
   `OrbitQuantConfig().runtime_mode == "auto_fused"`,
   `orbitquant --version == "0.1.2"`, and `orbitquant audit-hf-artifacts --help`
   includes `--summary-only`.
+  Patch publish run `29034405916` completed successfully on 2026-07-09 from
+  head SHA `02166ec6bdcd8920b0012a1ff930dce8dd976fdb`, including full pytest,
+  `ruff check`, package build, `twine check`, wheel smoke, OIDC publication,
+  and PyPI digital attestations. The PyPI JSON API reports version `0.1.3` with
+  `orbitquant-0.1.3.tar.gz` SHA256
+  `008f949641d00df46f840580c424b9e9fad0d853b4345d454a0b8042c61f3366` and
+  `orbitquant-0.1.3-py3-none-any.whl` SHA256
+  `181e9b532a07312ec47b54091d651b5a62d5aefd32c88d40830bd8529a0fdc53`; a fresh
+  venv installed `orbitquant[kernels]==0.1.3` from PyPI on macOS and verified
+  `orbitquant.__version__ == "0.1.3"`, installed `kernels==0.16.0`, and did
+  not install Triton because the `triton>=3.5` extra is Linux-only.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
   install guidance for the default `auto_fused` runtime.
@@ -369,7 +390,7 @@ URL, or signed-off audit note.
   `iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`, Apache-2.0 licensed, with
   default branch `main`. Follow-up commit `85527ee` required
   `orbitquant>=0.1.1` after the packed-matmul default update and passed
-  GitHub CI run `29022774661`. Current commit `4832d4a` requires
+  GitHub CI run `29022774661`. Commit `4832d4a` requires
   `orbitquant>=0.1.2`, updates the README install commands for both
   `orbitquant>=0.1.2` and `orbitquant[kernels]>=0.1.2`, refreshes `uv.lock`
   to the PyPI `orbitquant` 0.1.2 release hashes, and passed GitHub CI run
@@ -398,6 +419,22 @@ URL, or signed-off audit note.
   `9a2c1e23e7c7674bb8fb7c350473c9ad636c952c5495b71d805a91996a00b51f`. A fresh
   venv installed `comfyui-orbitquant==0.1.0` from PyPI and imported
   `comfyui_orbitquant.NODE_CLASS_MAPPINGS`.
+  Current commit `7e5fc4c` requires `orbitquant>=0.1.3`, exposes the
+  `comfyui-orbitquant[kernels]` extra through `orbitquant[kernels]>=0.1.3`,
+  refreshes `uv.lock` to the PyPI OrbitQuant 0.1.3 release, and passed GitHub
+  CI run `29034705959` on 2026-07-09. Publish run `29034761024` published
+  `comfyui-orbitquant==0.1.2` from head SHA
+  `7e5fc4c0f74dbcb341b755b2b53cb0edf40cb311`. GitHub Release
+  `https://github.com/iamwavecut/ComfyUI-OrbitQuant/releases/tag/v0.1.2` was
+  published on 2026-07-09 with exact PyPI-matching assets:
+  `comfyui_orbitquant-0.1.2.tar.gz` SHA256
+  `48ea3909f96620baba3f2acf52532b15330fc89cb847557f13da915969f4e42b` and
+  `comfyui_orbitquant-0.1.2-py3-none-any.whl` SHA256
+  `2fbcf8a4fecb7d4384d2461001fa33b291a02720d20cf465e7e2669ad145fd83`. A fresh
+  venv installed `comfyui-orbitquant[kernels]==0.1.2` from PyPI on macOS and
+  verified `comfyui-orbitquant==0.1.2`, `orbitquant==0.1.3`,
+  `kernels==0.16.0`, no Triton install, and exported FLUX, Z-Image, Wan,
+  generic component-loader, and artifact-inspector nodes.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions

@@ -199,7 +199,7 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "GitHub CI run `29022774661`" in release_gates
-    assert "Current commit `4832d4a` requires\n  `orbitquant>=0.1.2`" in (
+    assert "Commit `4832d4a` requires\n  `orbitquant>=0.1.2`" in (
         release_gates
     )
     assert "`orbitquant[kernels]>=0.1.2`" in release_gates
@@ -207,6 +207,32 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "passed GitHub CI run\n  `29027011708`" in release_gates
+    assert "Current commit `7e5fc4c` requires `orbitquant>=0.1.3`" in (
+        release_gates
+    )
+    assert "`comfyui-orbitquant[kernels]` extra through `orbitquant[kernels]>=0.1.3`" in (
+        release_gates
+    )
+    assert "CI run `29034705959`" in release_gates
+    assert "Publish run `29034761024` published\n  `comfyui-orbitquant==0.1.2`" in (
+        release_gates
+    )
+    assert "7e5fc4c0f74dbcb341b755b2b53cb0edf40cb311" in release_gates
+    assert "https://github.com/iamwavecut/ComfyUI-OrbitQuant/releases/tag/v0.1.2" in (
+        release_gates
+    )
+    assert "`comfyui_orbitquant-0.1.2.tar.gz` SHA256" in release_gates
+    assert "48ea3909f96620baba3f2acf52532b15330fc89cb847557f13da915969f4e42b" in (
+        release_gates
+    )
+    assert "`comfyui_orbitquant-0.1.2-py3-none-any.whl` SHA256" in (
+        release_gates
+    )
+    assert "2fbcf8a4fecb7d4384d2461001fa33b291a02720d20cf465e7e2669ad145fd83" in (
+        release_gates
+    )
+    assert "`comfyui-orbitquant==0.1.2`, `orbitquant==0.1.3`" in release_gates
+    assert "generic component-loader, and artifact-inspector nodes" in release_gates
     assert "`iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`" in release_gates
     assert "`uv run pytest -q`, `uv run ruff check .`, package build, and\n  `twine check`" in (
         release_gates
@@ -283,13 +309,28 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "3bdddebaa46f60307ed50e2ebf4b7ff4fef7817845b512ecfbb6fbf8ba71c91c" in (
         release_gates
     )
+    assert "[release-0.1.3.md](release-0.1.3.md)" in release_gates
+    assert "commit `02166ec`\n  passed as run `29034308427`" in release_gates
+    assert "tag `v0.1.3` points at commit" in release_gates
+    assert "02166ec6bdcd8920b0012a1ff930dce8dd976fdb" in release_gates
+    assert "https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.3" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.3.tar.gz` SHA256" in release_gates
+    assert "008f949641d00df46f840580c424b9e9fad0d853b4345d454a0b8042c61f3366" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.3-py3-none-any.whl` SHA256" in release_gates
+    assert "181e9b532a07312ec47b54091d651b5a62d5aefd32c88d40830bd8529a0fdc53" in (
+        release_gates
+    )
     assert (
         "including HF\n  integration tests, full pytest, package build, "
         "`twine check`, and wheel"
     ) in (
         release_gates
     )
-    assert "- [x] The PyPI package is published as `orbitquant==0.1.2`" in (
+    assert "- [x] The PyPI package is published as `orbitquant==0.1.3`" in (
         release_gates
     )
     assert ".github/workflows/publish-pypi.yml" in release_gates
@@ -310,6 +351,13 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "PyPI JSON API reports version `0.1.2`" in release_gates
     assert "`orbitquant-0.1.2.tar.gz` SHA256" in release_gates
     assert "`orbitquant-0.1.2-py3-none-any.whl` SHA256" in release_gates
+    assert "Patch publish run `29034405916` completed successfully" in release_gates
+    assert "head SHA `02166ec6bdcd8920b0012a1ff930dce8dd976fdb`" in (
+        release_gates
+    )
+    assert "PyPI JSON API reports version `0.1.3`" in release_gates
+    assert "`orbitquant-0.1.3.tar.gz` SHA256" in release_gates
+    assert "`orbitquant-0.1.3-py3-none-any.whl` SHA256" in release_gates
     assert "python -m pip index versions\n  orbitquant` reports `0.1.0`" in (
         release_gates
     )
@@ -319,6 +367,9 @@ def test_release_gates_document_final_acceptance_checklist():
     assert '`orbitquant --version == "0.1.1"`' in release_gates
     assert '`orbitquant.__version__ == "0.1.2"`' in release_gates
     assert '`orbitquant --version == "0.1.2"`' in release_gates
+    assert '`orbitquant.__version__ == "0.1.3"`' in release_gates
+    assert "`kernels==0.16.0`" in release_gates
+    assert "`triton>=3.5` extra is Linux-only" in release_gates
     assert "`orbitquant audit-hf-artifacts --help`\n  includes `--summary-only`" in (
         release_gates
     )
@@ -462,6 +513,24 @@ def test_release_012_notes_document_compact_audit_only():
     assert "does not change quantization math" in release_notes
     assert "runtime kernel\n" in release_notes
     assert "model cards" in release_notes
+    assert "RunPod" not in release_notes
+    assert "chronology" not in release_notes.lower()
+
+
+def test_release_013_notes_document_platform_kernel_extra_fix_only():
+    release_notes = Path("docs/release-0.1.3.md").read_text(encoding="utf-8")
+
+    assert "OrbitQuant 0.1.3 Release Notes" in release_notes
+    assert "cross-platform kernel extras" in release_notes
+    assert 'pip install "orbitquant[kernels]==0.1.3"' in release_notes
+    assert "`triton>=3.5` is now constrained to Linux" in release_notes
+    assert "macOS/MPS\n  users" in release_notes
+    assert "`orbitquant.__version__`" in release_notes
+    assert "does not change quantization math" in release_notes
+    assert "runtime dispatch policy" in release_notes
+    assert "kernel implementations" in release_notes
+    assert "performance" not in release_notes.lower()
+    assert "speedup" not in release_notes.lower()
     assert "RunPod" not in release_notes
     assert "chronology" not in release_notes.lower()
 
