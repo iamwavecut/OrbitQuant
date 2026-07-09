@@ -456,6 +456,21 @@ URL, or signed-off audit note.
   verified `comfyui-orbitquant==0.1.2`, `orbitquant==0.1.3`,
   `kernels==0.16.0`, no Triton install, and exported FLUX, Z-Image, Wan,
   generic component-loader, and artifact-inspector nodes.
+  Current commit `435baab` requires `orbitquant>=0.1.4`, exposes the
+  `comfyui-orbitquant[kernels]` extra through `orbitquant[kernels]>=0.1.4`,
+  refreshes `uv.lock` to the PyPI OrbitQuant 0.1.4 release, and passed GitHub
+  CI run `29038618250` on 2026-07-09. Publish run `29038664476` published
+  `comfyui-orbitquant==0.1.3` from head SHA
+  `435baabea32f3f50bdf7ef4eee719e1fd4b82c12`. GitHub Release
+  `https://github.com/iamwavecut/ComfyUI-OrbitQuant/releases/tag/v0.1.3` was
+  published on 2026-07-09 with exact PyPI-matching assets:
+  `comfyui_orbitquant-0.1.3.tar.gz` SHA256
+  `202400246f267bfb4b97974207a5d482b71b80db9122cca60134f4355fc42f19` and
+  `comfyui_orbitquant-0.1.3-py3-none-any.whl` SHA256
+  `453c72d95e5dafee5408969225809ad278eb577a9386728b7f5bdcef918de1d1`. A fresh
+  venv installed `comfyui-orbitquant==0.1.3` from PyPI and verified
+  `comfyui-orbitquant==0.1.3`, `orbitquant==0.1.4`, and exported FLUX,
+  Z-Image, Wan, generic component-loader, and artifact-inspector nodes.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions

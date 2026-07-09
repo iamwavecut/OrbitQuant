@@ -234,6 +234,31 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "`comfyui-orbitquant==0.1.2`, `orbitquant==0.1.3`" in release_gates
+    assert "Current commit `435baab` requires `orbitquant>=0.1.4`" in (
+        release_gates
+    )
+    assert "`comfyui-orbitquant[kernels]` extra through `orbitquant[kernels]>=0.1.4`" in (
+        release_gates
+    )
+    assert "CI run `29038618250`" in release_gates
+    assert "Publish run `29038664476` published\n  `comfyui-orbitquant==0.1.3`" in (
+        release_gates
+    )
+    assert "435baabea32f3f50bdf7ef4eee719e1fd4b82c12" in release_gates
+    assert "https://github.com/iamwavecut/ComfyUI-OrbitQuant/releases/tag/v0.1.3" in (
+        release_gates
+    )
+    assert "`comfyui_orbitquant-0.1.3.tar.gz` SHA256" in release_gates
+    assert "202400246f267bfb4b97974207a5d482b71b80db9122cca60134f4355fc42f19" in (
+        release_gates
+    )
+    assert "`comfyui_orbitquant-0.1.3-py3-none-any.whl` SHA256" in (
+        release_gates
+    )
+    assert "453c72d95e5dafee5408969225809ad278eb577a9386728b7f5bdcef918de1d1" in (
+        release_gates
+    )
+    assert "`comfyui-orbitquant==0.1.3`, `orbitquant==0.1.4`" in release_gates
     assert "generic component-loader, and artifact-inspector nodes" in release_gates
     assert "`iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`" in release_gates
     assert "`uv run pytest -q`, `uv run ruff check .`, package build, and\n  `twine check`" in (
