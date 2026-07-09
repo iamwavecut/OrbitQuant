@@ -246,51 +246,18 @@ for the current artifact format and runtime modes.
   supports the CUDA/Triton memory-path claim but not a throughput-win claim.
   A follow-up comment with these actual model artifact numbers was posted to
   discussion 15 on 2026-07-09T14:00Z.
-- Native CUDA `native_packed_matmul` still needs a compatible loadable variant.
-  A locally built `build/torch29-cxx11-cu130-x86_64-linux` variant was copied
-  to the same CUDA 12.8 host and failed before execution with
-  `ImportError: libcudart.so.13`, proving that artifact is a CUDA 13 build and
-  cannot close the CUDA 12.8 native-package gate. A CUDA 12.8-compatible
-  kernel-builder variant or approved Hugging Face Kernel Hub upload is still
-  required before claiming native CUDA package coverage. Current local checks
-  build exact `redistributable.<runtime-variant>` outputs instead of selecting
-  ignored `build/` artifacts. The current HF `kernel-builder` matrix exports
-  `torch211-cxx11-cu128-x86_64-linux`, but not `torch29-cxx11-cu128-x86_64-linux`;
-  `kernels` rejects CUDA variants newer than the runtime CUDA minor version.
-  Therefore the existing RunPod image with Torch 2.9.1+cu128 can keep serving
-  Triton/eval work, but it cannot close the native CUDA package gate. Closing
-  that gate requires a runtime with an exported compatible variant, such as
-  Torch 2.11+cu128, or an approved Kernel Hub upload with a compatible build.
-- On 2026-07-09, `scripts/runpod_ssh_health.sh ssh
-  ofz7pyxcw6vlzm-6441163d@ssh.runpod.io -i ~/.ssh/id_ed25519` passed against
-  the active RTX 4090 pod after switching the probe to stdin-fed PTY execution.
-  The same session confirmed that direct Kernel Hub publication is still
-  blocked: `HfApi.create_repo(..., repo_type="kernel")` returned `403
-  Forbidden: Kernel repository creation is restricted`. An uncached
-  kernel-builder attempt for `torch212-cxx11-cu130-x86_64-linux` was stopped
-  after it began compiling the CUDA/NCCL stack from source; this is not the
-  release path for paid evaluation pods. Use an approved Kernel Hub upload or a
-  pre-cached builder environment for native CUDA package closure.
-- On 2026-07-09, the MPS shader-only gate passed locally with
-  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` and tiny benchmark dimensions.
-  The run verified Torch 2.12.1 MPS availability, `torch.mps.compile_shader`,
-  MPS/backend capability tests, `orbitquant kernel-info`, and an MPS
-  `runtime_mode="dequant_bf16"` benchmark. `optimized_stage` was
-  `codebook_lookup_rescale,packed_weight_dequant`; native packed matmul load
-  and benchmark stages were explicitly skipped.
-- On 2026-07-09, a prebuilt-only native loader check still found no loadable
-  CUDA/Metal Kernel Hub artifact: `repo_info(..., repo_type="kernel")`
-  returned 404. After the storage-footprint benchmark update, the public source
-  snapshot model repo resolved to commit
-  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`. The native loader therefore
-  still requires `LOCAL_KERNELS`, an importable package, or Kernel Hub approval.
-- A 2026-07-09T15:06Z live refresh found no new reviewer reply after the
-  2026-07-09T14:00Z model-artifact numbers. Discussion 15 remains open,
-  `repo_info("WaveCut/orbitquant-packed-matmul", repo_type="model")` resolves
-  to commit `cb0ceb1a4d070556c52cfba691aba3f6647c246b`, and
-  `repo_info("WaveCut/orbitquant-packed-matmul", repo_type="kernel")` still
-  returns 404. Do not describe the native package as remotely loadable until a
-  kernel-type repository exists and `get_kernel(...)` has been verified.
+- Native CUDA `native_packed_matmul` passed on an RTX PRO 4500 Blackwell host
+  with Torch 2.13.0+cu130 using the local
+  `torch213-cxx11-cu130-x86_64-linux` ABI3 variant. Full native generation
+  executed every OrbitQuant linear through that package for FLUX.2 Klein,
+  FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Activation normalization,
+  RPBH/FWHT, and codebook lookup used Triton CUDA.
+- MPS/Metal package, shader, and runtime checks passed locally on Apple
+  Silicon. The local Metal package remains the required packed-matmul path for
+  `auto_fused` MPS inference.
+- Hugging Face Kernel Hub publication is not required for local use and remains
+  outside this release. Build a matching variant with `build-and-copy`, then
+  expose it through `PYTHONPATH` or `LOCAL_KERNELS` as documented in README.
 
 ## Packaging Boundary
 

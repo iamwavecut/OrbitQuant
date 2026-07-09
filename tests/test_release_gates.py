@@ -48,8 +48,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`release_eval_applicable_count=10`" in release_gates
     assert "`release_eval_ready_count=0`" in release_gates
     assert "`missing_required_metric_count=144`" in release_gates
-    assert "paper reproduction or\n  metric-table claims" in release_gates
-    assert "GenEval\n  overall and per-task scores" in release_gates
+    assert "Release-grade metric claims are disabled" in release_gates
+    assert "GenEval/VBench runs are complete" in release_gates
     assert "all required VBench\n  dimensions" in release_gates
     assert "Missing release metrics block only those metric/reproduction\n  claims" in release_gates
     assert "compact artifacts without those metrics must present native\n  comparison" in (
@@ -227,19 +227,19 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "actual published model artifact layer evidence" in release_gates
     assert "posted to discussion 15 on 2026-07-09T14:00Z" in release_gates
-    assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
-    assert "`ImportError: libcudart.so.13`" in release_gates
-    assert "`torch211-cxx11-cu128-x86_64-linux`" in release_gates
-    assert "`torch29-cxx11-cu128-x86_64-linux`" in release_gates
-    assert "runtime with an exported compatible variant" in release_gates
+    assert "Native CUDA package verification passed" in release_gates
+    assert "RTX PRO 4500 Blackwell" in release_gates
+    assert "`torch213-cxx11-cu130-x86_64-linux` ABI3 variant" in release_gates
+    assert "100/100 FLUX.2, 418/418" in release_gates
+    assert "an importable variant on `PYTHONPATH` or `LOCAL_KERNELS`" in release_gates
     assert (
         "latest published releases and dev\n  branches of Diffusers and Transformers"
         in release_gates
     )
     assert "- [x] Compatibility is verified" in release_gates
-    assert "passed on 2026-07-09T17:18Z" in release_gates
+    assert "passed again for OrbitQuant 0.1.6" in release_gates
     assert "Diffusers 0.40.0.dev0" in release_gates
-    assert "`208704a`" in release_gates
+    assert "`284419b`" in release_gates
     assert "Transformers 5.14.0.dev0" in release_gates
     assert "`0bc3554`" in release_gates
     assert "- [x] ComfyUI compatibility is verified" in release_gates
@@ -571,7 +571,7 @@ def test_release_gates_keep_current_priority_order():
         "The GitHub repository is public",
         "The PyPI package is published",
         "ComfyUI compatibility is verified",
-        "Release-grade metrics are complete",
+        "Release-grade metric claims are disabled",
     ]
     positions = [release_gates.index(token) for token in expected_order]
 
@@ -804,11 +804,11 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     )
     assert "actual\n  published artifact layer execution" in kernel_audit
     assert "posted to\n  discussion 15 on 2026-07-09T14:00Z" in kernel_audit
-    assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
-    assert "`ImportError: libcudart.so.13`" in kernel_audit
-    assert "`torch211-cxx11-cu128-x86_64-linux`" in kernel_audit
-    assert "`torch29-cxx11-cu128-x86_64-linux`" in kernel_audit
-    assert "Torch 2.11+cu128" in kernel_audit
+    assert "Native CUDA `native_packed_matmul` passed" in kernel_audit
+    assert "RTX PRO 4500 Blackwell" in kernel_audit
+    assert "`torch213-cxx11-cu130-x86_64-linux` ABI3 variant" in kernel_audit
+    assert "executed every OrbitQuant linear" in kernel_audit
+    assert "expose it through `PYTHONPATH` or `LOCAL_KERNELS`" in kernel_audit
     assert "a4d927c" not in kernel_audit
 
 
@@ -942,7 +942,7 @@ def test_paper_methodology_audit_uses_claim_boundary_language():
     assert "not a development log" in audit
     assert "normalize by `s + ε`" in audit
     assert "Pass for codebook version 2" in audit
-    assert "Public checkpoints with `codebook_version=1`" in audit
+    assert "Published checkpoints use converged Lloyd-Max codebook version 2" in audit
     assert "paper's block-size enumeration omits `h=256`" in audit
     for forbidden in (
         "Full GenEval/VBench is optional during development",

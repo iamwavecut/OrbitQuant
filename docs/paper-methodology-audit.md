@@ -162,15 +162,14 @@ the paper's GenEval or VBench numbers.
 | Zero weight rows use an epsilon guard for direction quantization. | Accepted implementation guard | The paper defines weight directions as `w' / ||w'||` for nonzero rows. The implementation divides by `max(||w'||, ε)` only when choosing codebook indices, stores the raw BF16 row norm, and dequantizes zero rows back to exactly zero. |
 | Full-model speedup is not yet a release claim. | Accepted claim boundary | `auto_fused`, `native_packed_matmul`, and `triton_packed_matmul` use packed matmul paths, but model-specific benchmark artifacts are still required before broad acceleration claims. |
 | The paper's block-size enumeration omits `h=256`, although its stated largest-power-of-two-divisor rule gives `h=256` for Z-Image `d=3840` and Wan `d=8960` projections. | Paper inconsistency | The implementation follows the formal rule. The selected target dimensions produce `h` in `{256, 512, 1024, 2048, 4096}`. |
-| Public checkpoints with `codebook_version=1` use the legacy, prematurely stopped Lloyd-Max iteration. | Artifact replacement required | They remain loadable with version 1 semantics, but they do not support a paper-conformance claim. Paper-conformant checkpoints must be regenerated with codebook version 2 and `activation_eps=1e-10`. |
+| Published checkpoints use converged Lloyd-Max codebook version 2 and `activation_eps=1e-10`. | Pass | All 14 canonical FLUX.2, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 artifacts were regenerated and validated. Legacy version 1 artifacts remain loadable by the library but are no longer the published release checkpoints. |
 | Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
 | Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
 
 ## Next Audit Actions
 
-1. Replace all version 1 public checkpoints with version 2 artifacts using
-   `activation_eps=1e-10`.
-2. Validate each replacement manifest against its model-policy inventory and
-   publish a native BF16-versus-OrbitQuant comparison.
-3. Run full GenEval/VBench before making paper-reproduction metric claims.
+1. Keep GenEval/VBench claims disabled until the corresponding external metric
+   runs are complete.
+2. Re-run the manifest, policy-inventory, checksum, and native-smoke audit after
+   changing any published checkpoint.

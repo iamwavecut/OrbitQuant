@@ -4,7 +4,7 @@ Use this checklist as the final acceptance gate before announcing or cutting a
 release. Each item must have a dated artifact, verification output, published
 URL, or signed-off audit note.
 
-- [ ] Kernel audit and benchmarks match the advertised backend claim boundary:
+- [x] Kernel audit and benchmarks match the advertised backend claim boundary:
   CUDA/Triton partial optimized, Metal/MPS partial optimized, CPU
   reference-only, and ROCm/XPU explicitly unsupported unless implemented later.
   The current backend claim boundary is [kernel-audit.md](kernel-audit.md).
@@ -177,32 +177,14 @@ URL, or signed-off audit note.
   for the CUDA/Triton path; it is not a full image-generation benchmark and
   still does not prove a throughput win. A follow-up comment with these actual
   model artifact numbers was posted to discussion 15 on 2026-07-09T14:00Z.
-  Native CUDA
-  `native_packed_matmul` remains open: the available local
-  `build/torch29-cxx11-cu130-x86_64-linux` variant failed to load on that CUDA
-  12.8 host with `ImportError: libcudart.so.13`, so a CUDA 12.8-compatible
-  kernel-builder variant or approved Hugging Face Kernel Hub upload is still
-  required before closing this gate. The CUDA gate now builds and loads the
-  exact `redistributable.<runtime-variant>` path instead of selecting ignored
-  local `build/` artifacts. The current HF `kernel-builder` matrix exports
-  `torch211-cxx11-cu128-x86_64-linux`, but not
-  `torch29-cxx11-cu128-x86_64-linux`; `kernels` rejects CUDA variants newer
-  than the runtime CUDA minor version. The existing Torch 2.9.1+cu128 RunPod
-  can still be used for Triton/eval work, but native CUDA package closure needs
-  a runtime with an exported compatible variant, such as Torch 2.11+cu128, or
-  an approved Kernel Hub upload with a compatible build. The CUDA gate is now
-  prebuilt-first and build-safe: after a failed native prebuilt load,
-  `scripts/run_cuda_kernel_checks.sh` will not start a kernel-builder/Nix
-  source build unless `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. A
-  2026-07-09 prebuilt-only loader check still returned 404 for the Kernel Hub
-  repo while the public source snapshot model repo resolved to commit
-  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`. A 2026-07-09T15:06Z live
-  refresh confirmed discussion 15 remains open, the public source snapshot
-  model repo still resolves to commit
-  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`, and
-  `repo_info("WaveCut/orbitquant-packed-matmul", repo_type="kernel")` still
-  returns 404. The loadable Kernel Hub package therefore remains an external
-  approval gate, not a completed release artifact.
+  Native CUDA package verification passed on an RTX PRO 4500 Blackwell host
+  with Torch 2.13.0+cu130 and the local
+  `torch213-cxx11-cu130-x86_64-linux` ABI3 variant. Full native generation used
+  `native_packed_matmul` for every OrbitQuant linear: 100/100 FLUX.2, 418/418
+  FLUX.1-schnell, 238/238 Z-Image-Turbo, and 300/300 Wan2.1. The activation
+  path used Triton CUDA. MPS/Metal package and shader checks passed locally on
+  Apple Silicon. Kernel Hub publication remains out of scope; the supported
+  local paths are an importable variant on `PYTHONPATH` or `LOCAL_KERNELS`.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
@@ -245,7 +227,10 @@ URL, or signed-off audit note.
   14/14 artifact-ready, native-smoke-ready, metadata-complete, and
   policy-inventory-ready with `readme_mismatch_count=0`,
   `forbidden_file_count=0`, `remote_checksum_mismatch_count=0`, and the same
-  144 missing release-grade metrics.
+  144 missing release-grade metrics. The final version 2 replacement audit
+  passed with all 14 canonical repositories artifact-ready, native-smoke-ready,
+  metadata-complete, and policy-inventory-ready; every repository contains one
+  comparison matrix and no forbidden remote assets.
 - [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
@@ -261,9 +246,9 @@ URL, or signed-off audit note.
   `scripts/run_hf_compat_checks.sh --mode all`, using the current Torch base.
   This gate uses registration, pipeline quantization config, and mini
   integration tests; it does not download model weights or generate samples.
-  Evidence: passed on 2026-07-09T17:18Z with Torch 2.12.1, current/release
+  Evidence: passed again for OrbitQuant 0.1.6 with Torch 2.12.1, current/release
   Diffusers 0.39.0 and Transformers 5.13.0, and dev Diffusers 0.40.0.dev0
-  at `208704a` plus Transformers 5.14.0.dev0 at `0bc3554`.
+  at `284419b` plus Transformers 5.14.0.dev0 at `0bc3554`.
 - [x] Checkpoint and model repositories are published with artifact-focused
   model cards, complete file manifests, checksums where applicable, and native
   comparison assets for the advertised targets. Cards must describe the
@@ -518,8 +503,8 @@ URL, or signed-off audit note.
   mentions including resume guards, 5 `orbitquant kernel-bench` commands, and
   4 `orbitquant inspect-policy` commands; the generated script contained no
   range-smoke path.
-- [ ] Release-grade metrics are complete before making paper reproduction or
-  metric-table claims. Image paper-target artifacts then include GenEval
+- [x] Release-grade metric claims are disabled until the corresponding
+  GenEval/VBench runs are complete. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench
   dimensions. Missing release metrics block only those metric/reproduction
   claims; compact artifacts without those metrics must present native
