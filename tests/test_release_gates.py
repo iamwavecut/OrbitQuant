@@ -180,6 +180,18 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "public-readiness commit `97d7efc`" in release_gates
     assert "`orbitquant>=0.1.0`" in release_gates
     assert "passed GitHub CI run\n  `29020564152`" in release_gates
+    assert "Follow-up commit `85527ee` required\n  `orbitquant>=0.1.1`" in (
+        release_gates
+    )
+    assert "GitHub CI run `29022774661`" in release_gates
+    assert "Current commit `4832d4a` requires\n  `orbitquant>=0.1.2`" in (
+        release_gates
+    )
+    assert "`orbitquant[kernels]>=0.1.2`" in release_gates
+    assert "refreshes `uv.lock`\n  to the PyPI `orbitquant` 0.1.2 release hashes" in (
+        release_gates
+    )
+    assert "passed GitHub CI run\n  `29027011708`" in release_gates
     assert "`iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`" in release_gates
     assert "`uv run pytest -q`, `uv run ruff check .`, package build, and\n  `twine check`" in (
         release_gates

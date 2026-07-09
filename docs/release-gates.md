@@ -355,7 +355,13 @@ URL, or signed-off audit note.
   `ruff`, package build, and `twine check`, and passed GitHub CI run
   `29020564152` on 2026-07-09. A live GitHub check then reported
   `iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`, Apache-2.0 licensed, with
-  default branch `main`.
+  default branch `main`. Follow-up commit `85527ee` required
+  `orbitquant>=0.1.1` after the packed-matmul default update and passed
+  GitHub CI run `29022774661`. Current commit `4832d4a` requires
+  `orbitquant>=0.1.2`, updates the README install commands for both
+  `orbitquant>=0.1.2` and `orbitquant[kernels]>=0.1.2`, refreshes `uv.lock`
+  to the PyPI `orbitquant` 0.1.2 release hashes, and passed GitHub CI run
+  `29027011708` on 2026-07-09.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
