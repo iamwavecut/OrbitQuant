@@ -173,6 +173,10 @@ URL, or signed-off audit note.
   artifacts, `twine check` passed, a fresh venv installed the wheel, importing
   `orbitquant` returned version `0.1.0`, `OrbitQuantConfig()` defaulted to
   `runtime_mode="auto_fused"`, and `orbitquant --version` returned `0.1.0`.
+  Re-checked on 2026-07-09 at OrbitQuant commit `f12aabe`: fresh build in
+  `/tmp/orbitquant-build-verify-20260709T093205Z`, `twine check`, fresh wheel
+  install/import, `OrbitQuantConfig().runtime_mode`, `to_json_string()` round
+  trip, and `orbitquant --version` all passed.
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra

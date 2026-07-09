@@ -124,6 +124,7 @@ def test_runpod_ssh_health_script_uses_sterile_ssh_probe():
     assert "-o KbdInteractiveAuthentication=no" in text
     assert "__RUNPOD_SSH_HEALTH_OK__" in text
     assert "RUNPOD_SSH_HEALTH_READY" in text
+    assert "feeds the health command through stdin" in text
     assert "runpodctl pod" not in text
 
 
@@ -132,6 +133,7 @@ def test_runpod_ssh_health_script_executes_clean_probe_with_web_ui_command(tmp_p
     fake_ssh.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$@\" > \"$RUNPOD_FAKE_SSH_ARGS\"\n"
+        "cat > \"$RUNPOD_FAKE_SSH_STDIN\"\n"
         "printf '__RUNPOD_SSH_HEALTH_OK__\\nfake-host\\n'\n",
         encoding="utf-8",
     )
@@ -139,9 +141,11 @@ def test_runpod_ssh_health_script_executes_clean_probe_with_web_ui_command(tmp_p
     key_path = tmp_path / "id_ed25519"
     key_path.write_text("fake-key", encoding="utf-8")
     args_path = tmp_path / "ssh-args.txt"
+    stdin_path = tmp_path / "ssh-stdin.txt"
     env = os.environ.copy()
     env["PATH"] = f"{tmp_path}:{env['PATH']}"
     env["RUNPOD_FAKE_SSH_ARGS"] = str(args_path)
+    env["RUNPOD_FAKE_SSH_STDIN"] = str(stdin_path)
 
     result = subprocess.run(
         [
@@ -160,6 +164,7 @@ def test_runpod_ssh_health_script_executes_clean_probe_with_web_ui_command(tmp_p
     )
 
     ssh_args = args_path.read_text(encoding="utf-8").splitlines()
+    ssh_stdin = stdin_path.read_text(encoding="utf-8")
     assert "RUNPOD_SSH_HEALTH_READY target=pod-user@ssh.runpod.io" in result.stdout
     assert ssh_args[:3] == ["-F", "/dev/null", "-tt"]
     assert "-o" in ssh_args
@@ -172,7 +177,38 @@ def test_runpod_ssh_health_script_executes_clean_probe_with_web_ui_command(tmp_p
     assert "-p" in ssh_args
     assert "45678" in ssh_args
     assert "pod-user@ssh.runpod.io" in ssh_args
-    assert any("__RUNPOD_SSH_HEALTH_OK__" in arg for arg in ssh_args)
+    assert not any("__RUNPOD_SSH_HEALTH_OK__" in arg for arg in ssh_args)
+    assert "__RUNPOD_SSH_HEALTH_OK__" in ssh_stdin
+    assert ssh_stdin.rstrip().endswith("exit")
+
+
+def test_runpod_ssh_health_script_accepts_runpod_pty_control_sequences(tmp_path):
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat > /dev/null\n"
+        "printf '\\033[?2004l__RUNPOD_SSH_HEALTH_OK__\\nfake-host\\n'\n",
+        encoding="utf-8",
+    )
+    fake_ssh.chmod(0o755)
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("fake-key", encoding="utf-8")
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+
+    result = subprocess.run(
+        [
+            "scripts/runpod_ssh_health.sh",
+            "pod-user@ssh.runpod.io",
+            str(key_path),
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+
+    assert "RUNPOD_SSH_HEALTH_READY target=pod-user@ssh.runpod.io" in result.stdout
 
 
 def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant():

@@ -31,8 +31,10 @@ for the current artifact format and runtime modes.
   matching kernel-builder variant is available, the gate fails explicitly
   instead of loading an incompatible build.
 - `scripts/runpod_ssh_health.sh` is the preflight for RunPod basic SSH hosts.
-  It checks actual SSH authentication and remote command execution with
+  It checks actual SSH authentication and remote shell execution with
   `ssh -F /dev/null -tt`, ignoring local SSH config and ControlMaster state.
+  The probe feeds commands through stdin because RunPod basic SSH proxies can
+  require a PTY while ignoring remote command arguments.
   Use it before starting the CUDA gate when the host comes from a RunPod
   Connect-tab SSH command.
 - `scripts/run_mps_kernel_checks.sh` is the MPS/Metal correctness and smoke
@@ -111,6 +113,16 @@ for the current artifact format and runtime modes.
   Triton/eval work, but it cannot close the native CUDA package gate. Closing
   that gate requires a runtime with an exported compatible variant, such as
   Torch 2.11+cu128, or an approved Kernel Hub upload with a compatible build.
+- On 2026-07-09, `scripts/runpod_ssh_health.sh ssh
+  ofz7pyxcw6vlzm-6441163d@ssh.runpod.io -i ~/.ssh/id_ed25519` passed against
+  the active RTX 4090 pod after switching the probe to stdin-fed PTY execution.
+  The same session confirmed that direct Kernel Hub publication is still
+  blocked: `HfApi.create_repo(..., repo_type="kernel")` returned `403
+  Forbidden: Kernel repository creation is restricted`. An uncached
+  kernel-builder attempt for `torch212-cxx11-cu130-x86_64-linux` was stopped
+  after it began compiling the CUDA/NCCL stack from source; this is not the
+  release path for paid evaluation pods. Use an approved Kernel Hub upload or a
+  pre-cached builder environment for native CUDA package closure.
 
 ## Packaging Boundary
 

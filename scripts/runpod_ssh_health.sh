@@ -8,7 +8,9 @@ Usage:
   scripts/runpod_ssh_health.sh ssh user@ssh.runpod.io -i ~/.ssh/id_ed25519 [-p PORT]
 
 Checks the actual RunPod SSH connection with a clean SSH config. It does not
-query, create, stop, or modify pods.
+query, create, stop, or modify pods. The probe opens an interactive PTY and
+feeds the health command through stdin because RunPod basic SSH proxies may
+ignore remote command arguments while still accepting an interactive shell.
 EOF
 }
 
@@ -92,8 +94,12 @@ if [[ -n "$port" ]]; then
 fi
 
 set +e
-ssh "${ssh_args[@]}" "$target" "$remote_command" | tr -d '\r' | tee "$tmp_output"
-ssh_status=${PIPESTATUS[0]}
+{
+  printf '%s\n' "$remote_command"
+  printf 'exit\n'
+} | ssh "${ssh_args[@]}" "$target" | tr -d '\r' | tee "$tmp_output"
+pipeline_status=("${PIPESTATUS[@]}")
+ssh_status=${pipeline_status[1]}
 set -e
 
 if [[ "$ssh_status" -ne 0 ]]; then
@@ -101,7 +107,8 @@ if [[ "$ssh_status" -ne 0 ]]; then
   exit "$ssh_status"
 fi
 
-if ! grep -qx '__RUNPOD_SSH_HEALTH_OK__' "$tmp_output"; then
+clean_output="$(sed $'s/\033\\[[0-9;?]*[ -/]*[@-~]//g' "$tmp_output")"
+if ! grep -qx '__RUNPOD_SSH_HEALTH_OK__' <<<"$clean_output"; then
   printf 'RUNPOD_SSH_HEALTH_FAILED sentinel_missing target=%s\n' "$target" >&2
   exit 1
 fi
