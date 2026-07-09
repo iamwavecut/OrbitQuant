@@ -151,7 +151,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "repository visibility and\n  the release tag remain pending explicit approval" in (
         release_gates
     )
-    assert "current\n  `main` commit `b67af1a` passed as run `29010166749`" in (
+    assert "release-readiness\n  commit `b67af1a` passed as run `29010166749`" in (
         release_gates
     )
     assert "HF integration tests, full pytest, package build, `twine check`, and wheel" in (
