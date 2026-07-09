@@ -1,9 +1,9 @@
 # OrbitQuant 0.1.0 Publication Checklist
 
-This checklist is for the public repository, GitHub release, and PyPI package
-publication step. PyPI `orbitquant==0.1.0` is already published through Trusted
-Publishing, and the GitHub repository is already public. Tag creation and
-GitHub release creation remain gated by explicit approval.
+This checklist records the public repository, GitHub release, and PyPI package
+publication step. PyPI `orbitquant==0.1.0` is published through Trusted
+Publishing, the GitHub repository is public, and GitHub Release `v0.1.0` is
+published.
 
 ## Preconditions
 
@@ -26,7 +26,7 @@ import tomllib
 print(tomllib.loads(open("pyproject.toml", "rb").read().decode())["project"]["version"])
 PY
 )" = "0.1.0"
-test "$(git tag --list v0.1.0)" = ""
+test "$(git rev-list -n 1 v0.1.0)" = "ce5c232a8bf9b450c7d94eeae07445317c98b1d0"
 gh repo view iamwavecut/OrbitQuant --json nameWithOwner,visibility,isPrivate,defaultBranchRef
 python - <<'PY'
 import json
@@ -74,16 +74,17 @@ PY
 
 ## Publish GitHub Release
 
-Run only after explicit approval. Repository visibility is already public, so
-this section only creates the version tag and GitHub release:
+Repository visibility is already public. The `v0.1.0` tag points to the PyPI
+publication workflow head SHA so the GitHub source tag, PyPI package, and
+attached release assets refer to the same package source:
 
 ```bash
 cd /Users/Shared/src/github.com/iamwavecut/OrbitQuant
-git tag -a v0.1.0 -m "OrbitQuant 0.1.0"
+git tag -a v0.1.0 ce5c232a8bf9b450c7d94eeae07445317c98b1d0 -m "OrbitQuant 0.1.0"
 git push origin v0.1.0
 gh release create v0.1.0 \
-  dist/orbitquant-0.1.0.tar.gz \
-  dist/orbitquant-0.1.0-py3-none-any.whl \
+  /tmp/orbitquant-release-0.1.0/orbitquant-0.1.0.tar.gz \
+  /tmp/orbitquant-release-0.1.0/orbitquant-0.1.0-py3-none-any.whl \
   --repo iamwavecut/OrbitQuant \
   --verify-tag \
   --title "OrbitQuant 0.1.0" \

@@ -158,17 +158,25 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "all 14 public artifact repos" in release_gates
     assert "all 14 public artifact manifests" in release_gates
     assert "not host logs, raw eval dumps, or terminal transcripts" in release_gates
-    assert "The GitHub repository is public" in release_gates
+    assert "- [x] The GitHub repository is public, tagged, released" in release_gates
     assert "[release-0.1.0.md](release-0.1.0.md)" in release_gates
     assert "[publication-checklist.md](publication-checklist.md)" in release_gates
-    assert "the release tag and GitHub\n  release remain pending explicit approval" in (
-        release_gates
-    )
     assert "release-readiness\n  commit `0c0f63a` passed as run `29016554734`" in (
         release_gates
     )
     assert "`iamwavecut/OrbitQuant` as `PUBLIC`" in release_gates
     assert "https://pypi.org/project/orbitquant/" in release_gates
+    assert "Git tag `v0.1.0` was created" in release_gates
+    assert "ce5c232a8bf9b450c7d94eeae07445317c98b1d0" in release_gates
+    assert "https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.0" in (
+        release_gates
+    )
+    assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
+        release_gates
+    )
+    assert "dfbfa80ff79132457b6918d69f8ae9d8961ea3d898487d105a0e74da906eeaaa" in (
+        release_gates
+    )
     assert (
         "including HF\n  integration tests, full pytest, package build, "
         "`twine check`, and wheel"
@@ -202,16 +210,17 @@ def test_publication_checklist_contains_gated_release_commands():
     checklist = Path("docs/publication-checklist.md").read_text(encoding="utf-8")
 
     assert "OrbitQuant 0.1.0 Publication Checklist" in checklist
-    assert "PyPI `orbitquant==0.1.0` is already published" in checklist
-    assert "the GitHub repository is already public" in checklist
-    assert "Tag creation and\nGitHub release creation remain gated" in (
-        checklist
-    )
+    assert "PyPI `orbitquant==0.1.0` is published" in checklist
+    assert "the GitHub repository is public" in checklist
+    assert "GitHub Release `v0.1.0` is\npublished" in checklist
     assert "Trusted Publishing is configured" in checklist
     assert "git status --short --branch" in checklist
     assert "git fetch origin main --tags" in checklist
     assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in checklist
-    assert 'test "$(git tag --list v0.1.0)" = ""' in checklist
+    assert (
+        'test "$(git rev-list -n 1 v0.1.0)" = '
+        '"ce5c232a8bf9b450c7d94eeae07445317c98b1d0"'
+    ) in checklist
     assert "gh repo view iamwavecut/OrbitQuant --json" in checklist
     assert "uv run pytest -q" in checklist
     assert "uv run ruff check ." in checklist
@@ -223,11 +232,15 @@ def test_publication_checklist_contains_gated_release_commands():
     assert "OrbitQuantConfig().runtime_mode" in checklist
     assert "https://pypi.org/pypi/orbitquant/json" in checklist
     assert "Repository visibility is already public" in checklist
+    assert "tag points to the PyPI\npublication workflow head SHA" in checklist
     assert (
         'test "$(gh repo view iamwavecut/OrbitQuant --json isPrivate '
         '--jq .isPrivate)" = "false"'
     ) in checklist
-    assert "git tag -a v0.1.0" in checklist
+    assert (
+        "git tag -a v0.1.0 ce5c232a8bf9b450c7d94eeae07445317c98b1d0"
+        in checklist
+    )
     assert "git push origin v0.1.0" in checklist
     assert "gh release create v0.1.0" in checklist
     assert "--verify-tag" in checklist

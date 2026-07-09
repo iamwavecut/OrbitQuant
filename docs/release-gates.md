@@ -148,18 +148,27 @@ URL, or signed-off audit note.
   `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
   `readme_mismatch_count=0`, `forbidden_file_count=0`, `public_count=14`, and
   `private_count=0`.
-- [ ] The GitHub repository is public and includes the release docs, license,
-  source distribution expectations, and reproducible verification commands.
+- [x] The GitHub repository is public, tagged, released, and includes the
+  release docs, license, source distribution expectations, and reproducible
+  verification commands.
   Release-note content for the first public package release candidate is
-  prepared in [release-0.1.0.md](release-0.1.0.md); the release tag and GitHub
-  release remain pending explicit approval. The exact manual tag/release
-  sequence is prepared in
-  [publication-checklist.md](publication-checklist.md). GitHub CI for release-readiness
+  [release-0.1.0.md](release-0.1.0.md). The exact manual tag/release
+  sequence is recorded in [publication-checklist.md](publication-checklist.md).
+  GitHub CI for release-readiness
   commit `0c0f63a` passed as run `29016554734` on 2026-07-09, including HF
   integration tests, full pytest, package build, `twine check`, and wheel
   smoke. A live GitHub check on 2026-07-09T11:54Z reported
   `iamwavecut/OrbitQuant` as `PUBLIC`, Apache-2.0 licensed, with homepage
-  `https://pypi.org/project/orbitquant/`.
+  `https://pypi.org/project/orbitquant/`. Git tag `v0.1.0` was created on
+  2026-07-09 and resolves to commit
+  `ce5c232a8bf9b450c7d94eeae07445317c98b1d0`, matching the GitHub Actions
+  PyPI publish run head SHA. GitHub Release
+  `https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.0` was published
+  on 2026-07-09T12:10Z with exact PyPI-matching assets:
+  `orbitquant-0.1.0.tar.gz` SHA256
+  `6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89` and
+  `orbitquant-0.1.0-py3-none-any.whl` SHA256
+  `dfbfa80ff79132457b6918d69f8ae9d8961ea3d898487d105a0e74da906eeaaa`.
 - [x] The PyPI package is published as `orbitquant==0.1.0`.
   Evidence: commit `ce5c232` added the manual
   `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI
