@@ -31,6 +31,7 @@ struct PackedMatmulPipelineCache {
   id<MTLDevice> device;
   id<MTLComputePipelineState> float_pipeline;
   id<MTLComputePipelineState> half_pipeline;
+  id<MTLComputePipelineState> bfloat16_pipeline;
 };
 
 static id<MTLComputePipelineState> create_pipeline(
@@ -64,9 +65,23 @@ static PackedMatmulPipelineCache &packed_matmul_pipeline_cache() {
           create_pipeline(cache.device, library, "packed_matmul_forward_float");
       cache.half_pipeline =
           create_pipeline(cache.device, library, "packed_matmul_forward_half");
+      cache.bfloat16_pipeline =
+          create_pipeline(cache.device, library, "packed_matmul_forward_bfloat16");
     }
   });
   return cache;
+}
+
+static id<MTLComputePipelineState> select_packed_matmul_pipeline(
+    PackedMatmulPipelineCache &cache,
+    c10::ScalarType dtype) {
+  if (dtype == torch::kFloat) {
+    return cache.float_pipeline;
+  }
+  if (dtype == torch::kHalf) {
+    return cache.half_pipeline;
+  }
+  return cache.bfloat16_pipeline;
 }
 
 static void dispatch_packed_matmul_kernel(
@@ -85,7 +100,7 @@ static void dispatch_packed_matmul_kernel(
   @autoreleasepool {
     PackedMatmulPipelineCache &cache = packed_matmul_pipeline_cache();
     id<MTLComputePipelineState> pipeline =
-        x.scalar_type() == torch::kFloat ? cache.float_pipeline : cache.half_pipeline;
+        select_packed_matmul_pipeline(cache, x.scalar_type());
 
     id<MTLCommandBuffer> command_buffer = torch::mps::get_command_buffer();
     TORCH_CHECK(command_buffer, "Failed to retrieve MPS command buffer");
@@ -159,8 +174,9 @@ void matmul_packed_weight(
   TORCH_CHECK(row_norms.is_contiguous(), "row norms must be contiguous");
   TORCH_CHECK(centroids.is_contiguous(), "centroids must be contiguous");
   TORCH_CHECK(packed_weight_indices.scalar_type() == torch::kUInt8, "packed weights must be uint8");
-  TORCH_CHECK(x.scalar_type() == torch::kFloat || x.scalar_type() == torch::kHalf,
-              "Metal packed matmul supports float32 and float16 inputs");
+  TORCH_CHECK(x.scalar_type() == torch::kFloat || x.scalar_type() == torch::kHalf ||
+                  x.scalar_type() == torch::kBFloat16,
+              "Metal packed matmul supports float32, float16, and bfloat16 inputs");
   TORCH_CHECK(out.scalar_type() == x.scalar_type(), "out dtype must match x dtype");
   TORCH_CHECK(row_norms.scalar_type() == torch::kFloat, "row_norms must be float32");
   TORCH_CHECK(centroids.scalar_type() == torch::kFloat, "centroids must be float32");

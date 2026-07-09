@@ -62,7 +62,7 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "After adding kernel `upstream`/`source` metadata" in release_gates
     assert "2026-07-08T16:59Z at OrbitQuant commit `5cc7d30`" in release_gates
-    assert "get-kernel\n  loading, and 17 package tests" in release_gates
+    assert "get-kernel\n  loading, and package tests" in release_gates
     assert "reviewable source package from `native-kernels/orbitquant-packed-matmul`" in (
         release_gates
     )

@@ -130,6 +130,9 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert "bias.scalar_type() == torch::kFloat" in cuda_source
     assert "packed_matmul_forward_float" in metal_source
     assert "packed_matmul_forward_half" in metal_source
+    assert "packed_matmul_forward_bfloat16" in metal_source
+    assert "bf16_to_float" in metal_source
+    assert "float_to_bf16" in metal_source
 
 
 def test_cuda_kernel_uses_wmma_for_supported_bf16_and_fp16_low_bit_modes() -> None:
@@ -154,6 +157,8 @@ def test_metal_host_source_matches_cuda_packed_weight_contract() -> None:
     assert "torch::mps::get_command_buffer()" in metal_host
     assert "torch::mps::get_dispatch_queue()" in metal_host
     assert "torch::mps::commit()" in metal_host
+    assert "packed_matmul_forward_bfloat16" in metal_host
+    assert "x.scalar_type() == torch::kBFloat16" in metal_host
     assert "packed_weight_indices.scalar_type() == torch::kUInt8" in metal_host
     assert "row_norms.scalar_type() == torch::kFloat" in metal_host
     assert "centroids.scalar_type() == torch::kFloat" in metal_host

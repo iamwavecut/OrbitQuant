@@ -16,7 +16,7 @@ URL, or signed-off audit note.
   `nix --option sandbox relaxed run .#ci-test -L` locally again on
   2026-07-08T16:59Z at OrbitQuant commit `5cc7d30`, including kernel-builder
   layout hooks, ABI compatibility for macOS 15/Python ABI 3.9, get-kernel
-  loading, and 17 package tests.
+  loading, and package tests.
   A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face, and
   its commit `6821e4cd5ff1894994d7137c1d861660cfeed1c8` contains the
   reviewable source package from `native-kernels/orbitquant-packed-matmul`,

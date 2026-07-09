@@ -32,7 +32,8 @@ Inputs:
 - `centroids`: `float32` Lloyd-Max centroids with shape `[2**bits]`.
 - `bias`: optional projection bias.
 
-The output has shape `[..., out_features]` and the same dtype as `x`.
+`x` may be `float32`, `float16`, or `bfloat16`. The output has shape
+`[..., out_features]` and the same dtype as `x`.
 
 ## Build And Test
 
