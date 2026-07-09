@@ -43,6 +43,57 @@ def test_native_packed_matmul_loader_prefers_importable_package_before_hf_kernel
     assert calls == []
 
 
+def test_native_packed_matmul_loader_accepts_kernel_builder_variant_layout(
+    tmp_path,
+    monkeypatch,
+):
+    previous_package = sys.modules.pop("orbitquant_packed_matmul", None)
+    previous_variant = sys.modules.pop("orbitquant_packed_matmul_variant_test", None)
+    variant = tmp_path / "torch999-cxx11-cu999-x86_64-linux"
+    package_dir = variant / "orbitquant_packed_matmul"
+    package_dir.mkdir(parents=True)
+    (variant / "metadata.json").write_text('{"name": "orbitquant-packed-matmul"}')
+    (variant / "__init__.py").write_text(
+        "def matmul_packed_weight(*args, **kwargs):\n"
+        "    return ('variant-root', args, kwargs)\n",
+        encoding="utf-8",
+    )
+    (package_dir / "__init__.py").write_text(
+        "import importlib.util\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "module_name = 'orbitquant_packed_matmul_variant_test'\n"
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    module_name, Path(__file__).parent.parent / '__init__.py'\n"
+        ")\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[module_name] = module\n"
+        "spec.loader.exec_module(module)\n"
+        "globals().update(vars(module))\n",
+        encoding="utf-8",
+    )
+
+    def fail_get_kernel(*args, **kwargs):
+        raise AssertionError("Hub kernel should not be probed for an importable variant")
+
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
+    monkeypatch.syspath_prepend(str(variant))
+    monkeypatch.setitem(sys.modules, "kernels", SimpleNamespace(get_kernel=fail_get_kernel))
+
+    try:
+        kernel = native_module._load_native_packed_matmul_kernel()
+
+        assert kernel.matmul_packed_weight("x") == ("variant-root", ("x",), {})
+    finally:
+        native_module._NATIVE_KERNEL = None
+        sys.modules.pop("orbitquant_packed_matmul", None)
+        sys.modules.pop("orbitquant_packed_matmul_variant_test", None)
+        if previous_package is not None:
+            sys.modules["orbitquant_packed_matmul"] = previous_package
+        if previous_variant is not None:
+            sys.modules["orbitquant_packed_matmul_variant_test"] = previous_variant
+
+
 def test_native_packed_matmul_loader_uses_versioned_hf_kernel_when_import_missing(
     monkeypatch,
 ):
