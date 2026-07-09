@@ -387,7 +387,12 @@ URL, or signed-off audit note.
   Publishing workflow for a future `comfyui-orbitquant` PyPI release. GitHub
   reported both `CI` and `Publish PyPI` workflows as active, and ComfyUI CI run
   `29028857599` passed on 2026-07-09 with node-pack tests, lint, package
-  build, package metadata check, and wheel smoke.
+  build, package metadata check, and wheel smoke. The GitHub `pypi`
+  environment was created on 2026-07-09T15:21Z. A PyPI pending publisher for
+  `comfyui-orbitquant` was prepared in the browser, but PyPI required
+  password confirmation before accepting the sensitive-account change; as of
+  2026-07-09T15:23Z the project still returned 404 and the publish workflow
+  had not been run.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
