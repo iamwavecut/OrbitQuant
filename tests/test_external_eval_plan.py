@@ -1,4 +1,10 @@
-from orbitquant.eval.external_plan import build_external_eval_plan, build_external_eval_script
+import shlex
+
+from orbitquant.eval.external_plan import (
+    VBENCH_CUSTOM_INPUT_DIMENSIONS,
+    build_external_eval_plan,
+    build_external_eval_script,
+)
 from orbitquant.eval.native_settings import get_native_suite
 
 
@@ -45,6 +51,9 @@ def test_build_external_eval_plan_emits_vbench_import_commands(tmp_path):
     assert "--mode custom_input" in job["eval_command"]
     assert "scene" in job["eval_command"]
     assert "overall_consistency" in job["eval_command"]
+    argv = shlex.split(job["eval_command"])
+    dimension_values = argv[argv.index("--dimension") + 1 : argv.index("--videos_path")]
+    assert tuple(dimension_values) == VBENCH_CUSTOM_INPUT_DIMENSIONS
     assert "orbitquant summarize-vbench-results" in job["summarize_command"]
     assert "--metric-prefix vbench" in job["import_command"]
     assert "--split orbitquant" in job["import_command"]

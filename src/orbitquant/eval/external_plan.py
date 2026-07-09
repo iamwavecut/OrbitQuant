@@ -104,7 +104,7 @@ def _eval_command(
                 "vbench",
                 "evaluate",
                 "--dimension",
-                " ".join(VBENCH_CUSTOM_INPUT_DIMENSIONS),
+                *VBENCH_CUSTOM_INPUT_DIMENSIONS,
                 "--videos_path",
                 export_dir,
                 "--mode",
