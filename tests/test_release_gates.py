@@ -399,6 +399,22 @@ def test_release_011_notes_include_pypi_cuda_smoke_without_speedup_claims():
     assert "does not claim full-model speedup" in release_notes
 
 
+def test_release_012_notes_document_compact_audit_only():
+    release_notes = Path("docs/release-0.1.2.md").read_text(encoding="utf-8")
+
+    assert "OrbitQuant 0.1.2 Release Notes" in release_notes
+    assert "`orbitquant audit-hf-artifacts` now accepts `--summary-only`" in (
+        release_notes
+    )
+    assert "--fail-on-artifact-regression" in release_notes
+    assert "does not weaken the artifact-readiness gate" in release_notes
+    assert "does not change quantization math" in release_notes
+    assert "runtime kernel\n" in release_notes
+    assert "model cards" in release_notes
+    assert "RunPod" not in release_notes
+    assert "chronology" not in release_notes.lower()
+
+
 def test_kernel_audit_documents_backend_claim_boundaries():
     kernel_audit = Path("docs/kernel-audit.md").read_text(encoding="utf-8")
 
