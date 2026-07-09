@@ -25,7 +25,6 @@ from orbitquant.artifacts import (
 from orbitquant.benchmarks import benchmark_model_quantization, benchmark_orbit_linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import list_native_suites
-from orbitquant.eval.assets import create_image_comparison_sheet
 from orbitquant.eval.external_export import export_geneval_artifact, export_vbench_artifact
 from orbitquant.eval.external_metrics import (
     summarize_geneval_results,
@@ -1759,6 +1758,8 @@ def main(argv: list[str] | None = None) -> int:
             output_dir
             / f"{suite.name}_seed{args.seed}_{bit_setting}_original_vs_orbitquant.webp"
         )
+        from orbitquant.eval.assets import create_image_comparison_sheet
+
         create_image_comparison_sheet(
             _comparison_image_source(original_result, is_video=suite.frames is not None),
             _comparison_image_source(orbitquant_result, is_video=suite.frames is not None),
