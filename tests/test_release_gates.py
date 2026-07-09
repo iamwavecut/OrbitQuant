@@ -277,6 +277,8 @@ def test_release_notes_are_artifact_focused_and_reproducible():
         release_notes
     )
     assert "WaveCut/orbitquant-packed-matmul" in release_notes
+    assert "`LOCAL_KERNELS` must point\n" in release_notes
+    assert "expected kernel-builder variant" in release_notes
     assert "RunPod" not in release_notes
     assert "discussion" not in release_notes.lower()
     assert "chronology" not in release_notes.lower()

@@ -148,4 +148,7 @@ Python wheel and is intended for Hugging Face Kernel Hub publication as
 `WaveCut/orbitquant-packed-matmul` version 1.
 
 Until Kernel Hub publication is available, local validation can use
-`LOCAL_KERNELS` or an importable local package build.
+`LOCAL_KERNELS` or an importable local package build. `LOCAL_KERNELS` must point
+to the built runtime variant directory containing `metadata.json`. Native CUDA
+load errors report the expected kernel-builder variant for the active
+Torch/CUDA/Linux runtime.

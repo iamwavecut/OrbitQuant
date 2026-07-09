@@ -183,11 +183,17 @@ directory to `PYTHONPATH`, or set `LOCAL_KERNELS` to that same built variant
 directory before importing OrbitQuant:
 
 ```bash
+# CUDA/Linux example.
+export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/native-kernels/orbitquant-packed-matmul/build/torch29-cxx11-cu128-x86_64-linux"
+
+# Metal/macOS example.
 export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/native-kernels/orbitquant-packed-matmul/build/torch212-metal-aarch64-darwin"
 ```
 
 `LOCAL_KERNELS` must point at a built variant directory that contains
-`metadata.json`, not at the native-kernel source package root.
+`metadata.json`, not at the native-kernel source package root. Native-kernel
+load errors include the current Torch/CUDA/platform runtime and, on CUDA/Linux,
+the expected kernel-builder variant name.
 
 CUDA and MPS `auto_fused` inference does not silently fall back to materializing
 the full dequantized weight matrix. If a packed kernel is unavailable,
