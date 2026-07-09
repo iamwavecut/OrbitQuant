@@ -130,6 +130,23 @@ checks the default optimized dispatch path, not only the explicit
 On 2026-07-09T13:05Z, `WaveCut` posted that `auto_fused` verifier command and
 JSON result summary in discussion 15.
 
+On 2026-07-09T13:08Z, `sayakpaul` asked for actual reported numbers rather
+than another script reference. A model-like CUDA microbenchmark was then run on
+the active RTX 4090 RunPod with `orbitquant[kernels]==0.1.0` from PyPI, Torch
+2.9.1+cu128, CUDA 12.8, driver 580.159.04, `tokens=512`,
+`in_features=3072`, `out_features=3072`, W4A4, float16, warmup 2, and
+5 iterations. The `auto_fused` Triton path reported
+`forward_prewarmed_ms=0.6518784046173096`,
+`forward_cold_ms=0.6581952095031738`, and `peak_memory_bytes=69293568`. The
+explicit `dequant_bf16` reference reported
+`forward_prewarmed_ms=0.13742079734802246`,
+`forward_cold_ms=0.20090880393981933`, and
+`peak_memory_bytes=115025408`.
+
+On 2026-07-09T13:22Z, `WaveCut` posted those numbers in discussion 15 and
+explicitly stated that the current CUDA/Triton `auto_fused` result is
+memory-path evidence, not a throughput win on this RTX 4090 microbenchmark.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`

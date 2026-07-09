@@ -185,6 +185,19 @@ for the current artifact format and runtime modes.
   the temporary venv after completion. This verifies the published PyPI package
   CUDA/Triton `auto_fused` path, not the separate native CUDA Kernel Hub
   package.
+- After a reviewer asked for actual numbers, a model-like CUDA microbenchmark
+  was run on the same pod on 2026-07-09T13:21Z with
+  `orbitquant[kernels]==0.1.0` from PyPI, `tokens=512`, `in_features=3072`,
+  `out_features=3072`, W4A4, float16, warmup 2, and 5 iterations. The
+  `auto_fused` Triton path reported `forward_prewarmed_ms=0.6518784046173096`,
+  `forward_cold_ms=0.6581952095031738`, and `peak_memory_bytes=69293568`.
+  The explicit `dequant_bf16` reference reported
+  `forward_prewarmed_ms=0.13742079734802246`,
+  `forward_cold_ms=0.20090880393981933`, and
+  `peak_memory_bytes=115025408`. These numbers were posted to discussion 15 on
+  2026-07-09T13:22Z with the explicit caveat that current CUDA/Triton
+  `auto_fused` is memory-path evidence, not a throughput win on this RTX 4090
+  microbenchmark.
 - Native CUDA `native_packed_matmul` still needs a compatible loadable variant.
   A locally built `build/torch29-cxx11-cu130-x86_64-linux` variant was copied
   to the same CUDA 12.8 host and failed before execution with

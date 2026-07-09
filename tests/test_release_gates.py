@@ -122,6 +122,13 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "published PyPI package\n  CUDA/Triton `auto_fused` path" in (
         release_gates
     )
+    assert "model-like CUDA\n  microbenchmark was run" in release_gates
+    assert "`tokens=512`, `in_features=3072`" in release_gates
+    assert "`forward_prewarmed_ms=0.6518784046173096`" in release_gates
+    assert "`forward_prewarmed_ms=0.13742079734802246`" in release_gates
+    assert "not a throughput win on this RTX 4090\n  microbenchmark" in (
+        release_gates
+    )
     assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
     assert "`ImportError: libcudart.so.13`" in release_gates
     assert "`torch211-cxx11-cu128-x86_64-linux`" in release_gates
@@ -414,6 +421,13 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "published PyPI package\n  CUDA/Triton `auto_fused` path" in (
         kernel_audit
     )
+    assert "model-like CUDA microbenchmark\n  was run" in kernel_audit
+    assert "`tokens=512`, `in_features=3072`" in kernel_audit
+    assert "`forward_prewarmed_ms=0.6518784046173096`" in kernel_audit
+    assert "`forward_prewarmed_ms=0.13742079734802246`" in kernel_audit
+    assert "not a throughput win on this RTX 4090\n  microbenchmark" in (
+        kernel_audit
+    )
     assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
     assert "`ImportError: libcudart.so.13`" in kernel_audit
     assert "`torch211-cxx11-cu128-x86_64-linux`" in kernel_audit
@@ -478,6 +492,12 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "posted that `auto_fused` verifier command and\nJSON result summary" in (
         request
     )
+    assert "On 2026-07-09T13:08Z" in request
+    assert "asked for actual reported numbers" in request
+    assert "On 2026-07-09T13:22Z" in request
+    assert "`forward_prewarmed_ms=0.6518784046173096`" in request
+    assert "`forward_prewarmed_ms=0.13742079734802246`" in request
+    assert "memory-path evidence, not a throughput win" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )
