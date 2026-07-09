@@ -96,3 +96,5 @@ def test_native_packed_matmul_loader_reports_missing_optional_dependency(monkeyp
     assert "built kernel variant directory" in message
     assert "metadata.json" in message
     assert "PYTHONPATH" in message
+    assert "Current runtime is torch" in message
+    assert "The built kernel variant must match this runtime." in message

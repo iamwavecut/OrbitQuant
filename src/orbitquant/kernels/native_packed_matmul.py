@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 from typing import Any
 
 import torch
@@ -19,6 +20,17 @@ def _load_importable_packed_matmul_kernel() -> Any | None:
     return orbitquant_packed_matmul
 
 
+def _runtime_variant_hint() -> str:
+    cuda_version = torch.version.cuda
+    accelerator = f"CUDA {cuda_version}" if cuda_version is not None else "non-CUDA"
+    return (
+        "Current runtime is "
+        f"torch {torch.__version__}, {accelerator}, "
+        f"{platform.system().lower()} {platform.machine()}. "
+        "The built kernel variant must match this runtime."
+    )
+
+
 def _load_native_packed_matmul_kernel() -> Any:
     global _NATIVE_KERNEL
     if _NATIVE_KERNEL is not None:
@@ -36,7 +48,7 @@ def _load_native_packed_matmul_kernel() -> Any:
             "Install `kernels` and point LOCAL_KERNELS at a compatible "
             "built kernel variant directory containing metadata.json, make the "
             "compatible variant directory importable through PYTHONPATH, or use "
-            "runtime_mode='dequant_bf16'."
+            f"runtime_mode='dequant_bf16'. {_runtime_variant_hint()}"
         ) from exc
 
     try:
@@ -53,11 +65,10 @@ def _load_native_packed_matmul_kernel() -> Any:
             "native_packed_matmul runtime could not load "
             f"{_KERNEL_REPO_ID} version {_KERNEL_VERSION}. For local development, set "
             "LOCAL_KERNELS=WaveCut/orbitquant-packed-matmul=/absolute/path/to/a/"
-            "built kernel variant directory that contains metadata.json, for example "
-            "native-kernels/orbitquant-packed-matmul/build/"
-            "torch212-metal-aarch64-darwin, before importing OrbitQuant; add that "
-            "same variant directory to PYTHONPATH; or make a compatible "
-            "orbitquant_packed_matmul package importable."
+            "built kernel variant directory that contains metadata.json before "
+            "importing OrbitQuant; add that same variant directory to PYTHONPATH; "
+            "or make a compatible orbitquant_packed_matmul package importable. "
+            f"{_runtime_variant_hint()}"
         ) from exc
     return _NATIVE_KERNEL
 
