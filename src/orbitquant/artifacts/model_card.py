@@ -270,6 +270,13 @@ def _validation_status_section(
             [
                 f"### Release-Grade {release_metric} Metrics",
                 "",
+                (
+                    "GenEval `geneval_overall` follows upstream GenEval semantics: "
+                    "average over task scores."
+                    if release_metric == "GenEval"
+                    else "VBench metrics follow the upstream dimension names."
+                ),
+                "",
                 "| Metric | BF16 source | OrbitQuant |",
                 "| --- | ---: | ---: |",
             ]

@@ -435,6 +435,10 @@ orbitquant external-eval-script \
 For Wan, use the same `external-eval-script` path with `--suite wan-native` to
 run VBench custom-input dimensions against the native 832x480, 81-frame videos.
 
+Imported GenEval `geneval_overall` follows upstream GenEval semantics: average
+over task scores. Image-level and prompt-level hit rates are imported as
+`geneval_image_accuracy` and `geneval_prompt_accuracy` when present.
+
 Final publication gates are tracked in
 [docs/release-gates.md](docs/release-gates.md).
 

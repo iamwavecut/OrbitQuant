@@ -150,6 +150,7 @@ def test_model_card_renders_imported_geneval_release_metrics():
     assert "Release-grade GenEval metrics: included below." in card
     assert "Release-grade GenEval metrics: not included" not in card
     assert "### Release-Grade GenEval Metrics" in card
+    assert "GenEval `geneval_overall` follows upstream GenEval semantics" in card
     assert "| `geneval_overall` | `0.74` | `0.71` |" in card
     assert "| `geneval_per_task_single_object` | `0.9` | `0.88` |" in card
     assert "wall_time_seconds" not in card
@@ -183,6 +184,7 @@ def test_model_card_renders_imported_vbench_release_metrics():
     assert "Release-grade VBench metrics: included below." in card
     assert "Release-grade VBench metrics: not included" not in card
     assert "### Release-Grade VBench Metrics" in card
+    assert "VBench metrics follow the upstream dimension names." in card
     assert "| `vbench_subject_consistency` | `0.82` | `0.8` |" in card
     assert "| `vbench_overall_consistency` | `0.76` | `0.74` |" in card
 

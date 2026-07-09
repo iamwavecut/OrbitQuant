@@ -69,6 +69,8 @@ def test_readme_documents_component_artifact_usage():
     assert "orbitquant native-script" in readme
     assert "--prompt-metadata-jsonl /path/to/GenEval/evaluation_metadata.jsonl" in readme
     assert "orbitquant external-eval-script" in readme
+    assert "Imported GenEval `geneval_overall` follows upstream GenEval semantics" in readme
+    assert "`geneval_image_accuracy` and `geneval_prompt_accuracy`" in readme
     assert "[docs/release-gates.md](docs/release-gates.md)" in readme
     assert "CPU is a correctness reference path only" in readme
     assert "MPS/Metal uses the native packed low-bit matmul package" in readme
