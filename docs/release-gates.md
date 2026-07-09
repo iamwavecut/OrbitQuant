@@ -183,6 +183,14 @@ URL, or signed-off audit note.
   `/tmp/orbitquant-build-verify-20260709T093205Z`, `twine check`, fresh wheel
   install/import, `OrbitQuantConfig().runtime_mode`, `to_json_string()` round
   trip, and `orbitquant --version` all passed.
+  Re-checked on 2026-07-09 at OrbitQuant commit `46ce58d`: fresh build in
+  `/tmp/orbitquant-build-verify-20260709T094823Z`, `twine check`, and an
+  isolated `uv run --with ...whl` wheel install/import outside the checkout all
+  passed. The smoke verified `orbitquant.__version__ == "0.1.0"`,
+  `OrbitQuantConfig().runtime_mode == "auto_fused"`, `to_json_string()` retains
+  `runtime_mode="auto_fused"`, and `orbitquant --version` returns `0.1.0`.
+  A live PyPI JSON check for `orbitquant` returned 404 at the time of this
+  verification, so the package name was not occupied then.
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
