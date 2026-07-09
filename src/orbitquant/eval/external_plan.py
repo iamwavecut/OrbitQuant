@@ -318,6 +318,7 @@ def build_external_eval_script(
     output_root: str | Path = "artifacts/native",
     metrics_root: str | Path = "metrics/native",
     report_output_dir: str | Path = "reports/native",
+    resume: bool = False,
 ) -> str:
     plan = build_external_eval_plan(
         suites=suites,
@@ -345,15 +346,28 @@ def build_external_eval_script(
         if artifact_dir not in artifact_dirs:
             artifact_dirs.append(artifact_dir)
         label_prefix = f"{job['suite']} {job['bit_setting']} {job['split']}"
+        metrics_json = str(job["metrics_json"])
         lines.extend(
             [
                 f"# {job['suite']} {job['bit_setting']} {job['split']} {job['metric']}",
-                _cmd(["mkdir", "-p", Path(str(job["metrics_json"])).parent]),
+                _cmd(["mkdir", "-p", Path(metrics_json).parent]),
                 _cmd(["mkdir", "-p", Path(str(job["export_dir"])).parent]),
             ]
         )
         lines.extend(
-            _stage_lines(f"{label_prefix} export {job['metric']}", str(job["export_command"]))
+            [
+                f"if [ -s {_cmd([metrics_json])} ]; then",
+                _cmd(["stage_log", "SKIP", f"{label_prefix} {job['metric']} metrics"]),
+                _cmd(["echo", f"Skipping existing metric summary: {metrics_json}"]),
+                "else",
+            ]
+            if resume
+            else []
+        )
+        lines.extend(
+            _stage_lines(
+                f"{label_prefix} export {job['metric']}", str(job["export_command"])
+            )
         )
         lines.extend(
             _stage_lines(f"{label_prefix} evaluate {job['metric']}", str(job["eval_command"]))
@@ -364,6 +378,8 @@ def build_external_eval_script(
                 str(job["summarize_command"]),
             )
         )
+        if resume:
+            lines.append("fi")
         lines.extend(
             _stage_lines(f"{label_prefix} import {job['metric']}", str(job["import_command"]))
         )

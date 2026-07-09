@@ -67,6 +67,15 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "`overall_consistency`" in release_gates
+    assert "2026-07-09T18:27Z dry-run readiness check" in release_gates
+    assert "verified `orbitquant external-eval-script --resume`" in release_gates
+    assert "added 20 resume guards" in release_gates
+    assert "preserved 16 GenEval jobs and 4 VBench\n  jobs" in release_gates
+    assert "preserved 20 `orbitquant record-metrics` imports" in release_gates
+    assert "ran the final\n  `orbitquant report` with `--fail-on-missing-required`" in (
+        release_gates
+    )
+    assert "contained no\n  range-smoke path" in release_gates
     assert "- [x] Full-model module classification inventories" in release_gates
     assert "Raw inventory JSON may\n  remain unpublished" in release_gates
     assert "`scripts/run_paper_methodology_checks.sh` produced and hash-checked" in (

@@ -100,3 +100,26 @@ def test_build_external_eval_script_runs_vbench_import_and_report(tmp_path):
     assert f"--output {tmp_path / 'reports'}" in script
     assert "--fail-on-missing-required" in script
     assert "range" not in script.lower()
+
+
+def test_build_external_eval_script_resume_skips_completed_metrics_but_imports(tmp_path):
+    script = build_external_eval_script(
+        [get_native_suite("wan-native")],
+        output_root=tmp_path / "artifacts",
+        metrics_root=tmp_path / "metrics",
+        report_output_dir=tmp_path / "reports",
+        resume=True,
+    )
+
+    metrics_json = tmp_path / "metrics" / "wan-native-w4a6_orbitquant_vbench.json"
+    assert f"if [ -s {metrics_json} ]; then" in script
+    assert "stage_log SKIP 'wan-native W4A6 orbitquant vbench metrics'" in script
+    assert f"echo 'Skipping existing metric summary: {metrics_json}'" in script
+    assert "else\nstage_log START 'wan-native W4A6 orbitquant export vbench'" in script
+    assert "fi\nstage_log START 'wan-native W4A6 orbitquant import vbench'" in script
+    assert script.count("stage_log SKIP") == 4
+    assert script.count("orbitquant export-vbench") == 4
+    assert script.count("vbench evaluate") == 4
+    assert script.count("orbitquant summarize-vbench-results") == 4
+    assert script.count("orbitquant record-metrics") == 4
+    assert "--fail-on-missing-required" in script

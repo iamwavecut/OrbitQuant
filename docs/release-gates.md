@@ -533,4 +533,10 @@ URL, or signed-off audit note.
   dimensions as separate `--dimension` values:
   `imaging_quality`, `aesthetic_quality`, `motion_smoothness`,
   `dynamic_degree`, `background_consistency`, `subject_consistency`, `scene`,
-  and `overall_consistency`.
+  and `overall_consistency`. A 2026-07-09T18:27Z dry-run readiness check
+  verified `orbitquant external-eval-script --resume`: the generated script
+  kept the same 20 external metric jobs, added 20 resume guards for completed
+  non-empty metric summary JSON files, preserved 16 GenEval jobs and 4 VBench
+  jobs, preserved 20 `orbitquant record-metrics` imports, ran the final
+  `orbitquant report` with `--fail-on-missing-required`, and contained no
+  range-smoke path.

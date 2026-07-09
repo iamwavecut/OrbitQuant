@@ -470,6 +470,35 @@ def test_cli_external_eval_script_prints_metric_runner_script(capsys, tmp_path):
     assert "range" not in script.lower()
 
 
+def test_cli_external_eval_script_resume_skips_existing_metric_summaries(capsys, tmp_path):
+    assert (
+        main(
+            [
+                "external-eval-script",
+                "--suite",
+                "wan-native",
+                "--output-root",
+                str(tmp_path / "artifacts"),
+                "--metrics-root",
+                str(tmp_path / "metrics"),
+                "--report-output",
+                str(tmp_path / "reports"),
+                "--resume",
+            ]
+        )
+        == 0
+    )
+
+    script = capsys.readouterr().out
+    metrics_json = tmp_path / "metrics" / "wan-native-w4a4_original_vbench.json"
+    assert f"if [ -s {metrics_json} ]; then" in script
+    assert "stage_log SKIP 'wan-native W4A4 original vbench metrics'" in script
+    assert "fi\nstage_log START 'wan-native W4A4 original import vbench'" in script
+    assert script.count("stage_log SKIP") == 4
+    assert script.count("orbitquant record-metrics") == 4
+    assert "--fail-on-missing-required" in script
+
+
 def test_cli_report_can_fail_on_missing_required_metrics(capsys, monkeypatch, tmp_path):
     result = SimpleNamespace(
         report_path=tmp_path / "report.md",

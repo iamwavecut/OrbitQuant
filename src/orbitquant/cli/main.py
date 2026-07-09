@@ -816,6 +816,7 @@ def main(argv: list[str] | None = None) -> int:
     external_eval_script_parser.add_argument("--output-root", default="artifacts/native")
     external_eval_script_parser.add_argument("--metrics-root", default="metrics/native")
     external_eval_script_parser.add_argument("--report-output", default="reports/native")
+    external_eval_script_parser.add_argument("--resume", action="store_true")
 
     export_geneval_parser = subparsers.add_parser(
         "export-geneval", help="export generated artifact images to GenEval folder layout"
@@ -1449,6 +1450,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_root=args.output_root,
                 metrics_root=args.metrics_root,
                 report_output_dir=args.report_output,
+                resume=args.resume,
             )
         )
         return 0

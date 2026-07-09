@@ -429,7 +429,8 @@ orbitquant external-eval-script \
   --suite flux1-schnell-native \
   --output-root ./artifacts/native \
   --metrics-root ./metrics/native \
-  --report-output ./reports/native > run-flux1-geneval-metrics.sh
+  --report-output ./reports/native \
+  --resume > run-flux1-geneval-metrics.sh
 ```
 
 For Wan, use the same `external-eval-script` path with `--suite wan-native` to
