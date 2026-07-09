@@ -701,6 +701,51 @@ def test_record_artifact_metrics_keeps_manifest_and_sha256sums_valid(tmp_path):
     )
 
 
+def test_record_artifact_metrics_refreshes_model_card_release_metrics(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4, target_policy="flux")
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="black-forest-labs/FLUX.1-schnell",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+
+    record_artifact_metrics(
+        tmp_path,
+        split="original",
+        metrics={
+            "geneval_overall": 0.74,
+            "geneval_per_task_single_object": 0.9,
+        },
+        metadata={"suite": "flux1-schnell-native", "seed": 0, "bit_setting": "BF16"},
+    )
+    record_artifact_metrics(
+        tmp_path,
+        split="orbitquant",
+        metrics={
+            "geneval_overall": 0.71,
+            "geneval_per_task_single_object": 0.88,
+        },
+        metadata={"suite": "flux1-schnell-native", "seed": 0, "bit_setting": "W4A4"},
+    )
+
+    result = validate_orbitquant_artifact(tmp_path)
+    readme = (tmp_path / "README.md").read_text()
+    sha_entries = read_sha256sums(tmp_path / "SHA256SUMS")
+
+    assert result["valid"] is True
+    assert "Release-grade GenEval metrics: included below." in readme
+    assert "Release-grade GenEval metrics: not included" not in readme
+    assert "| `geneval_overall` | `0.74` | `0.71` |" in readme
+    assert "| `geneval_per_task_single_object` | `0.9` | `0.88` |" in readme
+    assert sha_entries["README.md"] == sha256_file(tmp_path / "README.md")
+
+
 def test_record_artifact_metrics_rejects_corrupted_artifact_before_refreshing_checksums(
     tmp_path,
 ):

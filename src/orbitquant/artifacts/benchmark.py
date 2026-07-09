@@ -11,6 +11,7 @@ from orbitquant.artifacts.checksums import (
     write_sha256sums_from_manifest,
 )
 from orbitquant.artifacts.manifest import OrbitQuantManifest
+from orbitquant.artifacts.model_card import render_model_card
 from orbitquant.artifacts.validator import validate_required_artifact_files
 
 _VALID_METRIC_SPLITS = {"original", "orbitquant"}
@@ -126,6 +127,10 @@ def record_artifact_metrics(
     )
     if not refresh_checksums_enabled:
         return record
+    (artifact_path / "README.md").write_text(
+        render_model_card(manifest, benchmark_summary=summary),
+        encoding="utf-8",
+    )
     checksums = _write_manifest_with_refreshed_checksums(
         artifact_path, manifest, changed_paths
     )
