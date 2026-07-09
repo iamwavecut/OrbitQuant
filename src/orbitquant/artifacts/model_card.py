@@ -5,6 +5,31 @@ from typing import Any
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.eval.native_settings import NativeSuite, list_native_suites
 
+_GENEVAL_METRICS = (
+    "geneval_overall",
+    "geneval_per_task_single_object",
+    "geneval_per_task_two_object",
+    "geneval_per_task_counting",
+    "geneval_per_task_colors",
+    "geneval_per_task_position",
+    "geneval_per_task_color_attr",
+)
+_VBENCH_METRICS = (
+    "vbench_imaging_quality",
+    "vbench_aesthetic_quality",
+    "vbench_motion_smoothness",
+    "vbench_dynamic_degree",
+    "vbench_background_consistency",
+    "vbench_subject_consistency",
+    "vbench_scene",
+    "vbench_overall_consistency",
+)
+_RELEASE_METRICS_BY_MODEL = {
+    "black-forest-labs/FLUX.1-schnell": ("GenEval", _GENEVAL_METRICS),
+    "Tongyi-MAI/Z-Image-Turbo": ("GenEval", _GENEVAL_METRICS),
+    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": ("VBench", _VBENCH_METRICS),
+}
+
 
 def _comparison_assets(checksums: dict[str, str]) -> list[str]:
     assets = []
@@ -168,18 +193,70 @@ def _native_settings_section(source_model_id: str) -> list[str]:
     return lines
 
 
-def _validation_status_section(source_model_id: str) -> list[str]:
-    release_metric = {
-        "black-forest-labs/FLUX.1-schnell": "GenEval",
-        "Tongyi-MAI/Z-Image-Turbo": "GenEval",
-        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": "VBench",
-    }.get(source_model_id)
+def _latest_metrics_by_split(
+    benchmark_summary: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(benchmark_summary, dict):
+        return {}
+    split_payload = benchmark_summary.get("metrics")
+    if not isinstance(split_payload, dict):
+        return {}
+    metrics_by_split: dict[str, dict[str, Any]] = {}
+    for split in ("original", "orbitquant"):
+        latest = split_payload.get(split, {}).get("latest")
+        if not isinstance(latest, dict):
+            continue
+        metrics = latest.get("metrics")
+        if isinstance(metrics, dict):
+            metrics_by_split[split] = metrics
+    return metrics_by_split
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return ""
+    return f"`{value:.4g}`"
+
+
+def _release_metric_rows(
+    source_model_id: str,
+    benchmark_summary: dict[str, Any] | None,
+) -> tuple[str | None, list[tuple[str, str, str]]]:
+    release = _RELEASE_METRICS_BY_MODEL.get(source_model_id)
+    if release is None:
+        return None, []
+    release_metric, metric_names = release
+    metrics_by_split = _latest_metrics_by_split(benchmark_summary)
+    rows = []
+    for metric in metric_names:
+        original = metrics_by_split.get("original", {}).get(metric)
+        orbitquant = metrics_by_split.get("orbitquant", {}).get(metric)
+        if original is None and orbitquant is None:
+            continue
+        rows.append(
+            (
+                metric,
+                _format_metric_value(original),
+                _format_metric_value(orbitquant),
+            )
+        )
+    return release_metric, rows
+
+
+def _validation_status_section(
+    source_model_id: str,
+    benchmark_summary: dict[str, Any] | None,
+) -> list[str]:
+    release_metric, release_rows = _release_metric_rows(source_model_id, benchmark_summary)
     release_line = (
-        f"- Release-grade {release_metric} metrics: not included in this artifact."
+        f"- Release-grade {release_metric} metrics: included below."
+        if release_metric
+        and release_rows
+        else f"- Release-grade {release_metric} metrics: not included in this artifact."
         if release_metric
         else "- Release-grade paper metrics: not applicable to this extra target."
     )
-    return [
+    lines = [
         "## Validation Status",
         "",
         "- Native BF16-vs-OrbitQuant comparison: included when the visual matrix "
@@ -188,6 +265,21 @@ def _validation_status_section(source_model_id: str) -> list[str]:
         "- The model card reports artifact-level validation status only.",
         "",
     ]
+    if release_rows:
+        lines.extend(
+            [
+                f"### Release-Grade {release_metric} Metrics",
+                "",
+                "| Metric | BF16 source | OrbitQuant |",
+                "| --- | ---: | ---: |",
+            ]
+        )
+        lines.extend(
+            f"| `{metric}` | {original or '-'} | {orbitquant or '-'} |"
+            for metric, original, orbitquant in release_rows
+        )
+        lines.append("")
+    return lines
 
 
 def _native_validation_proof_section(
@@ -253,7 +345,9 @@ def render_model_card(
     bits = f"W{data['weight_bits']}A{data['activation_bits']}"
     comparison_assets = _comparison_assets(data["checksums"])
     native_settings_lines = _native_settings_section(data["source_model_id"])
-    validation_status_lines = _validation_status_section(data["source_model_id"])
+    validation_status_lines = _validation_status_section(
+        data["source_model_id"], benchmark_summary
+    )
     native_validation_proof_lines = _native_validation_proof_section(benchmark_summary)
     adaln_group_size = int(data.get("adaln_group_size", 64))
     adaln_default_note = (

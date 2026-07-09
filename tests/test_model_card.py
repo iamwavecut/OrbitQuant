@@ -120,6 +120,73 @@ def test_model_card_renders_native_validation_evidence_without_raw_records():
     assert "original.metrics.jsonl" not in card
 
 
+def test_model_card_renders_imported_geneval_release_metrics():
+    manifest = _manifest_for_model("black-forest-labs/FLUX.1-schnell")
+    benchmark_summary = {
+        "metrics": {
+            "original": {
+                "latest": {
+                    "metrics": {
+                        "geneval_overall": 0.74,
+                        "geneval_per_task_single_object": 0.9,
+                        "wall_time_seconds": 12.0,
+                    }
+                }
+            },
+            "orbitquant": {
+                "latest": {
+                    "metrics": {
+                        "geneval_overall": 0.71,
+                        "geneval_per_task_single_object": 0.88,
+                        "wall_time_seconds": 8.5,
+                    }
+                }
+            },
+        }
+    }
+
+    card = render_model_card(manifest, benchmark_summary=benchmark_summary)
+
+    assert "Release-grade GenEval metrics: included below." in card
+    assert "Release-grade GenEval metrics: not included" not in card
+    assert "### Release-Grade GenEval Metrics" in card
+    assert "| `geneval_overall` | `0.74` | `0.71` |" in card
+    assert "| `geneval_per_task_single_object` | `0.9` | `0.88` |" in card
+    assert "wall_time_seconds" not in card
+
+
+def test_model_card_renders_imported_vbench_release_metrics():
+    manifest = _manifest_for_model("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", bits=(4, 6))
+    benchmark_summary = {
+        "metrics": {
+            "original": {
+                "latest": {
+                    "metrics": {
+                        "vbench_subject_consistency": 0.82,
+                        "vbench_overall_consistency": 0.76,
+                    }
+                }
+            },
+            "orbitquant": {
+                "latest": {
+                    "metrics": {
+                        "vbench_subject_consistency": 0.8,
+                        "vbench_overall_consistency": 0.74,
+                    }
+                }
+            },
+        }
+    }
+
+    card = render_model_card(manifest, benchmark_summary=benchmark_summary)
+
+    assert "Release-grade VBench metrics: included below." in card
+    assert "Release-grade VBench metrics: not included" not in card
+    assert "### Release-Grade VBench Metrics" in card
+    assert "| `vbench_subject_consistency` | `0.82` | `0.8` |" in card
+    assert "| `vbench_overall_consistency` | `0.76` | `0.74` |" in card
+
+
 def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
