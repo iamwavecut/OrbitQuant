@@ -572,6 +572,27 @@ def test_orbit_linear_auto_fused_cuda_prefers_native_then_triton(monkeypatch):
     assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "triton_packed_matmul"
 
 
+def test_packed_matmul_native_probe_error_is_cached(monkeypatch):
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    calls = {"native": 0}
+    native_error = RuntimeError("native package unavailable")
+
+    def fail_native_load():
+        calls["native"] += 1
+        raise native_error
+
+    layers_module._clear_packed_matmul_probe_cache()
+    monkeypatch.setattr(native_module, "load_native_packed_matmul_kernel", fail_native_load)
+
+    try:
+        assert layers_module._native_packed_matmul_load_error() is native_error
+        assert layers_module._native_packed_matmul_load_error() is native_error
+        assert calls == {"native": 1}
+    finally:
+        layers_module._clear_packed_matmul_probe_cache()
+
+
 def test_orbit_linear_auto_fused_missing_cuda_kernels_fails_loud(monkeypatch):
     torch.manual_seed(5)
     source = torch.nn.Linear(16, 7)

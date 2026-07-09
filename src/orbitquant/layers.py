@@ -10,6 +10,10 @@ from orbitquant.kernels import quantize_activations_kernel
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
 
+_PACKED_MATMUL_PROBE_MISSING = object()
+_NATIVE_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
+_TRITON_PACKED_MATMUL_IMPORT_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
+
 
 def _packed_length(value_count: int, bits: int) -> int:
     return (value_count * bits + 7) // 8
@@ -87,21 +91,37 @@ def _quantize_weight_pack(
 
 
 def _native_packed_matmul_load_error() -> Exception | None:
+    global _NATIVE_PACKED_MATMUL_LOAD_ERROR
+    if _NATIVE_PACKED_MATMUL_LOAD_ERROR is not _PACKED_MATMUL_PROBE_MISSING:
+        return _NATIVE_PACKED_MATMUL_LOAD_ERROR
     try:
         from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
 
         load_native_packed_matmul_kernel()
     except Exception as exc:
+        _NATIVE_PACKED_MATMUL_LOAD_ERROR = exc
         return exc
+    _NATIVE_PACKED_MATMUL_LOAD_ERROR = None
     return None
 
 
 def _triton_packed_matmul_import_error() -> Exception | None:
+    global _TRITON_PACKED_MATMUL_IMPORT_ERROR
+    if _TRITON_PACKED_MATMUL_IMPORT_ERROR is not _PACKED_MATMUL_PROBE_MISSING:
+        return _TRITON_PACKED_MATMUL_IMPORT_ERROR
     try:
         from orbitquant.kernels.triton_cuda import matmul_packed_weight_with_triton  # noqa: F401
     except Exception as exc:
+        _TRITON_PACKED_MATMUL_IMPORT_ERROR = exc
         return exc
+    _TRITON_PACKED_MATMUL_IMPORT_ERROR = None
     return None
+
+
+def _clear_packed_matmul_probe_cache() -> None:
+    global _NATIVE_PACKED_MATMUL_LOAD_ERROR, _TRITON_PACKED_MATMUL_IMPORT_ERROR
+    _NATIVE_PACKED_MATMUL_LOAD_ERROR = _PACKED_MATMUL_PROBE_MISSING
+    _TRITON_PACKED_MATMUL_IMPORT_ERROR = _PACKED_MATMUL_PROBE_MISSING
 
 
 class OrbitQuantLinear(nn.Module):

@@ -342,6 +342,78 @@ def _matmul_packed_weight_kernel(
 
 
 @triton.jit
+def _matmul_packed_weight_w4_kernel(
+    input_ptr,
+    packed_ptr,
+    row_norms_ptr,
+    centroids_ptr,
+    bias_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    has_bias: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k_bytes: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * block_m + tl.arange(0, block_m)
+    offs_n = pid_n * block_n + tl.arange(0, block_n)
+    offs_k_bytes = tl.arange(0, block_k_bytes)
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
+    packed_row_stride: tl.constexpr = in_features // 2
+
+    for k_byte_start in range(0, packed_row_stride, block_k_bytes):
+        k_bytes = k_byte_start + offs_k_bytes
+        k0 = k_bytes * 2
+        k1 = k0 + 1
+        k_mask = k_bytes < packed_row_stride
+        input_values0 = tl.load(
+            input_ptr + offs_m[:, None] * in_features + k0[None, :],
+            mask=(offs_m[:, None] < rows) & k_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        input_values1 = tl.load(
+            input_ptr + offs_m[:, None] * in_features + k1[None, :],
+            mask=(offs_m[:, None] < rows) & k_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+
+        packed_offsets = offs_n[None, :] * packed_row_stride + k_bytes[:, None]
+        weight_mask = (offs_n[None, :] < out_features) & k_mask[:, None]
+        packed_values = tl.load(packed_ptr + packed_offsets, mask=weight_mask, other=0).to(
+            tl.uint32
+        )
+        indices0 = packed_values & 15
+        indices1 = (packed_values >> 4) & 15
+        centroids0 = tl.load(centroids_ptr + indices0, mask=weight_mask, other=0.0).to(
+            tl.float32
+        )
+        centroids1 = tl.load(centroids_ptr + indices1, mask=weight_mask, other=0.0).to(
+            tl.float32
+        )
+        norms = tl.load(row_norms_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(
+            tl.float32
+        )
+        weights0 = centroids0 * norms[None, :]
+        weights1 = centroids1 * norms[None, :]
+        accumulator += tl.dot(input_values0, weights0, input_precision="tf32")
+        accumulator += tl.dot(input_values1, weights1, input_precision="tf32")
+
+    if has_bias:
+        bias = tl.load(bias_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(tl.float32)
+        accumulator += bias[None, :]
+
+    tl.store(
+        output_ptr + offs_m[:, None] * out_features + offs_n[None, :],
+        accumulator,
+        mask=(offs_m[:, None] < rows) & (offs_n[None, :] < out_features),
+    )
+
+
+@triton.jit
 def _pack_lowbit_kernel(
     values_ptr,
     packed_ptr,
@@ -945,23 +1017,42 @@ def matmul_packed_weight_with_triton(
         has_bias = True
 
     grid = (triton.cdiv(rows, block_m), triton.cdiv(out_features, block_n))
-    _matmul_packed_weight_kernel[grid](
-        input_contiguous,
-        packed,
-        norms,
-        centroids,
-        bias_tensor,
-        output,
-        rows=rows,
-        out_features=out_features,
-        in_features=in_features,
-        bits=bits,
-        has_bias=has_bias,
-        block_m=block_m,
-        block_n=block_n,
-        block_k=block_k,
-        num_warps=num_warps,
-    )
+    if bits == 4 and in_features % 2 == 0 and block_k >= 2:
+        block_k_bytes = max(1, block_k // 2)
+        _matmul_packed_weight_w4_kernel[grid](
+            input_contiguous,
+            packed,
+            norms,
+            centroids,
+            bias_tensor,
+            output,
+            rows=rows,
+            out_features=out_features,
+            in_features=in_features,
+            has_bias=has_bias,
+            block_m=block_m,
+            block_n=block_n,
+            block_k_bytes=block_k_bytes,
+            num_warps=num_warps,
+        )
+    else:
+        _matmul_packed_weight_kernel[grid](
+            input_contiguous,
+            packed,
+            norms,
+            centroids,
+            bias_tensor,
+            output,
+            rows=rows,
+            out_features=out_features,
+            in_features=in_features,
+            bits=bits,
+            has_bias=has_bias,
+            block_m=block_m,
+            block_n=block_n,
+            block_k=block_k,
+            num_warps=num_warps,
+        )
     return output.reshape(*original_shape[:-1], out_features)
 
 
