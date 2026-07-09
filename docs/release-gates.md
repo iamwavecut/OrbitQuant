@@ -321,7 +321,17 @@ URL, or signed-off audit note.
   `008f949641d00df46f840580c424b9e9fad0d853b4345d454a0b8042c61f3366` and
   `orbitquant-0.1.3-py3-none-any.whl` SHA256
   `181e9b532a07312ec47b54091d651b5a62d5aefd32c88d40830bd8529a0fdc53`.
-- [x] The PyPI package is published as `orbitquant==0.1.3`.
+  Patch release notes for the external GenEval/VBench metric import fixes are
+  [release-0.1.4.md](release-0.1.4.md). GitHub CI for commit `a7d28d9`
+  passed as run `29037952922`, tag `v0.1.4` points at commit
+  `a7d28d96ff47d5ae72121bbefc3aab30ca732b42`, and GitHub Release
+  `https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.4` was published
+  on 2026-07-09 with exact PyPI-matching assets:
+  `orbitquant-0.1.4.tar.gz` SHA256
+  `7db4168bb2e9c3b838af0a932a96ca505d7bb91475239545d3e3a4c8130e07f4` and
+  `orbitquant-0.1.4-py3-none-any.whl` SHA256
+  `641a4d74a811023ff6cc39ae9680eb1393eb5e2b5dd390d586ff087ac1533af3`.
+- [x] The PyPI package is published as `orbitquant==0.1.4`.
   Evidence: commit `ce5c232` added the manual
   `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI
   pending publisher was registered for project `orbitquant`, owner
@@ -372,6 +382,17 @@ URL, or signed-off audit note.
   venv installed `orbitquant[kernels]==0.1.3` from PyPI on macOS and verified
   `orbitquant.__version__ == "0.1.3"`, installed `kernels==0.16.0`, and did
   not install Triton because the `triton>=3.5` extra is Linux-only.
+  Patch publish run `29038063969` completed successfully on 2026-07-09 from
+  head SHA `a7d28d96ff47d5ae72121bbefc3aab30ca732b42`, including full pytest,
+  `ruff check`, package build, `twine check`, wheel smoke, OIDC publication,
+  and PyPI digital attestations. The PyPI version-specific JSON API reports
+  version `0.1.4` with `orbitquant-0.1.4.tar.gz` SHA256
+  `7db4168bb2e9c3b838af0a932a96ca505d7bb91475239545d3e3a4c8130e07f4` and
+  `orbitquant-0.1.4-py3-none-any.whl` SHA256
+  `641a4d74a811023ff6cc39ae9680eb1393eb5e2b5dd390d586ff087ac1533af3`; a fresh
+  venv installed `orbitquant==0.1.4` from PyPI with `uv pip install --refresh`
+  and verified `orbitquant.__version__ == "0.1.4"` and
+  `orbitquant --version == "0.1.4"`.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
   install guidance for the default `auto_fused` runtime.

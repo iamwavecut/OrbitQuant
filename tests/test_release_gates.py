@@ -326,13 +326,28 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "181e9b532a07312ec47b54091d651b5a62d5aefd32c88d40830bd8529a0fdc53" in (
         release_gates
     )
+    assert "[release-0.1.4.md](release-0.1.4.md)" in release_gates
+    assert "commit `a7d28d9`\n  passed as run `29037952922`" in release_gates
+    assert "tag `v0.1.4` points at commit" in release_gates
+    assert "a7d28d96ff47d5ae72121bbefc3aab30ca732b42" in release_gates
+    assert "https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.4" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.4.tar.gz` SHA256" in release_gates
+    assert "7db4168bb2e9c3b838af0a932a96ca505d7bb91475239545d3e3a4c8130e07f4" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.4-py3-none-any.whl` SHA256" in release_gates
+    assert "641a4d74a811023ff6cc39ae9680eb1393eb5e2b5dd390d586ff087ac1533af3" in (
+        release_gates
+    )
     assert (
         "including HF\n  integration tests, full pytest, package build, "
         "`twine check`, and wheel"
     ) in (
         release_gates
     )
-    assert "- [x] The PyPI package is published as `orbitquant==0.1.3`" in (
+    assert "- [x] The PyPI package is published as `orbitquant==0.1.4`" in (
         release_gates
     )
     assert ".github/workflows/publish-pypi.yml" in release_gates
@@ -360,6 +375,15 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "PyPI JSON API reports version `0.1.3`" in release_gates
     assert "`orbitquant-0.1.3.tar.gz` SHA256" in release_gates
     assert "`orbitquant-0.1.3-py3-none-any.whl` SHA256" in release_gates
+    assert "Patch publish run `29038063969` completed successfully" in release_gates
+    assert "head SHA `a7d28d96ff47d5ae72121bbefc3aab30ca732b42`" in (
+        release_gates
+    )
+    assert "version-specific JSON API reports\n  version `0.1.4`" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.4.tar.gz` SHA256" in release_gates
+    assert "`orbitquant-0.1.4-py3-none-any.whl` SHA256" in release_gates
     assert "python -m pip index versions\n  orbitquant` reports `0.1.0`" in (
         release_gates
     )
@@ -370,6 +394,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert '`orbitquant.__version__ == "0.1.2"`' in release_gates
     assert '`orbitquant --version == "0.1.2"`' in release_gates
     assert '`orbitquant.__version__ == "0.1.3"`' in release_gates
+    assert '`orbitquant.__version__ == "0.1.4"`' in release_gates
+    assert '`orbitquant --version == "0.1.4"`' in release_gates
     assert "`kernels==0.16.0`" in release_gates
     assert "`triton>=3.5` extra is Linux-only" in release_gates
     assert "`orbitquant audit-hf-artifacts --help`\n  includes `--summary-only`" in (
