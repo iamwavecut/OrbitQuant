@@ -186,6 +186,171 @@ def _comparison_image_source(result: Any, *, is_video: bool) -> Path:
     return result.output_path
 
 
+def _resolve_local_bundle_path(bundle_dir: Path, value: Any, *, label: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"{label} is missing or is not a path string")
+    path = Path(value)
+    candidates = [path]
+    if path.is_absolute():
+        candidates.append(bundle_dir / path.name)
+    else:
+        candidates.append(bundle_dir / path)
+        candidates.append(bundle_dir / path.name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(f"{label} does not exist locally: {value}")
+
+
+def _image_validation_stats(path: Path, *, blank_stddev_threshold: float) -> dict[str, Any]:
+    from PIL import Image, ImageStat
+
+    with Image.open(path) as image:
+        rgb = image.convert("RGB")
+        stat = ImageStat.Stat(rgb)
+        mean = [float(value) for value in stat.mean]
+        stddev = [float(value) for value in stat.stddev]
+        extrema = [[int(low), int(high)] for low, high in rgb.getextrema()]
+        blank_like = max(stddev) < blank_stddev_threshold
+        return {
+            "path": str(path),
+            "size": [int(rgb.width), int(rgb.height)],
+            "mode": rgb.mode,
+            "mean": mean,
+            "stddev": stddev,
+            "extrema": extrema,
+            "blank_like": blank_like,
+            "blank_stddev_threshold": blank_stddev_threshold,
+        }
+
+
+def _validate_compare_native_bundle(
+    bundle_dir: str | Path,
+    *,
+    blank_stddev_threshold: float = 1.0,
+) -> dict[str, Any]:
+    bundle_path = Path(bundle_dir)
+    summary_path = bundle_path / "summary.json"
+    if not summary_path.is_file():
+        raise RuntimeError(f"comparison summary missing: {summary_path}")
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    suite = get_native_suite(str(summary["suite"]))
+    bit_setting = str(summary["bit_setting"])
+    seed = int(summary["seed"])
+    prompt = str(summary["prompt"])
+    model_id = str(summary["model_id"])
+    frames = summary.get("frames")
+    is_video = frames is not None
+
+    split_payloads: dict[str, dict[str, Any]] = {}
+    for split, expected_bit_setting in (
+        ("original", "original"),
+        ("orbitquant", bit_setting),
+    ):
+        split_summary = summary.get(split)
+        if not isinstance(split_summary, dict):
+            raise RuntimeError(f"{split} summary missing")
+        output_path = _resolve_local_bundle_path(
+            bundle_path,
+            split_summary.get("output_path"),
+            label=f"{split}.output_path",
+        )
+        metadata_path = _resolve_local_bundle_path(
+            bundle_path,
+            split_summary.get("metadata_path"),
+            label=f"{split}.metadata_path",
+        )
+        validate_native_generation_output(
+            output_path,
+            metadata_path,
+            suite,
+            seed=seed,
+            bit_setting=expected_bit_setting,
+            prompt=prompt,
+            model_id=model_id,
+        )
+        split_payloads[split] = {
+            "output_path": str(output_path),
+            "metadata_path": str(metadata_path),
+            "wall_time_seconds": split_summary.get("wall_time_seconds"),
+            "peak_vram_bytes": split_summary.get("peak_vram_bytes"),
+        }
+        if not is_video:
+            split_payloads[split]["image"] = _image_validation_stats(
+                output_path,
+                blank_stddev_threshold=blank_stddev_threshold,
+            )
+
+    comparison_path = _resolve_local_bundle_path(
+        bundle_path,
+        summary.get("comparison_path"),
+        label="comparison_path",
+    )
+    comparison_stats = _image_validation_stats(
+        comparison_path,
+        blank_stddev_threshold=blank_stddev_threshold,
+    )
+    if comparison_stats["blank_like"]:
+        raise RuntimeError(f"comparison image looks blank: {comparison_path}")
+    if not is_video:
+        expected_size = [suite.width * 2, suite.height + 24]
+        if comparison_stats["size"] != expected_size:
+            raise RuntimeError(
+                "comparison image size mismatch: "
+                f"expected {expected_size}, got {comparison_stats['size']}"
+            )
+        for split in ("original", "orbitquant"):
+            image_stats = split_payloads[split]["image"]
+            if image_stats["size"] != [suite.width, suite.height]:
+                raise RuntimeError(
+                    f"{split} image size mismatch: expected "
+                    f"{[suite.width, suite.height]}, got {image_stats['size']}"
+                )
+            if image_stats["blank_like"]:
+                raise RuntimeError(f"{split} image looks blank: {image_stats['path']}")
+
+    original_time = split_payloads["original"]["wall_time_seconds"]
+    orbitquant_time = split_payloads["orbitquant"]["wall_time_seconds"]
+    speed_ratio = None
+    if (
+        isinstance(original_time, int | float)
+        and isinstance(orbitquant_time, int | float)
+        and original_time > 0
+    ):
+        speed_ratio = float(orbitquant_time) / float(original_time)
+
+    return {
+        "valid": True,
+        "bundle": str(bundle_path),
+        "summary_path": str(summary_path),
+        "suite": suite.name,
+        "model_id": model_id,
+        "bit_setting": bit_setting,
+        "seed": seed,
+        "prompt": prompt,
+        "native_settings": {
+            "width": suite.width,
+            "height": suite.height,
+            "frames": suite.frames,
+            "steps": suite.steps,
+            "guidance": suite.guidance,
+        },
+        "runtime_mode": summary.get("runtime_mode"),
+        "activation_kernel_backend": summary.get("activation_kernel_backend"),
+        "enable_model_cpu_offload": summary.get("enable_model_cpu_offload"),
+        "available_backends": summary.get("available_backends"),
+        "original": split_payloads["original"],
+        "orbitquant": split_payloads["orbitquant"],
+        "orbitquant_runtime": (
+            summary.get("orbitquant", {}).get("runtime")
+            if isinstance(summary.get("orbitquant"), dict)
+            else None
+        ),
+        "comparison": comparison_stats,
+        "speed_ratio_orbitquant_over_original": speed_ratio,
+    }
+
+
 def _orbitquant_runtime_summary(pipeline: Any, component: str) -> dict[str, Any]:
     target = _pipeline_component(pipeline, component)
     runtime_counts: dict[str, int] = {}
@@ -887,6 +1052,18 @@ def main(argv: list[str] | None = None) -> int:
     validate_generation_parser.add_argument("--prompt")
     validate_generation_parser.add_argument("--model-id")
 
+    validate_comparison_parser = subparsers.add_parser(
+        "validate-comparison",
+        help="validate a local compare-native evidence bundle",
+    )
+    validate_comparison_parser.add_argument("--input", required=True)
+    validate_comparison_parser.add_argument(
+        "--blank-stddev-threshold",
+        type=float,
+        default=1.0,
+        help="minimum max channel stddev before an image is treated as blank-like",
+    )
+
     report_parser = subparsers.add_parser("report", help="write a native eval report")
     report_parser.add_argument("--artifact", action="append", required=True)
     report_parser.add_argument("--output", required=True)
@@ -1572,6 +1749,17 @@ def main(argv: list[str] | None = None) -> int:
                     prompt=args.prompt,
                     model_id=args.model_id,
                 )
+            )
+        )
+        return 0
+    if args.command == "validate-comparison":
+        print(
+            json.dumps(
+                _validate_compare_native_bundle(
+                    args.input,
+                    blank_stddev_threshold=args.blank_stddev_threshold,
+                ),
+                indent=2,
             )
         )
         return 0

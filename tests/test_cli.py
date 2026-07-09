@@ -13,6 +13,7 @@ from orbitquant.artifacts import save_orbitquant_artifact, validate_orbitquant_a
 from orbitquant.artifacts.checksums import write_sha256sums_from_manifest
 from orbitquant.cli.main import main
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.eval import get_native_suite
 from orbitquant.modeling import quantize_linear_modules
 
 
@@ -951,6 +952,163 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
         "unexecuted_module_sample": [],
     }
     assert not any((tmp_path / "artifact" / "assets").iterdir())
+
+
+def test_cli_validate_comparison_accepts_copied_runpod_bundle(capsys, tmp_path):
+    suite = get_native_suite("flux2-native")
+    original_path = tmp_path / "flux2-native_seed4_original.png"
+    orbitquant_path = tmp_path / "flux2-native_seed4_W4A4.png"
+    comparison_path = tmp_path / "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
+    original_image = Image.effect_noise((suite.width, suite.height), 32).convert("RGB")
+    orbitquant_image = Image.effect_noise((suite.width, suite.height), 32).convert("RGB")
+    original_image.save(original_path)
+    orbitquant_image.save(orbitquant_path)
+    comparison_sheet = Image.new("RGB", (suite.width * 2, suite.height + 24), "white")
+    comparison_sheet.paste(original_image, (0, 24))
+    comparison_sheet.paste(orbitquant_image, (suite.width, 24))
+    comparison_sheet.save(comparison_path)
+
+    for path, bit_setting in (
+        (original_path, "original"),
+        (orbitquant_path, "W4A4"),
+    ):
+        metadata = {
+            "suite": suite.name,
+            "model_id": "example/artifact-model",
+            "prompt": "A native prompt",
+            "seed": 4,
+            "height": suite.height,
+            "width": suite.width,
+            "frames": suite.frames,
+            "export_fps": suite.export_fps,
+            "steps": suite.steps,
+            "guidance": suite.guidance,
+            "quantization": None
+            if bit_setting == "original"
+            else {"config": {"weight_bits": 4, "activation_bits": 4}},
+        }
+        path.with_suffix(path.suffix + ".json").write_text(
+            json.dumps(metadata) + "\n",
+            encoding="utf-8",
+        )
+
+    (tmp_path / "summary.json").write_text(
+        json.dumps(
+            {
+                "suite": suite.name,
+                "model_id": "example/artifact-model",
+                "source_model": "/workspace/hf-models/example",
+                "artifact": "/workspace/artifacts/example",
+                "component": "transformer",
+                "prompt": "A native prompt",
+                "seed": 4,
+                "height": suite.height,
+                "width": suite.width,
+                "frames": suite.frames,
+                "steps": suite.steps,
+                "guidance": suite.guidance,
+                "dtype": "bfloat16",
+                "device": "cuda",
+                "bit_setting": "W4A4",
+                "runtime_mode": "triton_packed_matmul",
+                "activation_kernel_backend": "triton_cuda",
+                "enable_model_cpu_offload": True,
+                "available_backends": {"cpu": True, "mps": False, "triton_cuda": True},
+                "original": {
+                    "output_path": f"/workspace/run/{original_path.name}",
+                    "metadata_path": f"/workspace/run/{original_path.name}.json",
+                    "wall_time_seconds": 10.0,
+                    "peak_vram_bytes": 1000,
+                },
+                "orbitquant": {
+                    "output_path": f"/workspace/run/{orbitquant_path.name}",
+                    "metadata_path": f"/workspace/run/{orbitquant_path.name}.json",
+                    "wall_time_seconds": 15.0,
+                    "peak_vram_bytes": 900,
+                    "runtime": {
+                        "runtime_mode_counts": {"triton_packed_matmul": 1},
+                        "activation_kernel_backend_counts": {"triton_cuda": 1},
+                    },
+                },
+                "comparison_path": f"/workspace/run/{comparison_path.name}",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["validate-comparison", "--input", str(tmp_path)]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["valid"] is True
+    assert output["speed_ratio_orbitquant_over_original"] == 1.5
+    assert output["comparison"]["size"] == [suite.width * 2, suite.height + 24]
+    assert output["orbitquant_runtime"]["runtime_mode_counts"] == {
+        "triton_packed_matmul": 1
+    }
+
+
+def test_cli_validate_comparison_rejects_blank_images(tmp_path):
+    suite = get_native_suite("flux2-native")
+    for name, quantization in (
+        ("flux2-native_seed4_original.png", None),
+        (
+            "flux2-native_seed4_W4A4.png",
+            {"config": {"weight_bits": 4, "activation_bits": 4}},
+        ),
+    ):
+        path = tmp_path / name
+        Image.new("RGB", (suite.width, suite.height), "black").save(path)
+        path.with_suffix(path.suffix + ".json").write_text(
+            json.dumps(
+                {
+                    "suite": suite.name,
+                    "model_id": "example/artifact-model",
+                    "prompt": "A native prompt",
+                    "seed": 4,
+                    "height": suite.height,
+                    "width": suite.width,
+                    "frames": suite.frames,
+                    "export_fps": suite.export_fps,
+                    "steps": suite.steps,
+                    "guidance": suite.guidance,
+                    "quantization": quantization,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    Image.new("RGB", (suite.width * 2, suite.height + 24), "black").save(
+        tmp_path / "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
+    )
+    (tmp_path / "summary.json").write_text(
+        json.dumps(
+            {
+                "suite": suite.name,
+                "model_id": "example/artifact-model",
+                "prompt": "A native prompt",
+                "seed": 4,
+                "bit_setting": "W4A4",
+                "original": {
+                    "output_path": "/workspace/run/flux2-native_seed4_original.png",
+                    "metadata_path": "/workspace/run/flux2-native_seed4_original.png.json",
+                },
+                "orbitquant": {
+                    "output_path": "/workspace/run/flux2-native_seed4_W4A4.png",
+                    "metadata_path": "/workspace/run/flux2-native_seed4_W4A4.png.json",
+                },
+                "comparison_path": (
+                    "/workspace/run/"
+                    "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="comparison image looks blank"):
+        main(["validate-comparison", "--input", str(tmp_path)])
 
 
 def test_cli_generate_with_packed_runtime_on_the_fly_quantization_skips_dequant_prewarm(
