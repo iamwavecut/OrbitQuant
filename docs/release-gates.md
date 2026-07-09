@@ -153,7 +153,10 @@ URL, or signed-off audit note.
   is prepared in [release-0.1.0.md](release-0.1.0.md); repository visibility and
   the release tag remain pending explicit approval. The exact manual
   publication sequence is prepared in
-  [publication-checklist.md](publication-checklist.md).
+  [publication-checklist.md](publication-checklist.md). GitHub CI for current
+  `main` commit `b67af1a` passed as run `29010166749` on 2026-07-09, including
+  HF integration tests, full pytest, package build, `twine check`, and wheel
+  smoke.
 - [ ] The PyPI package is built and checked with `python -m build` and
   `python -m twine check dist/*`, then uploaded with `python -m twine upload
   dist/*`. Credentials may require a user-provided PyPI token or browser
