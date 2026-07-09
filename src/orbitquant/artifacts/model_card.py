@@ -66,9 +66,9 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
             "pipe = load_quantized_pipeline_from_artifact(",
             "    artifact_dir,",
             "    torch_dtype=torch.bfloat16,",
-            "    device=\"cuda\",",
             "    runtime_mode=\"auto_fused\",",
             ")",
+            "pipe.enable_model_cpu_offload(device=\"cuda\")",
             "",
         ]
     )

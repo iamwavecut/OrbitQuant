@@ -77,9 +77,9 @@ artifact_dir = snapshot_download(artifact_id, repo_type="model")
 pipe = load_quantized_pipeline_from_artifact(
     artifact_dir,
     torch_dtype=torch.bfloat16,
-    device="cuda",
     runtime_mode="auto_fused",
 )
+pipe.enable_model_cpu_offload(device="cuda")
 
 result = pipe(
     prompt="A clean product photo of a red ceramic mug on a wooden desk",
@@ -112,9 +112,8 @@ load_quantized_pipeline_component(
     pipe,
     artifact_dir,
     component="transformer",
-    device="cuda",
 )
-pipe.to("cuda")
+pipe.enable_model_cpu_offload(device="cuda")
 
 result = pipe(
     prompt="A clean product photo of a red ceramic mug on a wooden desk",

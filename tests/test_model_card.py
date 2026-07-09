@@ -58,6 +58,8 @@ def test_model_card_renders_rotation_and_codebook_metadata():
 
     assert "snapshot_download" in card
     assert "load_quantized_pipeline_from_artifact" in card
+    assert "pipe.enable_model_cpu_offload(device=\"cuda\")" in card
+    assert "    device=\"cuda\"," not in card
     assert "load_quantized_pipeline_component" not in card
     assert "component=\"transformer\"" not in card
     assert "with the quantized component patched in" in card
