@@ -81,6 +81,11 @@ def test_model_kernel_verifier_avoids_full_pipeline_generation_path():
     assert "load_native_packed_matmul_kernel" in source
     assert "OrbitQuantLinear" in source
     assert "snapshot_download" in source
+    assert "--warmup" in source
+    assert "--iterations" in source
+    assert "timings_ms" in source
+    assert "peak_memory_bytes" in source
+    assert "dequant_bf16_forward_prewarmed_ms" in source
     assert "DiffusionPipeline" not in source
     assert ".from_pretrained(" not in source
     assert ".generate(" not in source

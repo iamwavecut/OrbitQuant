@@ -117,6 +117,49 @@ def _synchronize(device: torch.device) -> None:
         torch.mps.synchronize()
 
 
+def _time_once_ms(fn, *, device: torch.device) -> tuple[torch.Tensor, float]:
+    _synchronize(device)
+    if device.type == "cuda":
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        result = fn()
+        end.record()
+        end.synchronize()
+        return result, float(start.elapsed_time(end))
+
+    started_at = time.perf_counter()
+    result = fn()
+    _synchronize(device)
+    return result, (time.perf_counter() - started_at) * 1000.0
+
+
+def _mean_time_ms(fn, *, device: torch.device, warmup: int, iterations: int) -> float:
+    if warmup < 0:
+        raise ValueError("warmup must be non-negative")
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+    for _ in range(warmup):
+        fn()
+    _synchronize(device)
+
+    if device.type == "cuda":
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        for _ in range(iterations):
+            fn()
+        end.record()
+        end.synchronize()
+        return float(start.elapsed_time(end) / iterations)
+
+    started_at = time.perf_counter()
+    for _ in range(iterations):
+        fn()
+    _synchronize(device)
+    return (time.perf_counter() - started_at) * 1000.0 / iterations
+
+
 def _storage_payload(
     *,
     packed_weight_indices: torch.Tensor,
@@ -199,6 +242,8 @@ def main() -> None:
     )
     parser.add_argument("--activation-kernel-backend", default="auto")
     parser.add_argument("--tokens", type=int, default=8)
+    parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--atol", type=float, default=8e-2)
     parser.add_argument("--rtol", type=float, default=8e-2)
@@ -264,10 +309,35 @@ def main() -> None:
     packed_layer = packed_layer.to(target_device)
     reference_layer = reference_layer.to(target_device)
 
+    if target_device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(target_device)
+
+    def packed_forward() -> torch.Tensor:
+        return packed_layer(x)
+
+    def reference_forward() -> torch.Tensor:
+        return reference_layer(x)
+
     _stage("forward-start")
     with torch.inference_mode():
-        packed_output = packed_layer(x)
-        reference_output = reference_layer(x)
+        packed_output, packed_forward_first_ms = _time_once_ms(
+            packed_forward, device=target_device
+        )
+        reference_output, reference_forward_first_ms = _time_once_ms(
+            reference_forward, device=target_device
+        )
+        packed_forward_prewarmed_ms = _mean_time_ms(
+            packed_forward,
+            device=target_device,
+            warmup=args.warmup,
+            iterations=args.iterations,
+        )
+        reference_forward_prewarmed_ms = _mean_time_ms(
+            reference_forward,
+            device=target_device,
+            warmup=args.warmup,
+            iterations=args.iterations,
+        )
     _synchronize(target_device)
     _stage("forward-done")
 
@@ -307,6 +377,19 @@ def main() -> None:
         "finite": finite,
         "allclose_to_dequant_bf16": close,
         "max_abs_error_vs_dequant_bf16": max_abs_error,
+        "timings_ms": {
+            f"{args.runtime_mode}_forward_first_ms": packed_forward_first_ms,
+            "dequant_bf16_forward_first_ms": reference_forward_first_ms,
+            f"{args.runtime_mode}_forward_prewarmed_ms": packed_forward_prewarmed_ms,
+            "dequant_bf16_forward_prewarmed_ms": reference_forward_prewarmed_ms,
+            "warmup": args.warmup,
+            "iterations": args.iterations,
+        },
+        "peak_memory_bytes": (
+            int(torch.cuda.max_memory_allocated(target_device))
+            if target_device.type == "cuda"
+            else None
+        ),
         **_storage_payload(
             packed_weight_indices=packed,
             row_norms=row_norms,
