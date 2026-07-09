@@ -35,7 +35,7 @@ source snapshot repo:
 `https://huggingface.co/WaveCut/orbitquant-packed-matmul`
 
 The live checked commit is
-`b050a89d6e6f52098c73d904a85011231f77485c`. Its file list contains only the
+`c34d9851cde2cf098589927a7b0bed85d65426af`. Its file list contains only the
 tracked source/test files and no generated `build/`, local `.venv/`,
 `__pycache__/`, binary `.so`, or benchmark output files.
 
@@ -62,6 +62,17 @@ numbers plus CUDA/Triton gate evidence are available, while native CUDA
 `native_packed_matmul` package numbers remain pending a compatible Kernel
 Hub/CUDA build path.
 
+On 2026-07-09T12:22Z, `WaveCut` posted another follow-up comment after
+updating the benchmark source. The updated benchmark reports both
+`predequantized_f_linear_seconds_per_iter` and
+`dequantize_then_f_linear_seconds_per_iter`. The comment explicitly says the
+current MPS native packed-matmul path is not throughput proof for large
+matrices: local W4 512x1024x1024 fp16 measured about `0.045x` versus
+dequantize-then-F.linear, and W4 512x3072x3072 fp16 measured about `0.044x`
+versus dequantize-then-F.linear. The current CUDA source uses WMMA for
+FP16/BF16 low-bit modes, but native CUDA package benchmarks remain pending a
+compatible Kernel Hub/CUDA build path.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
@@ -76,7 +87,7 @@ Repository:
 - Kernel Hub repo id: `WaveCut/orbitquant-packed-matmul`
 - Source package path: `native-kernels/orbitquant-packed-matmul`
 - Source repository: `https://github.com/iamwavecut/OrbitQuant`
-- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/b050a89d6e6f52098c73d904a85011231f77485c`
+- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/c34d9851cde2cf098589927a7b0bed85d65426af`
 - License: Apache-2.0
 
 Review-ready source package:
@@ -84,7 +95,7 @@ Review-ready source package:
 The public source snapshot repo contains the reviewable tracked source snapshot
 at:
 
-`https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/b050a89d6e6f52098c73d904a85011231f77485c`
+`https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/c34d9851cde2cf098589927a7b0bed85d65426af`
 
 If a source archive is requested instead, generate it from the Git-tracked
 kernel package path:
@@ -160,8 +171,11 @@ Benchmark status:
     `0.00764581459807232` seconds/iteration over 20 iterations.
   - W4, 512 rows, 3072 input features, 3072 output features, float16:
     `0.10189520000712946` seconds/iteration over 10 iterations.
-- CUDA host benchmark evidence is pending a stable CUDA host. We can provide
-  CUDA benchmark output after the Kernel Hub approval process if required.
+- MPS native packed matmul is currently not throughput-competitive with the
+  PyTorch baselines on the large local shapes above; treat those values as
+  correctness and memory-path evidence only.
+- CUDA native package benchmark evidence is pending a compatible CUDA
+  kernel-builder or Kernel Hub build path.
 
 Requested approval:
 

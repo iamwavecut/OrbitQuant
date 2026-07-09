@@ -66,7 +66,7 @@ for the current artifact format and runtime modes.
   tests for the Metal build.
 - A public Hugging Face source snapshot exists at
   `WaveCut/orbitquant-packed-matmul` commit
-  `b050a89d6e6f52098c73d904a85011231f77485c`. It contains the tracked
+  `c34d9851cde2cf098589927a7b0bed85d65426af`. It contains the tracked
   `native-kernels/orbitquant-packed-matmul` source package with no generated
   `build/`, local `.venv/`, `__pycache__/`, binary extension, or benchmark
   output files. The PyPI `orbitquant-0.1.0.tar.gz` source distribution also
@@ -89,6 +89,15 @@ for the current artifact format and runtime modes.
   public source snapshot, checked commit
   `b050a89d6e6f52098c73d904a85011231f77485c`, public PyPI source
   distribution URL, and SHA256.
+  A third follow-up comment on 2026-07-09T12:22Z points reviewers to source
+  snapshot `c34d9851cde2cf098589927a7b0bed85d65426af`, whose benchmark reports
+  both `predequantized_f_linear_seconds_per_iter` and
+  `dequantize_then_f_linear_seconds_per_iter`. That comment explicitly
+  clarifies that the current MPS native packed matmul path is not throughput
+  proof for large matrices: local W4 512x1024x1024 fp16 measured about
+  `0.045x` versus dequantize-then-F.linear, and W4 512x3072x3072 fp16 measured
+  about `0.044x` versus dequantize-then-F.linear. Treat those MPS numbers as
+  correctness and memory-path evidence only, not performance evidence.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same
@@ -149,7 +158,7 @@ for the current artifact format and runtime modes.
 - On 2026-07-09, a prebuilt-only native loader check still found no loadable
   CUDA/Metal Kernel Hub artifact: `repo_info(..., repo_type="kernel")`
   returned 404 while the public source snapshot model repo resolved to commit
-  `b050a89d6e6f52098c73d904a85011231f77485c`. The native loader therefore
+  `c34d9851cde2cf098589927a7b0bed85d65426af`. The native loader therefore
   still requires `LOCAL_KERNELS`, an importable package, or Kernel Hub approval.
 
 ## Packaging Boundary

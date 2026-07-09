@@ -19,7 +19,7 @@ URL, or signed-off audit note.
   loading, and package tests.
   A public `WaveCut/orbitquant-packed-matmul` source snapshot repo exists on
   Hugging Face, and the checked commit
-  `b050a89d6e6f52098c73d904a85011231f77485c` contains the reviewable source
+  `c34d9851cde2cf098589927a7b0bed85d65426af` contains the reviewable source
   package from `native-kernels/orbitquant-packed-matmul`, without generated
   `build/`, local `.venv/`, `__pycache__/`, binary extension, or benchmark
   output files. The PyPI `orbitquant-0.1.0.tar.gz` source distribution also
@@ -52,7 +52,11 @@ URL, or signed-off audit note.
   [kernel-hub-approval-request.md](kernel-hub-approval-request.md). A
   follow-up comment was posted to discussion 15 on 2026-07-09T11:56Z with the
   public source snapshot URL, checked commit, PyPI source distribution URL, and
-  SHA256.
+  SHA256. Another follow-up comment was posted on 2026-07-09T12:22Z after
+  updating `benchmarks/benchmark.py` to report both predequantized-F.linear and
+  dequantize-then-F.linear baselines; it clarified that current local MPS
+  native packed matmul numbers are correctness and memory-path evidence only,
+  not throughput proof.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4
@@ -85,7 +89,7 @@ URL, or signed-off audit note.
   source build unless `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. A
   2026-07-09 prebuilt-only loader check still returned 404 for the Kernel Hub
   repo while the public source snapshot model repo resolved to commit
-  `b050a89d6e6f52098c73d904a85011231f77485c`.
+  `c34d9851cde2cf098589927a7b0bed85d65426af`.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is

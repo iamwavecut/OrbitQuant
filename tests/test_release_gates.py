@@ -87,7 +87,7 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "2026-07-09T11:54Z" in release_gates
     assert "source\n  snapshot repo is public" in release_gates
-    assert "`b050a89d6e6f52098c73d904a85011231f77485c`" in release_gates
+    assert "`c34d9851cde2cf098589927a7b0bed85d65426af`" in release_gates
     assert "PyPI `orbitquant-0.1.0.tar.gz` source distribution" in release_gates
     assert (
         "source\n  snapshot plus all 14 canonical OrbitQuant model artifact repos "
@@ -98,6 +98,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "follow-up comment was posted to discussion 15 on 2026-07-09T11:56Z" in (
         release_gates
     )
+    assert "follow-up comment was posted on 2026-07-09T12:22Z" in release_gates
+    assert "correctness and memory-path evidence only" in release_gates
     assert "matching\n  `torch212-metal-aarch64-darwin` variant" in release_gates
     assert "W4 512x1024x1024 float16" in release_gates
     assert "0.00764581459807232" in release_gates
@@ -340,7 +342,7 @@ def test_kernel_audit_documents_backend_claim_boundaries():
         kernel_audit
     )
     assert "2026-07-08T16:59Z" in kernel_audit
-    assert "b050a89d6e6f52098c73d904a85011231f77485c" in kernel_audit
+    assert "c34d9851cde2cf098589927a7b0bed85d65426af" in kernel_audit
     assert "PyPI `orbitquant-0.1.0.tar.gz` source distribution" in kernel_audit
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         kernel_audit
@@ -349,6 +351,11 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "kernels-community/README/discussions/15" in kernel_audit
     assert "follow-up comment on 2026-07-08T18:03Z" in kernel_audit
     assert "second follow-up comment on 2026-07-09T11:56Z" in kernel_audit
+    assert "third follow-up comment on 2026-07-09T12:22Z" in kernel_audit
+    assert "`predequantized_f_linear_seconds_per_iter`" in kernel_audit
+    assert "`dequantize_then_f_linear_seconds_per_iter`" in kernel_audit
+    assert "`0.045x` versus dequantize-then-F.linear" in kernel_audit
+    assert "`0.044x` versus dequantize-then-F.linear" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -389,10 +396,14 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "Source visibility follow-up" in request
     assert "As of 2026-07-09T11:54Z" in request
     assert "is public as a\nsource snapshot repo" in request
-    assert "b050a89d6e6f52098c73d904a85011231f77485c" in request
+    assert "c34d9851cde2cf098589927a7b0bed85d65426af" in request
     assert "public PyPI source distribution" in request
     assert "On 2026-07-09T11:56Z" in request
     assert "posted a follow-up comment in discussion 15" in request
+    assert "On 2026-07-09T12:22Z" in request
+    assert "updating the benchmark source" in request
+    assert "`0.045x` versus" in request
+    assert "`0.044x`" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )
@@ -406,7 +417,7 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Review source snapshot:" in request
-    assert "b050a89d6e6f52098c73d904a85011231f77485c" in request
+    assert "c34d9851cde2cf098589927a7b0bed85d65426af" in request
     assert "f7eb3fa912caa27ad682c7ea1757f580a2751a01" not in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request
@@ -431,7 +442,8 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "torch212-metal-aarch64-darwin" in request
     assert "0.00764581459807232" in request
     assert "0.10189520000712946" in request
-    assert "CUDA host benchmark evidence is pending" in request
+    assert "MPS native packed matmul is currently not throughput-competitive" in request
+    assert "CUDA native package benchmark evidence is pending" in request
     assert "uploaded as a `kernel`-type repository" in request
     assert "trust_remote_code=True" in request
 
