@@ -373,7 +373,16 @@ URL, or signed-off audit note.
   `orbitquant>=0.1.2`, updates the README install commands for both
   `orbitquant>=0.1.2` and `orbitquant[kernels]>=0.1.2`, refreshes `uv.lock`
   to the PyPI `orbitquant` 0.1.2 release hashes, and passed GitHub CI run
-  `29027011708` on 2026-07-09.
+  `29027011708` on 2026-07-09. GitHub Release
+  `https://github.com/iamwavecut/ComfyUI-OrbitQuant/releases/tag/v0.1.0` was
+  published on 2026-07-09T15:12Z from commit
+  `4832d4addb39681e82f38e07627a2bb682e4332d` with assets
+  `comfyui_orbitquant-0.1.0.tar.gz` SHA256
+  `630628c56e5ed35626cd7cca6749c51056cb78a0041b7c1268cf0b5e995d28c0` and
+  `comfyui_orbitquant-0.1.0-py3-none-any.whl` SHA256
+  `0c774c20a6759bea18d5d02b598035c3446a72ee4efaa0be6c1f325f4b3e928b`.
+  Before release, local `uv run pytest -q`, `uv run ruff check .`, package
+  build, and `twine check` passed for the node pack.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
