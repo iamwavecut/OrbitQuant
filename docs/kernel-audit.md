@@ -66,7 +66,7 @@ for the current artifact format and runtime modes.
   tests for the Metal build.
 - A public Hugging Face source snapshot exists at
   `WaveCut/orbitquant-packed-matmul` commit
-  `c34d9851cde2cf098589927a7b0bed85d65426af`. It contains the tracked
+  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`. It contains the tracked
   `native-kernels/orbitquant-packed-matmul` source package with no generated
   `build/`, local `.venv/`, `__pycache__/`, binary extension, or benchmark
   output files. The PyPI `orbitquant-0.1.0.tar.gz` source distribution also
@@ -105,6 +105,11 @@ for the current artifact format and runtime modes.
   not a drop-in kernel for arbitrary unquantized models or skipped components
   such as text encoders, VAEs, embeddings, timestep MLPs, or final projection
   heads.
+  The public source snapshot was updated again on 2026-07-09T12:39Z to commit
+  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`; the benchmark now also reports
+  `packed_weight_path_bytes`, `materialized_weight_bytes`, and
+  `packed_weight_path_vs_materialized_weight_ratio` so kernel review can
+  distinguish weight-side storage savings from throughput claims.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same
@@ -164,8 +169,9 @@ for the current artifact format and runtime modes.
   and benchmark stages were explicitly skipped.
 - On 2026-07-09, a prebuilt-only native loader check still found no loadable
   CUDA/Metal Kernel Hub artifact: `repo_info(..., repo_type="kernel")`
-  returned 404 while the public source snapshot model repo resolved to commit
-  `c34d9851cde2cf098589927a7b0bed85d65426af`. The native loader therefore
+  returned 404. After the storage-footprint benchmark update, the public source
+  snapshot model repo resolved to commit
+  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`. The native loader therefore
   still requires `LOCAL_KERNELS`, an importable package, or Kernel Hub approval.
 
 ## Packaging Boundary

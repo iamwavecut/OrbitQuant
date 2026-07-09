@@ -35,7 +35,7 @@ source snapshot repo:
 `https://huggingface.co/WaveCut/orbitquant-packed-matmul`
 
 The live checked commit is
-`c34d9851cde2cf098589927a7b0bed85d65426af`. Its file list contains only the
+`cb0ceb1a4d070556c52cfba691aba3f6647c246b`. Its file list contains only the
 tracked source/test files and no generated `build/`, local `.venv/`,
 `__pycache__/`, binary `.so`, or benchmark output files.
 
@@ -63,7 +63,8 @@ numbers plus CUDA/Triton gate evidence are available, while native CUDA
 Hub/CUDA build path.
 
 On 2026-07-09T12:22Z, `WaveCut` posted another follow-up comment after
-updating the benchmark source. The updated benchmark reports both
+updating the benchmark source to snapshot
+`c34d9851cde2cf098589927a7b0bed85d65426af`. The updated benchmark reports both
 `predequantized_f_linear_seconds_per_iter` and
 `dequantize_then_f_linear_seconds_per_iter`. The comment explicitly says the
 current MPS native packed-matmul path is not throughput proof for large
@@ -81,6 +82,13 @@ Wan2.1-T2V-1.3B-Diffusers. The kernel is not intended for arbitrary
 unquantized models, text encoders, VAEs, embeddings, timestep MLPs, or final
 projection heads.
 
+On 2026-07-09T12:39Z, the public source snapshot was updated to commit
+`cb0ceb1a4d070556c52cfba691aba3f6647c246b`. The benchmark JSON now reports
+packed weight storage fields:
+`packed_weight_indices_bytes`, `row_norms_bytes`, `centroid_bytes`,
+`packed_weight_path_bytes`, `materialized_weight_bytes`, and
+`packed_weight_path_vs_materialized_weight_ratio`.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
@@ -95,7 +103,7 @@ Repository:
 - Kernel Hub repo id: `WaveCut/orbitquant-packed-matmul`
 - Source package path: `native-kernels/orbitquant-packed-matmul`
 - Source repository: `https://github.com/iamwavecut/OrbitQuant`
-- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/c34d9851cde2cf098589927a7b0bed85d65426af`
+- Review source snapshot: `https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/cb0ceb1a4d070556c52cfba691aba3f6647c246b`
 - License: Apache-2.0
 
 Review-ready source package:
@@ -103,7 +111,7 @@ Review-ready source package:
 The public source snapshot repo contains the reviewable tracked source snapshot
 at:
 
-`https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/c34d9851cde2cf098589927a7b0bed85d65426af`
+`https://huggingface.co/WaveCut/orbitquant-packed-matmul/commit/cb0ceb1a4d070556c52cfba691aba3f6647c246b`
 
 If a source archive is requested instead, generate it from the Git-tracked
 kernel package path:

@@ -87,7 +87,8 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "2026-07-09T11:54Z" in release_gates
     assert "source\n  snapshot repo is public" in release_gates
-    assert "`c34d9851cde2cf098589927a7b0bed85d65426af`" in release_gates
+    assert "`cb0ceb1a4d070556c52cfba691aba3f6647c246b`" in release_gates
+    assert "`packed_weight_path_vs_materialized_weight_ratio`" in release_gates
     assert "PyPI `orbitquant-0.1.0.tar.gz` source distribution" in release_gates
     assert (
         "source\n  snapshot plus all 14 canonical OrbitQuant model artifact repos "
@@ -342,7 +343,7 @@ def test_kernel_audit_documents_backend_claim_boundaries():
         kernel_audit
     )
     assert "2026-07-08T16:59Z" in kernel_audit
-    assert "c34d9851cde2cf098589927a7b0bed85d65426af" in kernel_audit
+    assert "cb0ceb1a4d070556c52cfba691aba3f6647c246b" in kernel_audit
     assert "PyPI `orbitquant-0.1.0.tar.gz` source distribution" in kernel_audit
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         kernel_audit
@@ -359,6 +360,9 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "fourth follow-up comment on 2026-07-09T12:27Z" in kernel_audit
     assert "OrbitQuant-converted diffusion\n  transformer backbones" in kernel_audit
     assert "not a drop-in kernel for arbitrary unquantized models" in kernel_audit
+    assert "updated again on 2026-07-09T12:39Z" in kernel_audit
+    assert "`packed_weight_path_bytes`" in kernel_audit
+    assert "`packed_weight_path_vs_materialized_weight_ratio`" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -414,6 +418,9 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "FLUX.2 Klein" in request
     assert "Z-Image-Turbo" in request
     assert "Wan2.1-T2V-1.3B-Diffusers" in request
+    assert "On 2026-07-09T12:39Z" in request
+    assert "packed weight storage fields" in request
+    assert "`packed_weight_path_vs_materialized_weight_ratio`" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )
@@ -427,7 +434,7 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Review source snapshot:" in request
-    assert "c34d9851cde2cf098589927a7b0bed85d65426af" in request
+    assert "cb0ceb1a4d070556c52cfba691aba3f6647c246b" in request
     assert "f7eb3fa912caa27ad682c7ea1757f580a2751a01" not in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request
