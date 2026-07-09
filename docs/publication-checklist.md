@@ -1,9 +1,9 @@
 # OrbitQuant 0.1.0 Publication Checklist
 
-This checklist is for the final public repository, GitHub release, and PyPI
-package publication step. PyPI `orbitquant==0.1.0` is already published through
-Trusted Publishing; repository visibility, tag creation, and GitHub release
-creation remain gated by explicit approval.
+This checklist is for the public repository, GitHub release, and PyPI package
+publication step. PyPI `orbitquant==0.1.0` is already published through Trusted
+Publishing, and the GitHub repository is already public. Tag creation and
+GitHub release creation remain gated by explicit approval.
 
 ## Preconditions
 
@@ -72,15 +72,13 @@ assert subprocess.check_output(
 PY
 ```
 
-## Publish GitHub
+## Publish GitHub Release
 
-Run only after explicit approval:
+Run only after explicit approval. Repository visibility is already public, so
+this section only creates the version tag and GitHub release:
 
 ```bash
 cd /Users/Shared/src/github.com/iamwavecut/OrbitQuant
-gh repo edit iamwavecut/OrbitQuant \
-  --visibility public \
-  --accept-visibility-change-consequences
 git tag -a v0.1.0 -m "OrbitQuant 0.1.0"
 git push origin v0.1.0
 gh release create v0.1.0 \
@@ -107,6 +105,7 @@ gh run watch 29015072821 --repo iamwavecut/OrbitQuant --exit-status
 
 ```bash
 gh repo view iamwavecut/OrbitQuant --json visibility,isPrivate,url,defaultBranchRef
+test "$(gh repo view iamwavecut/OrbitQuant --json isPrivate --jq .isPrivate)" = "false"
 gh release view v0.1.0 --repo iamwavecut/OrbitQuant
 python - <<'PY'
 import json

@@ -17,16 +17,19 @@ URL, or signed-off audit note.
   2026-07-08T16:59Z at OrbitQuant commit `5cc7d30`, including kernel-builder
   layout hooks, ABI compatibility for macOS 15/Python ABI 3.9, get-kernel
   loading, and package tests.
-  A private `WaveCut/orbitquant-packed-matmul` repo exists on Hugging Face, and
-  its commit `6821e4cd5ff1894994d7137c1d861660cfeed1c8` contains the
-  reviewable source package from `native-kernels/orbitquant-packed-matmul`,
-  refreshed on 2026-07-08T18:00Z after adding CUDA launch-error checks,
-  without generated `build/`, local `.venv/`, `__pycache__/`, or benchmark
-  output directories. This source snapshot is review evidence only; the final
-  loadable Kernel Hub artifact must be a `kernel`-type repository with
-  `build/` variants uploaded by `kernel-builder build-and-upload`. Hugging Face
-  `kernel-builder` currently asks publishers to request access through a
-  discussion at
+  A public `WaveCut/orbitquant-packed-matmul` source snapshot repo exists on
+  Hugging Face, and the checked commit
+  `b050a89d6e6f52098c73d904a85011231f77485c` contains the reviewable source
+  package from `native-kernels/orbitquant-packed-matmul`, without generated
+  `build/`, local `.venv/`, `__pycache__/`, binary extension, or benchmark
+  output files. The PyPI `orbitquant-0.1.0.tar.gz` source distribution also
+  contains the same tracked kernel source under
+  `orbitquant-0.1.0/native-kernels/orbitquant-packed-matmul/`, with SHA256
+  `6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89`.
+  This source snapshot is review evidence only; the final loadable Kernel Hub
+  artifact must be a `kernel`-type repository with `build/` variants uploaded
+  by `kernel-builder build-and-upload`. Hugging Face `kernel-builder`
+  currently asks publishers to request access through a discussion at
   `https://huggingface.co/spaces/kernels-community/README/discussions/new`.
   On 2026-07-08T17:02Z, `nix --option sandbox relaxed run .#build-and-copy -L`
   passed locally and copied 3 Metal build variants; the following
@@ -41,12 +44,15 @@ URL, or signed-off audit note.
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same
   Kernel Hub publish permission error.
-  Approval remains pending. As of 2026-07-08T17:15Z, the linked
-  `WaveCut/orbitquant-packed-matmul` source snapshot repo is still private; if
-  reviewers cannot access it, provide a tracked source archive in the
-  discussion or get explicit approval to make only that source-only kernel repo
-  public. The request text is
-  [kernel-hub-approval-request.md](kernel-hub-approval-request.md).
+  Approval remains pending for the loadable `kernel`-type repository. As of
+  2026-07-09T11:54Z, the linked `WaveCut/orbitquant-packed-matmul` source
+  snapshot repo is public, and a live Hugging Face check across the source
+  snapshot plus all 14 canonical OrbitQuant model artifact repos reported
+  `private_count=0`. The request text and reviewer follow-up notes are in
+  [kernel-hub-approval-request.md](kernel-hub-approval-request.md). A
+  follow-up comment was posted to discussion 15 on 2026-07-09T11:56Z with the
+  public source snapshot URL, checked commit, PyPI source distribution URL, and
+  SHA256.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4
@@ -142,16 +148,18 @@ URL, or signed-off audit note.
   `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
   `readme_mismatch_count=0`, `forbidden_file_count=0`, `public_count=14`, and
   `private_count=0`.
-- [ ] The GitHub repository is public, tagged, and includes the release docs,
-  license, source distribution expectations, and reproducible verification
-  commands. Release-note content for the first public package release candidate
-  is prepared in [release-0.1.0.md](release-0.1.0.md); repository visibility and
-  the release tag remain pending explicit approval. The exact manual
-  publication sequence is prepared in
+- [ ] The GitHub repository is public and includes the release docs, license,
+  source distribution expectations, and reproducible verification commands.
+  Release-note content for the first public package release candidate is
+  prepared in [release-0.1.0.md](release-0.1.0.md); the release tag and GitHub
+  release remain pending explicit approval. The exact manual tag/release
+  sequence is prepared in
   [publication-checklist.md](publication-checklist.md). GitHub CI for release-readiness
-  commit `b67af1a` passed as run `29010166749` on 2026-07-09, including
-  HF integration tests, full pytest, package build, `twine check`, and wheel
-  smoke.
+  commit `162554f` passed as run `29015920751` on 2026-07-09, including HF
+  integration tests, full pytest, package build, `twine check`, and wheel
+  smoke. A live GitHub check on 2026-07-09T11:54Z reported
+  `iamwavecut/OrbitQuant` as `PUBLIC`, Apache-2.0 licensed, with homepage
+  `https://pypi.org/project/orbitquant/`.
 - [x] The PyPI package is published as `orbitquant==0.1.0`.
   Evidence: commit `ce5c232` added the manual
   `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI

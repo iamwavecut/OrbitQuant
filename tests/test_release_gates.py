@@ -64,11 +64,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "After adding kernel `upstream`/`source` metadata" in release_gates
     assert "2026-07-08T16:59Z at OrbitQuant commit `5cc7d30`" in release_gates
     assert "get-kernel\n  loading, and package tests" in release_gates
-    assert "reviewable source package from `native-kernels/orbitquant-packed-matmul`" in (
+    assert "reviewable source\n  package from `native-kernels/orbitquant-packed-matmul`" in (
         release_gates
     )
-    assert "without generated `build/`, local `.venv/`, `__pycache__/`" in release_gates
-    assert "loadable Kernel Hub artifact must be a `kernel`-type repository" in (
+    assert "without generated\n  `build/`, local `.venv/`, `__pycache__/`" in release_gates
+    assert "loadable Kernel Hub\n  artifact must be a `kernel`-type repository" in (
         release_gates
     )
     assert "kernels-community/README/discussions/new" in release_gates
@@ -85,10 +85,19 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         release_gates
     )
-    assert "2026-07-08T17:15Z" in release_gates
-    assert "source snapshot repo is still private" in release_gates
-    assert "tracked source archive" in release_gates
-    assert "source-only kernel repo\n  public" in release_gates
+    assert "2026-07-09T11:54Z" in release_gates
+    assert "source\n  snapshot repo is public" in release_gates
+    assert "`b050a89d6e6f52098c73d904a85011231f77485c`" in release_gates
+    assert "PyPI `orbitquant-0.1.0.tar.gz` source distribution" in release_gates
+    assert (
+        "source\n  snapshot plus all 14 canonical OrbitQuant model artifact repos "
+        "reported\n  `private_count=0`"
+    ) in (
+        release_gates
+    )
+    assert "follow-up comment was posted to discussion 15 on 2026-07-09T11:56Z" in (
+        release_gates
+    )
     assert "matching\n  `torch212-metal-aarch64-darwin` variant" in release_gates
     assert "W4 512x1024x1024 float16" in release_gates
     assert "0.00764581459807232" in release_gates
@@ -152,13 +161,18 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "The GitHub repository is public" in release_gates
     assert "[release-0.1.0.md](release-0.1.0.md)" in release_gates
     assert "[publication-checklist.md](publication-checklist.md)" in release_gates
-    assert "repository visibility and\n  the release tag remain pending explicit approval" in (
+    assert "the release tag and GitHub\n  release remain pending explicit approval" in (
         release_gates
     )
-    assert "release-readiness\n  commit `b67af1a` passed as run `29010166749`" in (
+    assert "release-readiness\n  commit `162554f` passed as run `29015920751`" in (
         release_gates
     )
-    assert "HF integration tests, full pytest, package build, `twine check`, and wheel" in (
+    assert "`iamwavecut/OrbitQuant` as `PUBLIC`" in release_gates
+    assert "https://pypi.org/project/orbitquant/" in release_gates
+    assert (
+        "including HF\n  integration tests, full pytest, package build, "
+        "`twine check`, and wheel"
+    ) in (
         release_gates
     )
     assert "- [x] The PyPI package is published as `orbitquant==0.1.0`" in (
@@ -189,7 +203,8 @@ def test_publication_checklist_contains_gated_release_commands():
 
     assert "OrbitQuant 0.1.0 Publication Checklist" in checklist
     assert "PyPI `orbitquant==0.1.0` is already published" in checklist
-    assert "repository visibility, tag creation, and GitHub release\ncreation remain gated" in (
+    assert "the GitHub repository is already public" in checklist
+    assert "Tag creation and\nGitHub release creation remain gated" in (
         checklist
     )
     assert "Trusted Publishing is configured" in checklist
@@ -206,10 +221,12 @@ def test_publication_checklist_contains_gated_release_commands():
         checklist
     )
     assert "OrbitQuantConfig().runtime_mode" in checklist
-    assert "gh repo edit iamwavecut/OrbitQuant" in checklist
     assert "https://pypi.org/pypi/orbitquant/json" in checklist
-    assert "--visibility public" in checklist
-    assert "--accept-visibility-change-consequences" in checklist
+    assert "Repository visibility is already public" in checklist
+    assert (
+        'test "$(gh repo view iamwavecut/OrbitQuant --json isPrivate '
+        '--jq .isPrivate)" = "false"'
+    ) in checklist
     assert "git tag -a v0.1.0" in checklist
     assert "git push origin v0.1.0" in checklist
     assert "gh release create v0.1.0" in checklist
@@ -352,8 +369,15 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "MPS native\npacked matmul smoke benchmark numbers" in request
     assert "native CUDA package numbers pending" in request
     assert "Source visibility follow-up" in request
-    assert "still a private\nsource snapshot repo" in request
-    assert "make only this source-only kernel repo public" in request
+    assert "As of 2026-07-09T11:54Z" in request
+    assert "is public as a\nsource snapshot repo" in request
+    assert "b050a89d6e6f52098c73d904a85011231f77485c" in request
+    assert "public PyPI source distribution" in request
+    assert "On 2026-07-09T11:56Z" in request
+    assert "posted a follow-up comment in discussion 15" in request
+    assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
+        request
+    )
     assert "locally prepared and checked on 2026-07-08T18:00Z" in request
     assert "77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651" in (
         request
@@ -364,7 +388,7 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "native-kernels/orbitquant-packed-matmul" in request
     assert "https://github.com/iamwavecut/OrbitQuant" in request
     assert "Review source snapshot:" in request
-    assert "6821e4cd5ff1894994d7137c1d861660cfeed1c8" in request
+    assert "b050a89d6e6f52098c73d904a85011231f77485c" in request
     assert "f7eb3fa912caa27ad682c7ea1757f580a2751a01" not in request
     assert "Apache-2.0" in request
     assert "Review-ready source package" in request
