@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 try:
@@ -130,6 +132,13 @@ class OrbitQuantConfig(QuantizationConfigMixin):
 
     def to_diff_dict(self) -> dict[str, Any]:
         return self.to_dict()
+
+    def to_json_string(self, use_diff: bool = True) -> str:
+        payload = self.to_diff_dict() if use_diff else self.to_dict()
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+    def to_json_file(self, json_file_path: str | Path, use_diff: bool = True) -> None:
+        Path(json_file_path).write_text(self.to_json_string(use_diff=use_diff), encoding="utf-8")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> OrbitQuantConfig:
