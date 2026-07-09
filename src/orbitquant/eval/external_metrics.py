@@ -41,17 +41,19 @@ def summarize_geneval_results(results_jsonl: str | Path, output_json: str | Path
         if correct:
             bucket["correct"] += 1
             correct_count += 1
+    tags = {
+        tag: {
+            "score": values["correct"] / values["total"],
+            "correct": values["correct"],
+            "total": values["total"],
+        }
+        for tag, values in sorted(per_tag.items())
+    }
     summary = {
         "overall": correct_count / len(records),
         "records": len(records),
-        "tags": {
-            tag: {
-                "score": values["correct"] / values["total"],
-                "correct": values["correct"],
-                "total": values["total"],
-            }
-            for tag, values in sorted(per_tag.items())
-        },
+        "per_task": {tag: values["score"] for tag, values in tags.items()},
+        "tags": tags,
     }
     output_path = Path(output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)

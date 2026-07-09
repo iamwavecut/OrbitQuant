@@ -195,8 +195,15 @@ def test_external_metric_summarizers_write_numeric_json(tmp_path):
         geneval_results,
         tmp_path / "geneval-summary.json",
     )
+    imported_geneval_metrics = load_metric_json(
+        tmp_path / "geneval-summary.json",
+        metric_prefix="geneval",
+    )
     assert geneval_summary["overall"] == 0.5
+    assert geneval_summary["per_task"]["single_object"] == 0.5
     assert geneval_summary["tags"]["single_object"]["total"] == 2
+    assert imported_geneval_metrics["geneval_overall"] == 0.5
+    assert imported_geneval_metrics["geneval_per_task_single_object"] == 0.5
 
     vbench_dir = tmp_path / "vbench"
     vbench_dir.mkdir()
