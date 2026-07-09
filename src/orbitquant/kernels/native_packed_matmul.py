@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import platform
+import re
+import sys
 from typing import Any
 
 import torch
@@ -23,12 +25,20 @@ def _load_importable_packed_matmul_kernel() -> Any | None:
 def _runtime_variant_hint() -> str:
     cuda_version = torch.version.cuda
     accelerator = f"CUDA {cuda_version}" if cuda_version is not None else "non-CUDA"
-    return (
+    hint = (
         "Current runtime is "
         f"torch {torch.__version__}, {accelerator}, "
         f"{platform.system().lower()} {platform.machine()}. "
         "The built kernel variant must match this runtime."
     )
+    torch_match = re.match(r"^(\d+)\.(\d+)", torch.__version__)
+    if cuda_version is not None and sys.platform == "linux" and torch_match is not None:
+        expected_variant = (
+            f"torch{torch_match.group(1)}{torch_match.group(2)}-cxx11-"
+            f"cu{cuda_version.replace('.', '')}-{platform.machine()}-linux"
+        )
+        hint = f"{hint} Expected kernel-builder CUDA variant: {expected_variant}."
+    return hint
 
 
 def _load_native_packed_matmul_kernel() -> Any:

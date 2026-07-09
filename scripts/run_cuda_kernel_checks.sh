@@ -214,6 +214,8 @@ stage quantize-bench-done
 
 if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
   stage native-kernel-package-ci-start
+  native_kernel_variant="$(native_kernel_runtime_variant_name)"
+  stage "native-kernel-runtime-variant expected=$native_kernel_variant"
   stage native-kernel-package-prebuilt-load-start
   set +e
   python - <<'PY'
@@ -246,7 +248,6 @@ PY
         >&2
       exit 1
     fi
-    native_kernel_variant="$(native_kernel_runtime_variant_name)"
     ensure_native_kernel_source_git
     stage "native-kernel-package-build-start variant=$native_kernel_variant"
     native_kernel_variant_dir="$(

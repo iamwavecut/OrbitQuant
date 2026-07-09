@@ -98,3 +98,5 @@ def test_native_packed_matmul_loader_reports_missing_optional_dependency(monkeyp
     assert "PYTHONPATH" in message
     assert "Current runtime is torch" in message
     assert "The built kernel variant must match this runtime." in message
+    if torch.version.cuda is not None and sys.platform == "linux":
+        assert "Expected kernel-builder CUDA variant:" in message

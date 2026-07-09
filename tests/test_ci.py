@@ -49,6 +49,7 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     cuda_script = Path("scripts/run_cuda_kernel_checks.sh").read_text(encoding="utf-8")
     assert "triton-cuda-kernel-contract-ok" in cuda_script
     assert "native-kernel-package-ci-start" in cuda_script
+    assert "native-kernel-runtime-variant expected=$native_kernel_variant" in cuda_script
     assert "native-kernel-package-prebuilt-load-start" in cuda_script
     assert "native-kernel-package-prebuilt-load-done" in cuda_script
     assert "native-kernel-package-prebuilt-load-unavailable" in cuda_script
