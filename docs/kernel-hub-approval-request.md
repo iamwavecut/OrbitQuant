@@ -170,6 +170,16 @@ approval blocker.
 On 2026-07-09T14:00Z, `WaveCut` posted those actual model artifact numbers in
 discussion 15.
 
+Live status refresh:
+
+On 2026-07-09T15:06Z, discussion 15 was still open and no newer reviewer reply
+was present after the 2026-07-09T14:00Z model-artifact numbers. The public
+source snapshot repo still resolved as a model repo at commit
+`cb0ceb1a4d070556c52cfba691aba3f6647c246b`; the kernel-type repository still
+returned 404. The remaining action is Hugging Face Kernel Hub publish approval,
+followed by `kernel-builder build-and-upload` and `get_kernel(...)`
+verification.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`

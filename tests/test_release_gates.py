@@ -35,7 +35,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`public_count=14`" in release_gates
     assert "`private_count=0`" in release_gates
     assert "14/14 policy-inventory-ready" in release_gates
-    assert "A 2026-07-09T14:56Z rerun with `--summary-only`" in release_gates
+    assert "A 2026-07-09T15:06Z rerun with `--summary-only`" in release_gates
     assert "again passed `--fail-on-artifact-regression`" in release_gates
     assert (
         "14/14 artifact-ready, native-smoke-ready, metadata-complete, and\n"

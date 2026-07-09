@@ -196,7 +196,13 @@ URL, or signed-off audit note.
   source build unless `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. A
   2026-07-09 prebuilt-only loader check still returned 404 for the Kernel Hub
   repo while the public source snapshot model repo resolved to commit
-  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`.
+  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`. A 2026-07-09T15:06Z live
+  refresh confirmed discussion 15 remains open, the public source snapshot
+  model repo still resolves to commit
+  `cb0ceb1a4d070556c52cfba691aba3f6647c246b`, and
+  `repo_info("WaveCut/orbitquant-packed-matmul", repo_type="kernel")` still
+  returns 404. The loadable Kernel Hub package therefore remains an external
+  approval gate, not a completed release artifact.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
@@ -228,7 +234,7 @@ URL, or signed-off audit note.
   metadata, zero remote checksum mismatches, zero README mismatches, and zero
   forbidden remote files. It also reported `public_count=14`,
   `private_count=0`, 14/14 policy-inventory-ready, and 144 missing
-  release-grade metrics. A 2026-07-09T14:56Z rerun with `--summary-only` and
+  release-grade metrics. A 2026-07-09T15:06Z rerun with `--summary-only` and
   the same policy inventory root again passed `--fail-on-artifact-regression`
   with 14/14 artifact-ready, native-smoke-ready, metadata-complete, and
   policy-inventory-ready; it reported `release_eval_applicable_count=10`,
@@ -262,7 +268,7 @@ URL, or signed-off audit note.
   `repo_count=14`, `artifact_ready_count=14`, `metadata_complete_ready_count=14`,
   `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
   `readme_mismatch_count=0`, `forbidden_file_count=0`, `public_count=14`, and
-  `private_count=0`. A 2026-07-09T14:56Z `--summary-only` rerun preserved the
+  `private_count=0`. A 2026-07-09T15:06Z `--summary-only` rerun preserved the
   same compact artifact counts and still reported `forbidden_file_count=0`,
   `remote_checksum_mismatch_count=0`, and `readme_mismatch_count=0`.
 - [x] The GitHub repository is public, tagged, released, and includes the

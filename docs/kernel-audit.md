@@ -284,6 +284,13 @@ for the current artifact format and runtime modes.
   snapshot model repo resolved to commit
   `cb0ceb1a4d070556c52cfba691aba3f6647c246b`. The native loader therefore
   still requires `LOCAL_KERNELS`, an importable package, or Kernel Hub approval.
+- A 2026-07-09T15:06Z live refresh found no new reviewer reply after the
+  2026-07-09T14:00Z model-artifact numbers. Discussion 15 remains open,
+  `repo_info("WaveCut/orbitquant-packed-matmul", repo_type="model")` resolves
+  to commit `cb0ceb1a4d070556c52cfba691aba3f6647c246b`, and
+  `repo_info("WaveCut/orbitquant-packed-matmul", repo_type="kernel")` still
+  returns 404. Do not describe the native package as remotely loadable until a
+  kernel-type repository exists and `get_kernel(...)` has been verified.
 
 ## Packaging Boundary
 
