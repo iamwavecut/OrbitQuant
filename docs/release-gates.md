@@ -139,6 +139,28 @@ URL, or signed-off audit note.
   `peak_memory_bytes=69293568`. This updates the package default tile for the
   packed matmul path, but it remains a local CUDA/Triton microbenchmark result
   and does not change the no-throughput-win claim boundary. Native CUDA
+  artifact-layer verification on the same active RunPod RTX 4090 passed on
+  2026-07-09T13:54Z using the published
+  `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact, source model
+  `black-forest-labs/FLUX.2-klein-4B` revision
+  `e7b7dc27f91deacad38e78976d1f2b499d76a294`, Torch 2.9.1+cu128, CUDA 12.8,
+  driver 580.159.04, `runtime_mode="auto_fused"`,
+  `activation_kernel_backend="triton_cuda"`, float16, W4A4, and 512 tokens. It
+  restored `transformer_blocks.0.attn.to_q` (3072x3072), reported
+  `finite=true`, `allclose_to_dequant_bf16=true`,
+  `max_abs_error_vs_dequant_bf16=0.015625`,
+  `packed_weight_path_bytes=4724800`, `materialized_weight_bytes=18874368`,
+  `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`, and
+  `peak_memory_bytes=87756800`. Timings were
+  `auto_fused_forward_first_ms=477.2464599609375`,
+  `auto_fused_forward_prewarmed_ms=0.6343167781829834`,
+  `dequant_bf16_forward_first_ms=103.32876586914062`, and
+  `dequant_bf16_forward_prewarmed_ms=0.1256432056427002` with warmup 5 and 20
+  measured iterations. This is actual published model artifact layer evidence
+  for the CUDA/Triton path; it is not a full image-generation benchmark and
+  still does not prove a throughput win. A follow-up comment with these actual
+  model artifact numbers was posted to discussion 15 on 2026-07-09T14:00Z.
+  Native CUDA
   `native_packed_matmul` remains open: the available local
   `build/torch29-cxx11-cu130-x86_64-linux` variant failed to load on that CUDA
   12.8 host with `ImportError: libcudart.so.13`, so a CUDA 12.8-compatible

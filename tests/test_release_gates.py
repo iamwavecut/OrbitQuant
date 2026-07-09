@@ -134,6 +134,22 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`forward_prewarmed_ms=0.6374400138854981`" in release_gates
     assert "`forward_prewarmed_ms=0.596992015838623`" in release_gates
     assert "`peak_memory_bytes=69293568`" in release_gates
+    assert "CUDA\n  artifact-layer verification on the same active RunPod RTX 4090" in (
+        release_gates
+    )
+    assert "published\n  `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact" in (
+        release_gates
+    )
+    assert "`activation_kernel_backend=\"triton_cuda\"`" in release_gates
+    assert "`max_abs_error_vs_dequant_bf16=0.015625`" in release_gates
+    assert "`auto_fused_forward_prewarmed_ms=0.6343167781829834`" in (
+        release_gates
+    )
+    assert "`dequant_bf16_forward_prewarmed_ms=0.1256432056427002`" in (
+        release_gates
+    )
+    assert "actual published model artifact layer evidence" in release_gates
+    assert "posted to discussion 15 on 2026-07-09T14:00Z" in release_gates
     assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
     assert "`ImportError: libcudart.so.13`" in release_gates
     assert "`torch211-cxx11-cu128-x86_64-linux`" in release_gates
@@ -458,6 +474,21 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "`forward_prewarmed_ms=0.6374400138854981`" in kernel_audit
     assert "`forward_prewarmed_ms=0.596992015838623`" in kernel_audit
     assert "`peak_memory_bytes=69293568`" in kernel_audit
+    assert "After reviewer asked to run on an actual model" in kernel_audit
+    assert "CUDA artifact-layer\n  verification passed" in kernel_audit
+    assert "installed OrbitQuant from GitHub `main`" in kernel_audit
+    assert "512 float16 tokens" in kernel_audit
+    assert "`activation_kernel_backend=\"triton_cuda\"`" in kernel_audit
+    assert "`max_abs_error_vs_dequant_bf16=0.015625`" in kernel_audit
+    assert "`auto_fused_forward_first_ms=477.2464599609375`" in kernel_audit
+    assert "`auto_fused_forward_prewarmed_ms=0.6343167781829834`" in (
+        kernel_audit
+    )
+    assert "`dequant_bf16_forward_prewarmed_ms=0.1256432056427002`" in (
+        kernel_audit
+    )
+    assert "actual\n  published artifact layer execution" in kernel_audit
+    assert "posted to\n  discussion 15 on 2026-07-09T14:00Z" in kernel_audit
     assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
     assert "`ImportError: libcudart.so.13`" in kernel_audit
     assert "`torch211-cxx11-cu128-x86_64-linux`" in kernel_audit
@@ -528,6 +559,16 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "`forward_prewarmed_ms=0.6518784046173096`" in request
     assert "`forward_prewarmed_ms=0.13742079734802246`" in request
     assert "memory-path evidence, not a throughput win" in request
+    assert "On 2026-07-09T13:54Z" in request
+    assert "asked to run on an actual model" in request
+    assert "published\n`WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact" in request
+    assert "`activation_kernel_backend=\"triton_cuda\"`" in request
+    assert "`max_abs_error_vs_dequant_bf16=0.015625`" in request
+    assert "`peak_memory_bytes=87756800`" in request
+    assert "`auto_fused_forward_prewarmed_ms=0.6343167781829834`" in request
+    assert "actual\npublished model artifact layer execution" in request
+    assert "On 2026-07-09T14:00Z" in request
+    assert "posted those actual model artifact numbers" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )

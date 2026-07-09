@@ -147,6 +147,29 @@ On 2026-07-09T13:22Z, `WaveCut` posted those numbers in discussion 15 and
 explicitly stated that the current CUDA/Triton `auto_fused` result is
 memory-path evidence, not a throughput win on this RTX 4090 microbenchmark.
 
+On 2026-07-09T13:54Z, after `sayakpaul` asked to run on an actual model, a
+CUDA verifier passed on the active RTX 4090 RunPod using the published
+`WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact. It restored
+`transformer_blocks.0.attn.to_q` (3072x3072) from source model
+`black-forest-labs/FLUX.2-klein-4B` revision
+`e7b7dc27f91deacad38e78976d1f2b499d76a294`, ran 512 float16 tokens through
+`runtime_mode="auto_fused"` with `activation_kernel_backend="triton_cuda"`,
+and compared against `dequant_bf16`. The environment was Torch 2.9.1+cu128,
+CUDA 12.8, driver 580.159.04, W4A4, warmup 5, and 20 measured iterations. The
+result was `finite=true`, `allclose_to_dequant_bf16=true`,
+`max_abs_error_vs_dequant_bf16=0.015625`,
+`packed_weight_path_bytes=4724800`, `materialized_weight_bytes=18874368`,
+`packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`,
+`peak_memory_bytes=87756800`,
+`auto_fused_forward_prewarmed_ms=0.6343167781829834`, and
+`dequant_bf16_forward_prewarmed_ms=0.1256432056427002`. This is actual
+published model artifact layer execution for CUDA/Triton; it is not full
+image generation and it does not change the native CUDA Kernel Hub package
+approval blocker.
+
+On 2026-07-09T14:00Z, `WaveCut` posted those actual model artifact numbers in
+discussion 15.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
