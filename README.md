@@ -376,9 +376,13 @@ orbitquant compare-native \
 The output directory contains the BF16 sample, the OrbitQuant sample, a
 side-by-side WebP comparison, per-split metadata, and `summary.json` with native
 settings, wall time, peak VRAM, requested runtime mode, and available local
-kernel backends.
+kernel backends. By default `compare-native` validates the completed bundle
+before returning and includes the validation report in its JSON output. Use
+`--skip-comparison-validation` only when you intentionally want to inspect or
+repair an incomplete bundle.
 
-Validate a copied comparison bundle before using it as evidence:
+Validate a copied or previously generated comparison bundle before using it as
+evidence:
 
 ```bash
 orbitquant validate-comparison \

@@ -48,6 +48,9 @@ def test_readme_documents_component_artifact_usage():
     assert "This path is for Hugging Face-native model repositories" in readme
     assert 'quantization_device="cuda"' in readme
     assert "not accepted as published quality evidence" in readme
+    assert "`compare-native` validates the completed bundle\nbefore returning" in readme
+    assert "`--skip-comparison-validation` only when you intentionally want" in readme
+    assert "Validate a copied or previously generated comparison bundle" in readme
     assert "Local validation outputs may include raw `benchmark/*.jsonl`" in readme
     assert "compact published artifacts omit those raw files" in readme
     assert 'defaults to `runtime_mode="auto_fused"`' in readme
