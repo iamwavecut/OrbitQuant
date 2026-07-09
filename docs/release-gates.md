@@ -382,7 +382,12 @@ URL, or signed-off audit note.
   `comfyui_orbitquant-0.1.0-py3-none-any.whl` SHA256
   `0c774c20a6759bea18d5d02b598035c3446a72ee4efaa0be6c1f325f4b3e928b`.
   Before release, local `uv run pytest -q`, `uv run ruff check .`, package
-  build, and `twine check` passed for the node pack.
+  build, and `twine check` passed for the node pack. Follow-up commit
+  `ca62b7a` added the manual `.github/workflows/publish-pypi.yml` Trusted
+  Publishing workflow for a future `comfyui-orbitquant` PyPI release. GitHub
+  reported both `CI` and `Publish PyPI` workflows as active, and ComfyUI CI run
+  `29028857599` passed on 2026-07-09 with node-pack tests, lint, package
+  build, package metadata check, and wheel smoke.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
