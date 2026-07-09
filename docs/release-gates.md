@@ -151,7 +151,9 @@ URL, or signed-off audit note.
   license, source distribution expectations, and reproducible verification
   commands. Release-note content for the first public package release candidate
   is prepared in [release-0.1.0.md](release-0.1.0.md); repository visibility and
-  the release tag remain pending explicit approval.
+  the release tag remain pending explicit approval. The exact manual
+  publication sequence is prepared in
+  [publication-checklist.md](publication-checklist.md).
 - [ ] The PyPI package is built and checked with `python -m build` and
   `python -m twine check dist/*`, then uploaded with `python -m twine upload
   dist/*`. Credentials may require a user-provided PyPI token or browser
@@ -191,6 +193,8 @@ URL, or signed-off audit note.
   `runtime_mode="auto_fused"`, and `orbitquant --version` returns `0.1.0`.
   A live PyPI JSON check for `orbitquant` returned 404 at the time of this
   verification, so the package name was not occupied then.
+  The exact upload command and post-publication checks are prepared in
+  [publication-checklist.md](publication-checklist.md).
   Upload remains pending.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra

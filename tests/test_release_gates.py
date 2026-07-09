@@ -147,6 +147,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "not host logs, raw eval dumps, or terminal transcripts" in release_gates
     assert "The GitHub repository is public" in release_gates
     assert "[release-0.1.0.md](release-0.1.0.md)" in release_gates
+    assert "[publication-checklist.md](publication-checklist.md)" in release_gates
     assert "repository visibility and\n  the release tag remain pending explicit approval" in (
         release_gates
     )
@@ -180,6 +181,44 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates
     assert "chronology" not in release_gates.lower()
+
+
+def test_publication_checklist_contains_gated_release_commands():
+    checklist = Path("docs/publication-checklist.md").read_text(encoding="utf-8")
+
+    assert "OrbitQuant 0.1.0 Publication Checklist" in checklist
+    assert "Do not run the publication commands until" in checklist
+    assert "explicitly approved" in checklist
+    assert "PyPI upload credentials" in checklist
+    assert "git status --short --branch" in checklist
+    assert "git fetch origin main --tags" in checklist
+    assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in checklist
+    assert 'test "$(git tag --list v0.1.0)" = ""' in checklist
+    assert "gh repo view iamwavecut/OrbitQuant --json" in checklist
+    assert "uv run pytest -q" in checklist
+    assert "uv run ruff check ." in checklist
+    assert "uv run --with build python -m build" in checklist
+    assert "uv run --with twine python -m twine check dist/*" in checklist
+    assert "uv run --with /Users/Shared/src/github.com/iamwavecut/OrbitQuant/dist/" in (
+        checklist
+    )
+    assert "OrbitQuantConfig().runtime_mode" in checklist
+    assert "gh repo edit iamwavecut/OrbitQuant" in checklist
+    assert "--visibility public" in checklist
+    assert "--accept-visibility-change-consequences" in checklist
+    assert "git tag -a v0.1.0" in checklist
+    assert "git push origin v0.1.0" in checklist
+    assert "gh release create v0.1.0" in checklist
+    assert "--verify-tag" in checklist
+    assert "--notes-file docs/release-0.1.0.md" in checklist
+    assert "TWINE_USERNAME=__token__" in checklist
+    assert 'TWINE_PASSWORD="$PYPI_API_TOKEN"' in checklist
+    assert "python -m twine upload dist/*" in checklist
+    assert "gh release view v0.1.0" in checklist
+    assert "python -m pip index versions orbitquant" in checklist
+    assert "orbitquant-publication-ok" in checklist
+    assert "RunPod" not in checklist
+    assert "chronology" not in checklist.lower()
 
 
 def test_release_gates_keep_current_priority_order():
