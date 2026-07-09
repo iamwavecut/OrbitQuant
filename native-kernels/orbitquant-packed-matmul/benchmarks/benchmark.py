@@ -68,7 +68,12 @@ def main() -> None:
         else None
     )
 
-    reference_weight = (row_norms[:, None] * centroids[indices.long().to(args.device)]).to(dtype)
+    indices_device = indices.long().to(args.device)
+
+    def materialize_reference_weight() -> torch.Tensor:
+        return (row_norms[:, None] * centroids[indices_device]).to(dtype)
+
+    reference_weight = materialize_reference_weight()
 
     def packed_call() -> torch.Tensor:
         return matmul_packed_weight(
@@ -82,17 +87,30 @@ def main() -> None:
             bias=bias,
         )
 
-    def reference_call() -> torch.Tensor:
+    def predequantized_linear_call() -> torch.Tensor:
         return torch.nn.functional.linear(x, reference_weight, bias)
+
+    def dequantize_then_linear_call() -> torch.Tensor:
+        return torch.nn.functional.linear(x, materialize_reference_weight(), bias)
 
     for _ in range(args.warmup):
         packed_call()
-        reference_call()
+        predequantized_linear_call()
+        dequantize_then_linear_call()
     packed_seconds = _time_call(args.device, args.iters, packed_call)
-    reference_seconds = _time_call(args.device, args.iters, reference_call)
+    predequantized_linear_seconds = _time_call(
+        args.device,
+        args.iters,
+        predequantized_linear_call,
+    )
+    dequantize_then_linear_seconds = _time_call(
+        args.device,
+        args.iters,
+        dequantize_then_linear_call,
+    )
 
     packed_output = packed_call()
-    reference_output = reference_call()
+    reference_output = predequantized_linear_call()
     _synchronize(args.device)
     max_abs_error = (packed_output.float() - reference_output.float()).abs().max().item()
 
@@ -108,12 +126,28 @@ def main() -> None:
         "warmup": args.warmup,
         "with_bias": args.with_bias,
         "packed_seconds_per_iter": packed_seconds,
-        "reference_seconds_per_iter": reference_seconds,
-        "packed_vs_reference_speedup": reference_seconds / packed_seconds
+        "predequantized_f_linear_seconds_per_iter": predequantized_linear_seconds,
+        "dequantize_then_f_linear_seconds_per_iter": dequantize_then_linear_seconds,
+        "packed_vs_predequantized_f_linear_speedup": predequantized_linear_seconds
+        / packed_seconds
+        if packed_seconds > 0
+        else None,
+        "packed_vs_dequantize_then_f_linear_speedup": dequantize_then_linear_seconds
+        / packed_seconds
+        if packed_seconds > 0
+        else None,
+        "reference_seconds_per_iter": predequantized_linear_seconds,
+        "packed_vs_reference_speedup": predequantized_linear_seconds / packed_seconds
         if packed_seconds > 0
         else None,
         "max_abs_error": max_abs_error,
-        "reference": "PyTorch F.linear over a materialized dequantized weight matrix",
+        "reference": (
+            "predequantized PyTorch F.linear over a materialized dequantized "
+            "weight matrix"
+        ),
+        "dequantize_reference": (
+            "materialize the dequantized weight matrix, then call PyTorch F.linear"
+        ),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 

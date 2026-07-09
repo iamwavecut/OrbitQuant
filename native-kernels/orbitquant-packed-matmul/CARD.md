@@ -58,9 +58,13 @@ export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/build/torch212-m
 
 ## Benchmark
 
-The benchmark compares this packed low-bit kernel with a PyTorch reference that
-first materializes the full dequantized weight matrix and then calls
-`torch.nn.functional.linear`.
+The benchmark reports two PyTorch references:
+
+- `predequantized_f_linear_seconds_per_iter`: `torch.nn.functional.linear`
+  over a full dequantized weight matrix that was materialized before timing.
+- `dequantize_then_f_linear_seconds_per_iter`: materialize the full
+  dequantized weight matrix inside each timed iteration, then call
+  `torch.nn.functional.linear`.
 
 ```bash
 PYTHONPATH=/path/to/build/torch212-metal-aarch64-darwin \
@@ -74,5 +78,9 @@ python benchmarks/benchmark.py \
 ```
 
 The script prints JSON with `packed_seconds_per_iter`,
-`reference_seconds_per_iter`, `packed_vs_reference_speedup`, and
+`predequantized_f_linear_seconds_per_iter`,
+`dequantize_then_f_linear_seconds_per_iter`,
+`packed_vs_predequantized_f_linear_speedup`,
+`packed_vs_dequantize_then_f_linear_speedup`, compatibility aliases
+`reference_seconds_per_iter` and `packed_vs_reference_speedup`, and
 `max_abs_error`.

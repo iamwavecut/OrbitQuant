@@ -180,7 +180,12 @@ def test_kernel_benchmark_reports_reference_comparison() -> None:
 
     assert "torch.nn.functional.linear" in benchmark_source
     assert "reference_weight" in benchmark_source
+    assert "materialize_reference_weight" in benchmark_source
     assert "packed_seconds_per_iter" in benchmark_source
+    assert "predequantized_f_linear_seconds_per_iter" in benchmark_source
+    assert "dequantize_then_f_linear_seconds_per_iter" in benchmark_source
+    assert "packed_vs_predequantized_f_linear_speedup" in benchmark_source
+    assert "packed_vs_dequantize_then_f_linear_speedup" in benchmark_source
     assert "reference_seconds_per_iter" in benchmark_source
     assert "packed_vs_reference_speedup" in benchmark_source
     assert "max_abs_error" in benchmark_source
