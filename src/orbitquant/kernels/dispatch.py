@@ -10,7 +10,9 @@ from orbitquant.rotations.fwht import fwht
 BackendAvailability = dict[str, bool]
 BackendCapabilities = dict[str, dict[str, object]]
 
-_MPS_IMPLEMENTED_STAGE = "codebook_lookup_rescale,packed_weight_dequant"
+_MPS_SHADER_STAGE = "codebook_lookup_rescale,packed_weight_dequant"
+_MPS_NATIVE_STAGE = "packed_weight_matmul"
+_MPS_IMPLEMENTED_STAGE = f"{_MPS_SHADER_STAGE},{_MPS_NATIVE_STAGE}"
 _TRITON_CUDA_IMPLEMENTED_STAGE = (
     "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
     "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
@@ -35,6 +37,20 @@ def _mps_metal_available() -> bool:
     return mps_metal_available()
 
 
+def _native_packed_matmul_available() -> bool:
+    try:
+        from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
+        load_native_packed_matmul_kernel()
+    except Exception:
+        return False
+    return True
+
+
+def _join_stages(stages: list[str]) -> str | None:
+    return ",".join(stages) if stages else None
+
+
 def available_backends() -> BackendAvailability:
     return {
         "cpu": True,
@@ -45,7 +61,41 @@ def available_backends() -> BackendAvailability:
 
 def backend_capabilities(backends: BackendAvailability | None = None) -> BackendCapabilities:
     available = available_backends() if backends is None else backends
-    mps_optimized = bool(available["mps"] and _mps_metal_available())
+    mps_shader_optimized = bool(available["mps"] and _mps_metal_available())
+    mps_native_matmul_optimized = bool(
+        available["mps"] and _native_packed_matmul_available()
+    )
+    mps_optimized_stages = _join_stages(
+        [
+            *([_MPS_SHADER_STAGE] if mps_shader_optimized else []),
+            *([_MPS_NATIVE_STAGE] if mps_native_matmul_optimized else []),
+        ]
+    )
+    mps_optimized = mps_optimized_stages is not None
+    if mps_shader_optimized and mps_native_matmul_optimized:
+        mps_notes = (
+            "Norm and RPBH rotation still run in PyTorch; a Metal shader handles "
+            "codebook lookup, norm rescale, and packed weight dequant. The native "
+            "packed matmul package handles packed low-bit matmul."
+        )
+    elif mps_shader_optimized:
+        mps_notes = (
+            "Norm and RPBH rotation still run in PyTorch; a Metal shader handles "
+            "codebook lookup, norm rescale, and packed weight dequant. The native "
+            "packed matmul package is not available in this environment."
+        )
+    elif mps_native_matmul_optimized:
+        mps_notes = (
+            "The native packed matmul package handles packed low-bit matmul. "
+            "Activation quantization helpers use the reference PyTorch path in this "
+            "environment."
+        )
+    else:
+        mps_notes = (
+            "Runs the reference PyTorch path on MPS tensors; native Metal shader "
+            "support and the native packed matmul package are not available in this "
+            "environment."
+        )
     return {
         "cpu": {
             "available": bool(available["cpu"]),
@@ -72,8 +122,8 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "optimized": mps_optimized,
             "full_fusion": False,
             "implemented_stage": _MPS_IMPLEMENTED_STAGE,
-            "optimized_stage": _MPS_IMPLEMENTED_STAGE if mps_optimized else None,
-            "weight_dequant_optimized": mps_optimized,
+            "optimized_stage": mps_optimized_stages,
+            "weight_dequant_optimized": mps_shader_optimized,
             "weight_pack_optimized": False,
             "lowbit_unpack_optimized": False,
             "weight_quant_optimized": False,
@@ -81,22 +131,26 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "adaln_dequant_optimized": False,
             "device_types": ["mps"],
             "implementation": (
-                "torch_mps_compile_shader_codebook_rescale"
-                if mps_optimized
+                "torch_mps_compile_shader_codebook_rescale+native_packed_matmul"
+                if mps_shader_optimized and mps_native_matmul_optimized
+                else "torch_mps_compile_shader_codebook_rescale"
+                if mps_shader_optimized
+                else "native_packed_matmul"
+                if mps_native_matmul_optimized
                 else "torch_reference_mps"
             ),
-            "package_format": "torch.mps.compile_shader" if mps_optimized else "torch_reference",
+            "package_format": (
+                "torch.mps.compile_shader,native_kernel_package"
+                if mps_shader_optimized and mps_native_matmul_optimized
+                else "torch.mps.compile_shader"
+                if mps_shader_optimized
+                else "native_kernel_package"
+                if mps_native_matmul_optimized
+                else "torch_reference"
+            ),
             "upstream_native_mps_op": False,
             "hf_kernel_builder_compliant": False,
-            "notes": (
-                "Norm and RPBH rotation still run in PyTorch; a Metal shader "
-                "handles codebook lookup, norm rescale, and packed weight dequant."
-                if mps_optimized
-                else (
-                    "Runs the reference PyTorch path on MPS tensors; native Metal "
-                    "shader support is not available in this environment."
-                )
-            ),
+            "notes": mps_notes,
         },
         "triton_cuda": {
             "available": bool(available["triton_cuda"]),

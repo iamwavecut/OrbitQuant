@@ -74,10 +74,14 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
             },
             "mps": {
                 "claim_status": "partial_optimized",
-                "implementation": "torch_mps_compile_shader_codebook_rescale",
-                "package_format": "torch.mps.compile_shader",
-                "implemented_stage": "codebook_lookup_rescale,packed_weight_dequant",
-                "optimized_stage": "codebook_lookup_rescale,packed_weight_dequant",
+                "implementation": "torch_mps_compile_shader_codebook_rescale+native_packed_matmul",
+                "package_format": "torch.mps.compile_shader,native_kernel_package",
+                "implemented_stage": (
+                    "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+                ),
+                "optimized_stage": (
+                    "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+                ),
                 "weight_dequant_optimized": True,
                 "weight_pack_optimized": False,
                 "weight_quant_optimized": False,
@@ -125,11 +129,20 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
     assert payload["cpu"]["weight_quant_optimized"] is False
     assert payload["cpu"]["adaln_quant_optimized"] is False
     assert payload["cpu"]["adaln_dequant_optimized"] is False
-    assert payload["mps"]["implementation"] == "torch_mps_compile_shader_codebook_rescale"
-    assert payload["mps"]["package_format"] == "torch.mps.compile_shader"
+    assert (
+        payload["mps"]["implementation"]
+        == "torch_mps_compile_shader_codebook_rescale+native_packed_matmul"
+    )
+    assert payload["mps"]["package_format"] == "torch.mps.compile_shader,native_kernel_package"
     assert payload["mps"]["claim_status"] == "partial_optimized"
-    assert payload["mps"]["implemented_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
-    assert payload["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
+    assert (
+        payload["mps"]["implemented_stage"]
+        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+    )
+    assert (
+        payload["mps"]["optimized_stage"]
+        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+    )
     assert payload["mps"]["weight_dequant_optimized"] is True
     assert payload["mps"]["weight_pack_optimized"] is False
     assert payload["mps"]["weight_quant_optimized"] is False

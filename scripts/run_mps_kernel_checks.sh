@@ -71,7 +71,7 @@ python - <<'PY'
 from orbitquant.kernels import backend_capabilities
 
 capability = backend_capabilities()["mps"]
-required_stages = {"codebook_lookup_rescale", "packed_weight_dequant"}
+required_stages = {"codebook_lookup_rescale", "packed_weight_dequant", "packed_weight_matmul"}
 stages = set(str(capability["optimized_stage"] or "").split(","))
 missing = sorted(required_stages - stages)
 if capability["claim_status"] != "partial_optimized":

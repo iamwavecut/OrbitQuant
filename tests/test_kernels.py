@@ -112,6 +112,7 @@ def test_backend_selection_is_explicit_and_fails_loud_for_unavailable_backends()
 
 def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
     capabilities = backend_capabilities(
         backends={"cpu": True, "mps": True, "triton_cuda": True}
     )
@@ -134,7 +135,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["mps"]["optimized"] is False
     assert (
         capabilities["mps"]["implemented_stage"]
-        == "codebook_lookup_rescale,packed_weight_dequant"
+        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
     )
     assert capabilities["mps"]["optimized_stage"] is None
     assert capabilities["mps"]["weight_dequant_optimized"] is False
@@ -170,6 +171,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
 
 def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: True)
 
     capabilities = backend_capabilities(
         backends={"cpu": True, "mps": True, "triton_cuda": False}
@@ -178,12 +180,21 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["available"] is True
     assert capabilities["mps"]["claim_status"] == "partial_optimized"
     assert capabilities["mps"]["optimized"] is True
-    assert capabilities["mps"]["implementation"] == "torch_mps_compile_shader_codebook_rescale"
-    assert capabilities["mps"]["package_format"] == "torch.mps.compile_shader"
-    assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
+    assert (
+        capabilities["mps"]["implementation"]
+        == "torch_mps_compile_shader_codebook_rescale+native_packed_matmul"
+    )
+    assert (
+        capabilities["mps"]["package_format"]
+        == "torch.mps.compile_shader,native_kernel_package"
+    )
+    assert (
+        capabilities["mps"]["optimized_stage"]
+        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+    )
     assert (
         capabilities["mps"]["implemented_stage"]
-        == "codebook_lookup_rescale,packed_weight_dequant"
+        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
     )
     assert capabilities["mps"]["upstream_native_mps_op"] is False
     assert capabilities["mps"]["hf_kernel_builder_compliant"] is False
@@ -210,6 +221,42 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is False
     assert capabilities["triton_cuda"]["hf_kernel_builder_compliant"] is False
+
+
+def test_backend_capabilities_report_mps_shader_without_native_matmul(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
+
+    capabilities = backend_capabilities(
+        backends={"cpu": True, "mps": True, "triton_cuda": False}
+    )
+
+    assert capabilities["mps"]["claim_status"] == "partial_optimized"
+    assert capabilities["mps"]["optimized"] is True
+    assert capabilities["mps"]["implementation"] == "torch_mps_compile_shader_codebook_rescale"
+    assert capabilities["mps"]["package_format"] == "torch.mps.compile_shader"
+    assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
+    assert (
+        capabilities["mps"]["implemented_stage"]
+        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+    )
+    assert capabilities["mps"]["weight_dequant_optimized"] is True
+
+
+def test_backend_capabilities_report_mps_native_matmul_without_shader(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: True)
+
+    capabilities = backend_capabilities(
+        backends={"cpu": True, "mps": True, "triton_cuda": False}
+    )
+
+    assert capabilities["mps"]["claim_status"] == "partial_optimized"
+    assert capabilities["mps"]["optimized"] is True
+    assert capabilities["mps"]["implementation"] == "native_packed_matmul"
+    assert capabilities["mps"]["package_format"] == "native_kernel_package"
+    assert capabilities["mps"]["optimized_stage"] == "packed_weight_matmul"
+    assert capabilities["mps"]["weight_dequant_optimized"] is False
 
 
 def test_backend_selection_accepts_injected_availability_for_gpu_paths():
