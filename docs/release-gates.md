@@ -289,7 +289,17 @@ URL, or signed-off audit note.
   `5972b6cfd1d89653fb9ac17668f72818c61a0e3cc5ea1cdd46e59d54405dc1ff` and
   `orbitquant-0.1.1-py3-none-any.whl` SHA256
   `b829c5df00093e697872ca24104e6ef38dbe7e7d70b2c2e33560bfaec224cde1`.
-- [x] The PyPI package is published as `orbitquant==0.1.1`.
+  Patch release notes for compact artifact audit output are
+  [release-0.1.2.md](release-0.1.2.md). GitHub CI for commit `f18feb9`
+  passed as run `29025114082`, tag `v0.1.2` points at commit
+  `f18feb95f7595965f046b3455997d6ce9b8e8e4a`, and GitHub Release
+  `https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.2` was published
+  on 2026-07-09 with exact PyPI-matching assets:
+  `orbitquant-0.1.2.tar.gz` SHA256
+  `4afc15589fe713345dfa47be30dc078d943484a1f4bbd4861a413532a6ec8377` and
+  `orbitquant-0.1.2-py3-none-any.whl` SHA256
+  `3bdddebaa46f60307ed50e2ebf4b7ff4fef7817845b512ecfbb6fbf8ba71c91c`.
+- [x] The PyPI package is published as `orbitquant==0.1.2`.
   Evidence: commit `ce5c232` added the manual
   `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI
   pending publisher was registered for project `orbitquant`, owner
@@ -316,6 +326,19 @@ URL, or signed-off audit note.
   `OrbitQuantConfig().runtime_mode == "auto_fused"`,
   `OrbitQuantConfig().packed_matmul_block_n == 128`, and
   `orbitquant --version == "0.1.1"`.
+  Patch publish run `29025225397` completed successfully on 2026-07-09 from
+  head SHA `f18feb95f7595965f046b3455997d6ce9b8e8e4a`, including full pytest,
+  `ruff check`, package build, `twine check`, wheel smoke, OIDC publication,
+  and PyPI digital attestations. The PyPI JSON API reports version `0.1.2` with
+  `orbitquant-0.1.2.tar.gz` SHA256
+  `4afc15589fe713345dfa47be30dc078d943484a1f4bbd4861a413532a6ec8377` and
+  `orbitquant-0.1.2-py3-none-any.whl` SHA256
+  `3bdddebaa46f60307ed50e2ebf4b7ff4fef7817845b512ecfbb6fbf8ba71c91c`; a fresh
+  venv installed `orbitquant==0.1.2` from PyPI and verified
+  `orbitquant.__version__ == "0.1.2"`,
+  `OrbitQuantConfig().runtime_mode == "auto_fused"`,
+  `orbitquant --version == "0.1.2"`, and `orbitquant audit-hf-artifacts --help`
+  includes `--summary-only`.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
   install guidance for the default `auto_fused` runtime.

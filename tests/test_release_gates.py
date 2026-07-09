@@ -241,13 +241,28 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "b829c5df00093e697872ca24104e6ef38dbe7e7d70b2c2e33560bfaec224cde1" in (
         release_gates
     )
+    assert "[release-0.1.2.md](release-0.1.2.md)" in release_gates
+    assert "commit `f18feb9`\n  passed as run `29025114082`" in release_gates
+    assert "tag `v0.1.2` points at commit" in release_gates
+    assert "f18feb95f7595965f046b3455997d6ce9b8e8e4a" in release_gates
+    assert "https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.2" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.2.tar.gz` SHA256" in release_gates
+    assert "4afc15589fe713345dfa47be30dc078d943484a1f4bbd4861a413532a6ec8377" in (
+        release_gates
+    )
+    assert "`orbitquant-0.1.2-py3-none-any.whl` SHA256" in release_gates
+    assert "3bdddebaa46f60307ed50e2ebf4b7ff4fef7817845b512ecfbb6fbf8ba71c91c" in (
+        release_gates
+    )
     assert (
         "including HF\n  integration tests, full pytest, package build, "
         "`twine check`, and wheel"
     ) in (
         release_gates
     )
-    assert "- [x] The PyPI package is published as `orbitquant==0.1.1`" in (
+    assert "- [x] The PyPI package is published as `orbitquant==0.1.2`" in (
         release_gates
     )
     assert ".github/workflows/publish-pypi.yml" in release_gates
@@ -264,6 +279,10 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "PyPI JSON API reports version `0.1.1`" in release_gates
     assert "`orbitquant-0.1.1.tar.gz` SHA256" in release_gates
     assert "`orbitquant-0.1.1-py3-none-any.whl` SHA256" in release_gates
+    assert "Patch publish run `29025225397` completed successfully" in release_gates
+    assert "PyPI JSON API reports version `0.1.2`" in release_gates
+    assert "`orbitquant-0.1.2.tar.gz` SHA256" in release_gates
+    assert "`orbitquant-0.1.2-py3-none-any.whl` SHA256" in release_gates
     assert "python -m pip index versions\n  orbitquant` reports `0.1.0`" in (
         release_gates
     )
@@ -271,6 +290,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert '`orbitquant --version == "0.1.0"`' in release_gates
     assert '`OrbitQuantConfig().packed_matmul_block_n == 128`' in release_gates
     assert '`orbitquant --version == "0.1.1"`' in release_gates
+    assert '`orbitquant.__version__ == "0.1.2"`' in release_gates
+    assert '`orbitquant --version == "0.1.2"`' in release_gates
+    assert "`orbitquant audit-hf-artifacts --help`\n  includes `--summary-only`" in (
+        release_gates
+    )
     assert "Upload remains pending" not in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates
