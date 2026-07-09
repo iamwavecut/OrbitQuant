@@ -37,6 +37,10 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "14/14 policy-inventory-ready" in release_gates
     assert "A 2026-07-09T15:06Z rerun with `--summary-only`" in release_gates
     assert "again passed `--fail-on-artifact-regression`" in release_gates
+    assert "A 2026-07-09T18:00Z live rerun" in release_gates
+    assert "`--policy-inventory-root reports/paper-methodology/module-inventories`" in (
+        release_gates
+    )
     assert (
         "14/14 artifact-ready, native-smoke-ready, metadata-complete, and\n"
         "  policy-inventory-ready"
@@ -67,6 +71,13 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`remote_checksum_mismatch_count=0`, and `readme_mismatch_count=0`" in (
         release_gates
     )
+    assert "direct\n  2026-07-09T18:00Z README/assets scan" in release_gates
+    assert "no stale `orbitquant==0.1.3`, `orbitquant>=0.1.3`" in release_gates
+    assert "`comfyui-orbitquant==0.1.2` install instructions" in release_gates
+    assert "`pip install \"orbitquant[hf]\"` and `runtime_mode=\"auto_fused\"`" in (
+        release_gates
+    )
+    assert "found no raw remote assets outside the final" in release_gates
     assert "CUDA/Triton partial optimized" in release_gates
     assert "Metal/MPS partial optimized" in release_gates
     assert "CPU\n  reference-only" in release_gates

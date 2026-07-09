@@ -239,6 +239,13 @@ URL, or signed-off audit note.
   with 14/14 artifact-ready, native-smoke-ready, metadata-complete, and
   policy-inventory-ready; it reported `release_eval_applicable_count=10`,
   `release_eval_ready_count=0`, and `missing_required_metric_count=144`.
+  A 2026-07-09T18:00Z live rerun with
+  `--policy-inventory-root reports/paper-methodology/module-inventories`
+  again passed `--summary-only --fail-on-artifact-regression`, reporting
+  14/14 artifact-ready, native-smoke-ready, metadata-complete, and
+  policy-inventory-ready with `readme_mismatch_count=0`,
+  `forbidden_file_count=0`, `remote_checksum_mismatch_count=0`, and the same
+  144 missing release-grade metrics.
 - [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
@@ -270,7 +277,14 @@ URL, or signed-off audit note.
   `readme_mismatch_count=0`, `forbidden_file_count=0`, `public_count=14`, and
   `private_count=0`. A 2026-07-09T15:06Z `--summary-only` rerun preserved the
   same compact artifact counts and still reported `forbidden_file_count=0`,
-  `remote_checksum_mismatch_count=0`, and `readme_mismatch_count=0`.
+  `remote_checksum_mismatch_count=0`, and `readme_mismatch_count=0`. A direct
+  2026-07-09T18:00Z README/assets scan across all 14 canonical artifact repos
+  found no stale `orbitquant==0.1.3`, `orbitquant>=0.1.3`,
+  `orbitquant[kernels]==0.1.3`, `orbitquant[kernels]>=0.1.3`, or
+  `comfyui-orbitquant==0.1.2` install instructions, confirmed
+  `pip install "orbitquant[hf]"` and `runtime_mode="auto_fused"` were present
+  in every card, and found no raw remote assets outside the final
+  `assets/*_generation_comparison_matrix.webp` card assets.
 - [x] The GitHub repository is public, tagged, released, and includes the
   release docs, license, source distribution expectations, and reproducible
   verification commands.
