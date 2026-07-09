@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orbitquant"
-version = "0.1.2"
+version = "0.1.3"
 description = "Clean-room OrbitQuant implementation for diffusion transformers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,7 +38,7 @@ hf = [
 ]
 kernels = [
   "kernels>=0.16",
-  "triton>=3.5",
+  "triton>=3.5; platform_system == 'Linux'",
 ]
 eval = [
   "imageio>=2.37",

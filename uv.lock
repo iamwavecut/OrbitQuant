@@ -1095,7 +1095,7 @@ wheels = [
 
 [[package]]
 name = "orbitquant"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "." }
 dependencies = [
     { name = "huggingface-hub" },
@@ -1125,7 +1125,7 @@ hf = [
 ]
 kernels = [
     { name = "kernels" },
-    { name = "triton" },
+    { name = "triton", marker = "sys_platform == 'linux'" },
 ]
 
 [package.metadata]
@@ -1146,7 +1146,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.5" },
     { name = "tqdm", specifier = ">=4.66" },
     { name = "transformers", marker = "extra == 'hf'", specifier = ">=4.53" },
-    { name = "triton", marker = "extra == 'kernels'", specifier = ">=3.5" },
+    { name = "triton", marker = "sys_platform == 'linux' and extra == 'kernels'", specifier = ">=3.5" },
 ]
 provides-extras = ["hf", "kernels", "eval", "dev"]
 
