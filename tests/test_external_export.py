@@ -172,11 +172,13 @@ def test_export_vbench_artifact_writes_video_folder_and_prompt_file(tmp_path):
 
     exported_video = tmp_path / "vbench-export" / "00000_boat_seed7.mp4"
     prompt_file = tmp_path / "vbench-export" / "vbench_prompts.json"
+    export_manifest = tmp_path / "vbench-export" / "orbitquant_vbench_export.json"
     prompts = json.loads(prompt_file.read_text())
+    manifest = json.loads(export_manifest.read_text())
     assert result.sample_count == 1
     assert exported_video.read_bytes() == b"fake mp4"
-    assert prompts[str(exported_video)] == "a boat moving on water"
-    assert (tmp_path / "vbench-export" / "orbitquant_vbench_export.json").is_file()
+    assert prompts["00000_boat_seed7.mp4"] == "a boat moving on water"
+    assert manifest["videos"][0]["path"] == str(exported_video)
 
 
 def test_external_metric_summarizers_write_numeric_json(tmp_path):

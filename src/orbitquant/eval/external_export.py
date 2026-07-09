@@ -296,7 +296,8 @@ def export_vbench_artifact(
 
     prompt_file_path = output_path / "vbench_prompts.json"
     prompt_file_path.write_text(
-        json.dumps({item["path"]: item.get("prompt") for item in exports}, indent=2) + "\n",
+        json.dumps({Path(item["path"]).name: item.get("prompt") for item in exports}, indent=2)
+        + "\n",
         encoding="utf-8",
     )
     manifest_path = output_path / "orbitquant_vbench_export.json"
