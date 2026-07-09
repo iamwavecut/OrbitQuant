@@ -241,7 +241,16 @@ URL, or signed-off audit note.
   `6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89` and
   `orbitquant-0.1.0-py3-none-any.whl` SHA256
   `dfbfa80ff79132457b6918d69f8ae9d8961ea3d898487d105a0e74da906eeaaa`.
-- [x] The PyPI package is published as `orbitquant==0.1.0`.
+  Patch release notes for the packed-matmul default update are
+  [release-0.1.1.md](release-0.1.1.md). GitHub CI for commit `7d797ba`
+  passed as run `29022202797`, tag `v0.1.1` resolves to that commit, and
+  GitHub Release `https://github.com/iamwavecut/OrbitQuant/releases/tag/v0.1.1`
+  was published on 2026-07-09 with exact PyPI-matching assets:
+  `orbitquant-0.1.1.tar.gz` SHA256
+  `5972b6cfd1d89653fb9ac17668f72818c61a0e3cc5ea1cdd46e59d54405dc1ff` and
+  `orbitquant-0.1.1-py3-none-any.whl` SHA256
+  `b829c5df00093e697872ca24104e6ef38dbe7e7d70b2c2e33560bfaec224cde1`.
+- [x] The PyPI package is published as `orbitquant==0.1.1`.
   Evidence: commit `ce5c232` added the manual
   `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI
   pending publisher was registered for project `orbitquant`, owner
@@ -255,6 +264,19 @@ URL, or signed-off audit note.
   PyPI and verified `orbitquant.__version__ == "0.1.0"`,
   `OrbitQuantConfig().runtime_mode == "auto_fused"`, and
   `orbitquant --version == "0.1.0"`.
+  Patch publish run `29022356757` completed successfully on 2026-07-09 from
+  head SHA `7d797baf6b41e2f67dca662d148173034f3738d9`, including full pytest,
+  `ruff check`, package build, `twine check`, wheel smoke, OIDC publication,
+  and PyPI digital attestations. The PyPI JSON API reports version `0.1.1` with
+  `orbitquant-0.1.1.tar.gz` SHA256
+  `5972b6cfd1d89653fb9ac17668f72818c61a0e3cc5ea1cdd46e59d54405dc1ff` and
+  `orbitquant-0.1.1-py3-none-any.whl` SHA256
+  `b829c5df00093e697872ca24104e6ef38dbe7e7d70b2c2e33560bfaec224cde1`; a fresh
+  venv installed `orbitquant==0.1.1` from PyPI and verified
+  `orbitquant.__version__ == "0.1.1"`,
+  `OrbitQuantConfig().runtime_mode == "auto_fused"`,
+  `OrbitQuantConfig().packed_matmul_block_n == 128`, and
+  `orbitquant --version == "0.1.1"`.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
   install guidance for the default `auto_fused` runtime.
