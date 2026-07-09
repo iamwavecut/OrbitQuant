@@ -20,6 +20,7 @@ struct PackedMatmulParams {
   int64_t out_features;
   int64_t in_features;
   int64_t bits;
+  int64_t block_k;
   int32_t has_bias;
 };
 
@@ -96,7 +97,8 @@ static void dispatch_packed_matmul_kernel(
     int64_t out_features,
     int64_t in_features,
     int64_t block_m,
-    int64_t block_n) {
+    int64_t block_n,
+    int64_t block_k) {
   @autoreleasepool {
     PackedMatmulPipelineCache &cache = packed_matmul_pipeline_cache();
     id<MTLComputePipelineState> pipeline =
@@ -111,6 +113,7 @@ static void dispatch_packed_matmul_kernel(
         out_features,
         in_features,
         bits,
+        block_k,
         has_bias ? 1 : 0,
     };
 
@@ -140,6 +143,9 @@ static void dispatch_packed_matmul_kernel(
 
       const NSUInteger threads_x = std::min<int64_t>(std::max<int64_t>(block_n, 1), 32);
       const NSUInteger threads_y = std::min<int64_t>(std::max<int64_t>(block_m, 1), 32);
+      const NSUInteger tile_k = std::min<int64_t>(std::max<int64_t>(block_k, 1), 128);
+      const NSUInteger shared_bytes = (threads_y * tile_k + tile_k * threads_x) * sizeof(float);
+      [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
       MTLSize grid_size = MTLSizeMake(out_features, x.size(0), 1);
       MTLSize threadgroup_size = MTLSizeMake(threads_x, threads_y, 1);
       [encoder dispatchThreads:grid_size threadsPerThreadgroup:threadgroup_size];
@@ -212,5 +218,6 @@ void matmul_packed_weight(
       out_features,
       in_features,
       block_m,
-      block_n);
+      block_n,
+      block_k);
 }

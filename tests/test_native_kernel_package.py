@@ -133,6 +133,9 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert "packed_matmul_forward_bfloat16" in metal_source
     assert "bf16_to_float" in metal_source
     assert "float_to_bf16" in metal_source
+    assert "threadgroup float *shared" in metal_source
+    assert "threadgroup_barrier(mem_flags::mem_threadgroup)" in metal_source
+    assert "params.block_k" in metal_source
 
 
 def test_cuda_kernel_uses_wmma_for_supported_bf16_and_fp16_low_bit_modes() -> None:
@@ -157,6 +160,7 @@ def test_metal_host_source_matches_cuda_packed_weight_contract() -> None:
     assert "torch::mps::get_command_buffer()" in metal_host
     assert "torch::mps::get_dispatch_queue()" in metal_host
     assert "torch::mps::commit()" in metal_host
+    assert "setThreadgroupMemoryLength" in metal_host
     assert "packed_matmul_forward_bfloat16" in metal_host
     assert "x.scalar_type() == torch::kBFloat16" in metal_host
     assert "packed_weight_indices.scalar_type() == torch::kUInt8" in metal_host
@@ -169,3 +173,14 @@ def test_kernel_package_pytest_marks_runtime_test_for_kernel_builder_ci() -> Non
     test_source = (KERNEL_ROOT / "tests/test_packed_matmul.py").read_text(encoding="utf-8")
 
     assert "@pytest.mark.kernels_ci" in test_source
+
+
+def test_kernel_benchmark_reports_reference_comparison() -> None:
+    benchmark_source = (KERNEL_ROOT / "benchmarks/benchmark.py").read_text(encoding="utf-8")
+
+    assert "torch.nn.functional.linear" in benchmark_source
+    assert "reference_weight" in benchmark_source
+    assert "packed_seconds_per_iter" in benchmark_source
+    assert "reference_seconds_per_iter" in benchmark_source
+    assert "packed_vs_reference_speedup" in benchmark_source
+    assert "max_abs_error" in benchmark_source

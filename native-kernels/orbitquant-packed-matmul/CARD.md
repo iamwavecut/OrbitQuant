@@ -55,3 +55,24 @@ package root:
 ```bash
 export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/build/torch212-metal-aarch64-darwin"
 ```
+
+## Benchmark
+
+The benchmark compares this packed low-bit kernel with a PyTorch reference that
+first materializes the full dequantized weight matrix and then calls
+`torch.nn.functional.linear`.
+
+```bash
+PYTHONPATH=/path/to/build/torch212-metal-aarch64-darwin \
+python benchmarks/benchmark.py \
+  --device mps \
+  --bits 4 \
+  --rows 512 \
+  --in-features 3072 \
+  --out-features 3072 \
+  --iters 20
+```
+
+The script prints JSON with `packed_seconds_per_iter`,
+`reference_seconds_per_iter`, `packed_vs_reference_speedup`, and
+`max_abs_error`.
