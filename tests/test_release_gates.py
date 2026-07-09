@@ -183,6 +183,8 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "2026-07-08T22:14Z at OrbitQuant commit `f54beba`" in release_gates
     assert "`/tmp/orbitquant-build-verify-20260708T221429Z`" in release_gates
     assert "a fresh venv installed the wheel" in release_gates
+    assert "2026-07-09 at OrbitQuant commit `c80b524`" in release_gates
+    assert "`/tmp/orbitquant-build-verify-20260709T111559Z`" in release_gates
     assert "Upload remains pending" in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates

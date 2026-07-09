@@ -194,6 +194,10 @@ URL, or signed-off audit note.
   passed. The smoke verified `orbitquant.__version__ == "0.1.0"`,
   `OrbitQuantConfig().runtime_mode == "auto_fused"`, `to_json_string()` retains
   `runtime_mode="auto_fused"`, and `orbitquant --version` returns `0.1.0`.
+  Re-checked on 2026-07-09 at OrbitQuant commit `c80b524`: fresh build in
+  `/tmp/orbitquant-build-verify-20260709T111559Z`, `twine check`, and isolated
+  wheel install/import passed; the smoke verified `orbitquant.__version__ ==
+  "0.1.0"` and `OrbitQuantConfig().runtime_mode == "auto_fused"`.
   A live PyPI JSON check for `orbitquant` returned 404 at the time of this
   verification, so the package name was not occupied then.
   The exact upload command and post-publication checks are prepared in
