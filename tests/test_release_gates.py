@@ -270,6 +270,15 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "`comfyui-orbitquant==0.1.3`, `orbitquant==0.1.4`" in release_gates
+    assert "2026-07-09T18:04Z fresh PyPI install smoke also verified" in (
+        release_gates
+    )
+    assert "`comfyui-orbitquant[kernels]==0.1.3` resolves to `orbitquant==0.1.4`" in (
+        release_gates
+    )
+    assert "installs `kernels==0.16.0`, does not install Triton on macOS" in (
+        release_gates
+    )
     assert "generic component-loader, and artifact-inspector nodes" in release_gates
     assert "`iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`" in release_gates
     assert "`uv run pytest -q`, `uv run ruff check .`, package build, and\n  `twine check`" in (
@@ -432,6 +441,18 @@ def test_release_gates_document_final_acceptance_checklist():
     assert '`orbitquant.__version__ == "0.1.3"`' in release_gates
     assert '`orbitquant.__version__ == "0.1.4"`' in release_gates
     assert '`orbitquant --version == "0.1.4"`' in release_gates
+    assert "2026-07-09T18:04Z fresh PyPI install\n  smoke verified `orbitquant[hf]==0.1.4`" in (
+        release_gates
+    )
+    assert "Diffusers 0.39.0, Transformers 5.13.0, Accelerate 1.14.0" in (
+        release_gates
+    )
+    assert "`orbitquant[kernels]==0.1.4` installs `kernels==0.16.0`" in (
+        release_gates
+    )
+    assert "does not install Triton on macOS because\n  the `triton>=3.5` extra is Linux-only" in (
+        release_gates
+    )
     assert "`kernels==0.16.0`" in release_gates
     assert "`triton>=3.5` extra is Linux-only" in release_gates
     assert "`orbitquant audit-hf-artifacts --help`\n  includes `--summary-only`" in (

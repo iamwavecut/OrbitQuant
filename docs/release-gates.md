@@ -406,7 +406,13 @@ URL, or signed-off audit note.
   `641a4d74a811023ff6cc39ae9680eb1393eb5e2b5dd390d586ff087ac1533af3`; a fresh
   venv installed `orbitquant==0.1.4` from PyPI with `uv pip install --refresh`
   and verified `orbitquant.__version__ == "0.1.4"` and
-  `orbitquant --version == "0.1.4"`.
+  `orbitquant --version == "0.1.4"`. A 2026-07-09T18:04Z fresh PyPI install
+  smoke verified `orbitquant[hf]==0.1.4` imports OrbitQuant 0.1.4 with
+  Diffusers 0.39.0, Transformers 5.13.0, Accelerate 1.14.0, and default
+  `OrbitQuantConfig().runtime_mode == "auto_fused"`. The same smoke verified
+  `orbitquant[kernels]==0.1.4` installs `kernels==0.16.0`, keeps
+  `runtime_mode == "auto_fused"`, and does not install Triton on macOS because
+  the `triton>=3.5` extra is Linux-only.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
   install guidance for the default `auto_fused` runtime.
@@ -484,7 +490,11 @@ URL, or signed-off audit note.
   `453c72d95e5dafee5408969225809ad278eb577a9386728b7f5bdcef918de1d1`. A fresh
   venv installed `comfyui-orbitquant==0.1.3` from PyPI and verified
   `comfyui-orbitquant==0.1.3`, `orbitquant==0.1.4`, and exported FLUX,
-  Z-Image, Wan, generic component-loader, and artifact-inspector nodes.
+  Z-Image, Wan, generic component-loader, and artifact-inspector nodes. A
+  2026-07-09T18:04Z fresh PyPI install smoke also verified
+  `comfyui-orbitquant[kernels]==0.1.3` resolves to `orbitquant==0.1.4`,
+  installs `kernels==0.16.0`, does not install Triton on macOS, and exports
+  the same five ComfyUI node classes.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
