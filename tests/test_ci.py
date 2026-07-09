@@ -102,7 +102,11 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "codebook_lookup_rescale" in mps_script
     assert "upstream_native_mps_op" in mps_script
     assert "kernels>=0.16" in mps_script
+    assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI" in mps_script
     assert "native-packed-matmul-kernel-ok" in mps_script
+    assert "native-packed-matmul-load-skipped" in mps_script
+    assert "native-packed-matmul-bench-skipped" in mps_script
+    assert "BENCH_RUNTIME_ARGS=(--runtime-mode dequant_bf16)" in mps_script
     assert "--runtime-mode native_packed_matmul" in mps_script
 
 

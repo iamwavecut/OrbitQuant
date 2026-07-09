@@ -188,6 +188,14 @@ URL, or signed-off audit note.
   V3 entrypoint/schema/delegation, real OrbitQuant artifact load,
   inspector-to-loader node graph behavior, metadata propagation, and finite
   forward execution through the restored `OrbitQuantLinear`.
+- [x] MPS shader-only gate can be run independently from the native packed
+  matmul package gate. Evidence: on 2026-07-09,
+  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
+  passed `scripts/run_mps_kernel_checks.sh`, including MPS/backend capability
+  tests, `orbitquant kernel-info`, and an MPS `runtime_mode="dequant_bf16"`
+  benchmark. The reported optimized stages were limited to
+  `codebook_lookup_rescale,packed_weight_dequant`; native packed matmul stages
+  were explicitly skipped.
 - [ ] Release-grade metrics are complete before making paper reproduction or
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench

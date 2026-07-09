@@ -15,9 +15,12 @@ OUT_FEATURES="${ORBITQUANT_BENCH_OUT_FEATURES:-1024}"
 BLOCK_SIZE="${ORBITQUANT_BENCH_BLOCK_SIZE:-1024}"
 WARMUP="${ORBITQUANT_BENCH_WARMUP:-1}"
 ITERATIONS="${ORBITQUANT_BENCH_ITERATIONS:-3}"
+RUN_NATIVE_KERNEL_PACKAGE_CI="${ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI:-1}"
 
 cd "$ROOT_DIR"
-export LOCAL_KERNELS="${LOCAL_KERNELS:-WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul}"
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
+  export LOCAL_KERNELS="${LOCAL_KERNELS:-WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul}"
+fi
 
 stage env-start
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
@@ -50,8 +53,9 @@ print("compile_shader", hasattr(torch.mps, "compile_shader"))
 PY
 stage env-done
 
-stage native-packed-matmul-load-start
-python - <<'PY'
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
+  stage native-packed-matmul-load-start
+  python - <<'PY'
 from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
 
 kernel = load_native_packed_matmul_kernel()
@@ -59,7 +63,10 @@ if not hasattr(kernel, "matmul_packed_weight"):
     raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
 print("native-packed-matmul-kernel-ok", kernel)
 PY
-stage native-packed-matmul-load-done
+  stage native-packed-matmul-load-done
+else
+  stage native-packed-matmul-load-skipped
+fi
 
 stage kernel-tests-start
 pytest tests/test_kernels.py tests/test_orbit_linear.py -q -k 'mps or backend_capabilities'
@@ -68,10 +75,14 @@ stage kernel-tests-done
 stage kernel-info-start
 orbitquant kernel-info
 python - <<'PY'
+import os
+
 from orbitquant.kernels import backend_capabilities
 
 capability = backend_capabilities()["mps"]
-required_stages = {"codebook_lookup_rescale", "packed_weight_dequant", "packed_weight_matmul"}
+required_stages = {"codebook_lookup_rescale", "packed_weight_dequant"}
+if os.environ.get("ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI", "1") == "1":
+    required_stages.add("packed_weight_matmul")
 stages = set(str(capability["optimized_stage"] or "").split(","))
 missing = sorted(required_stages - stages)
 if capability["claim_status"] != "partial_optimized":
@@ -90,6 +101,11 @@ print("mps-kernel-contract-ok")
 PY
 stage kernel-info-done
 
+BENCH_RUNTIME_ARGS=()
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" != "1" ]]; then
+  BENCH_RUNTIME_ARGS=(--runtime-mode dequant_bf16)
+fi
+
 stage kernel-bench-start
 orbitquant kernel-bench \
   --tokens "$TOKENS" \
@@ -99,24 +115,29 @@ orbitquant kernel-bench \
   --activation-bits 4 \
   --block-size "$BLOCK_SIZE" \
   --activation-kernel-backend mps \
+  "${BENCH_RUNTIME_ARGS[@]}" \
   --device mps \
   --dtype float32 \
   --warmup "$WARMUP" \
   --iterations "$ITERATIONS"
 stage kernel-bench-done
 
-stage native-packed-matmul-bench-start
-orbitquant kernel-bench \
-  --tokens "$TOKENS" \
-  --in-features "$IN_FEATURES" \
-  --out-features "$OUT_FEATURES" \
-  --weight-bits 4 \
-  --activation-bits 4 \
-  --block-size "$BLOCK_SIZE" \
-  --activation-kernel-backend mps \
-  --runtime-mode native_packed_matmul \
-  --device mps \
-  --dtype float32 \
-  --warmup "$WARMUP" \
-  --iterations "$ITERATIONS"
-stage native-packed-matmul-bench-done
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
+  stage native-packed-matmul-bench-start
+  orbitquant kernel-bench \
+    --tokens "$TOKENS" \
+    --in-features "$IN_FEATURES" \
+    --out-features "$OUT_FEATURES" \
+    --weight-bits 4 \
+    --activation-bits 4 \
+    --block-size "$BLOCK_SIZE" \
+    --activation-kernel-backend mps \
+    --runtime-mode native_packed_matmul \
+    --device mps \
+    --dtype float32 \
+    --warmup "$WARMUP" \
+    --iterations "$ITERATIONS"
+  stage native-packed-matmul-bench-done
+else
+  stage native-packed-matmul-bench-skipped
+fi

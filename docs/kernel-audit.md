@@ -38,7 +38,10 @@ for the current artifact format and runtime modes.
   Use it before starting the CUDA gate when the host comes from a RunPod
   Connect-tab SSH command.
 - `scripts/run_mps_kernel_checks.sh` is the MPS/Metal correctness and smoke
-  benchmark gate for Apple Silicon hosts.
+  benchmark gate for Apple Silicon hosts. By default it requires the native
+  packed matmul package. Set `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` only
+  to verify the inline Metal shader stages without closing the native packed
+  matmul package gate.
 - Full-model speedup claims require backend-specific benchmark artifacts from
   the target model class and native settings. Synthetic kernel benchmarks are
   useful diagnostics, not release evidence for FLUX, Z-Image, or Wan throughput.
@@ -123,6 +126,13 @@ for the current artifact format and runtime modes.
   after it began compiling the CUDA/NCCL stack from source; this is not the
   release path for paid evaluation pods. Use an approved Kernel Hub upload or a
   pre-cached builder environment for native CUDA package closure.
+- On 2026-07-09, the MPS shader-only gate passed locally with
+  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` and tiny benchmark dimensions.
+  The run verified Torch 2.12.1 MPS availability, `torch.mps.compile_shader`,
+  MPS/backend capability tests, `orbitquant kernel-info`, and an MPS
+  `runtime_mode="dequant_bf16"` benchmark. `optimized_stage` was
+  `codebook_lookup_rescale,packed_weight_dequant`; native packed matmul load
+  and benchmark stages were explicitly skipped.
 
 ## Packaging Boundary
 
