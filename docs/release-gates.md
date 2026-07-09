@@ -96,8 +96,8 @@ URL, or signed-off audit note.
   artifacts, `src/orbitquant/artifacts/model_card.py` renders FLUX.2 Klein as
   `extra target; not an OrbitQuant paper reproduction model`, and
   `tests/test_readme.py` plus `tests/test_model_card.py` guard this wording.
-  The 2026-07-08T16:00Z HF artifact audit reported `readme_mismatch_count=0`
-  across all 14 published private artifact repos.
+  The 2026-07-09T11:44Z HF artifact audit reported `readme_mismatch_count=0`
+  across all 14 public artifact repos.
 - [x] Native artifact validation is complete for every advertised release
   artifact. At minimum this includes native-resolution BF16-vs-OrbitQuant
   comparison assets, load validation, finite-output checks, manifests, and
@@ -105,14 +105,12 @@ URL, or signed-off audit note.
   block in `benchmark/summary.json`; raw generation records remain local-only.
   Evidence: `orbitquant audit-hf-artifacts --namespace WaveCut
   --policy-inventory-root reports/native/module-inventories
-  --fail-on-artifact-regression` passed on 2026-07-08T16:00Z for 14/14
-  private artifact repos. It reported 14/14 artifact-ready, 14/14 native-smoke
+  --fail-on-artifact-regression` passed on 2026-07-09T11:44Z for 14/14
+  public artifact repos. It reported 14/14 artifact-ready, 14/14 native-smoke
   ready, 14/14 metadata-complete, zero manifest warnings, zero missing
   metadata, zero remote checksum mismatches, zero README mismatches, and zero
-  forbidden remote files. The same audit was re-run on 2026-07-08T22:04Z and
-  again reported 14/14 artifact-ready, 14/14 native-smoke-ready, 14/14
-  metadata-complete, 14/14 policy-inventory-ready, zero forbidden files, zero
-  remote checksum mismatches, zero README mismatches, and 144 missing
+  forbidden remote files. It also reported `public_count=14`,
+  `private_count=0`, 14/14 policy-inventory-ready, and 144 missing
   release-grade metrics.
 - [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
@@ -121,10 +119,8 @@ URL, or signed-off audit note.
   skipped modules.
   Evidence: `scripts/run_paper_methodology_checks.sh` produced and hash-checked
   config-mode transformer inventories for all four native suites. The same
-  2026-07-08T16:00Z HF artifact audit cross-checked those inventories against
-  all 14 published private artifact manifests with `policy_inventory_ready=14`
-  and `policy_inventory_error_count=0`. The 2026-07-08T17:27Z re-check again
-  reported `policy_inventory_ready_count=14` and
+  2026-07-09T11:44Z HF artifact audit cross-checked those inventories against
+  all 14 public artifact manifests with `policy_inventory_ready_count=14` and
   `policy_inventory_error_count=0`.
 - [x] Compatibility is verified against the latest published releases and dev
   branches of Diffusers and Transformers with
@@ -141,12 +137,11 @@ URL, or signed-off audit note.
   HF artifact audits must report `metadata_complete_ready` for every released
   artifact, proving quantization device, weight quantization backend, and
   staging mode provenance are present.
-  Evidence: the 2026-07-08T16:00Z HF artifact audit passed with
+  Evidence: the 2026-07-09T11:44Z HF artifact audit passed with
   `repo_count=14`, `artifact_ready_count=14`, `metadata_complete_ready_count=14`,
   `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
-  `readme_mismatch_count=0`, and `forbidden_file_count=0`. The
-  2026-07-08T17:27Z re-check reported the same zero-regression counts and
-  `policy_inventory_ready_count=14`.
+  `readme_mismatch_count=0`, `forbidden_file_count=0`, `public_count=14`, and
+  `private_count=0`.
 - [ ] The GitHub repository is public, tagged, and includes the release docs,
   license, source distribution expectations, and reproducible verification
   commands. Release-note content for the first public package release candidate
