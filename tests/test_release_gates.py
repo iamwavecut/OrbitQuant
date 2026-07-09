@@ -370,6 +370,12 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4" in kernel_audit
     assert "sixth follow-up comment on 2026-07-09T12:50Z" in kernel_audit
     assert "f42d2dc19897adde62ec3ebb33e4ce748255dd54" in kernel_audit
+    assert "On 2026-07-09T12:57Z" in kernel_audit
+    assert "`max_abs_error_vs_dequant_bf16=0.001953125`" in kernel_audit
+    assert "`packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`" in (
+        kernel_audit
+    )
+    assert "seventh follow-up comment on 2026-07-09T12:58Z" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -435,6 +441,11 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "scripts/verify_hf_kernel_model_artifact.py" in request
     assert "On 2026-07-09T12:50Z" in request
     assert "MPS and CUDA `LOCAL_KERNELS`\nexample commands" in request
+    assert "On 2026-07-09T12:57Z" in request
+    assert "`transformer_blocks.0.attn.to_q` (3072x3072)" in request
+    assert "`allclose_to_dequant_bf16=true`" in request
+    assert "On 2026-07-09T12:58Z" in request
+    assert "posted that verifier command and JSON result\nsummary" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )

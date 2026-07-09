@@ -72,6 +72,16 @@ URL, or signed-off audit note.
   A follow-up comment was posted on 2026-07-09T12:50Z with commit
   `f42d2dc19897adde62ec3ebb33e4ce748255dd54` and MPS/CUDA `LOCAL_KERNELS`
   example commands for the verifier.
+  The verifier then passed locally on 2026-07-09T12:57Z using the
+  `torch212-metal-aarch64-darwin` local kernel variant and the published
+  `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact. It verified
+  `transformer_blocks.0.attn.to_q` (3072x3072) through
+  `runtime_mode="native_packed_matmul"` against `dequant_bf16` with
+  `finite=true`, `allclose_to_dequant_bf16=true`,
+  `max_abs_error_vs_dequant_bf16=0.001953125`, and
+  `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`.
+  A follow-up comment was posted to discussion 15 on 2026-07-09T12:58Z with
+  the verifier command and JSON result summary.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4

@@ -127,6 +127,16 @@ for the current artifact format and runtime modes.
   A sixth follow-up comment on 2026-07-09T12:50Z points reviewers to commit
   `f42d2dc19897adde62ec3ebb33e4ce748255dd54` and includes MPS/CUDA
   `LOCAL_KERNELS` commands for running that verifier.
+  On 2026-07-09T12:57Z, that verifier passed locally on Apple Silicon MPS using
+  the `torch212-metal-aarch64-darwin` local kernel variant and the published
+  `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact. It restored
+  `transformer_blocks.0.attn.to_q` with shape 3072x3072, ran
+  `runtime_mode="native_packed_matmul"` for one token, compared against
+  `dequant_bf16`, and reported `finite=true`, `allclose_to_dequant_bf16=true`,
+  `max_abs_error_vs_dequant_bf16=0.001953125`, and
+  `packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`.
+  A seventh follow-up comment on 2026-07-09T12:58Z posted the verifier command
+  and JSON result summary to discussion 15.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same

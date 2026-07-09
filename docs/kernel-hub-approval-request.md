@@ -107,6 +107,18 @@ On 2026-07-09T12:50Z, `WaveCut` replied with the verification script commit
 example commands, and the expected behavior when no loadable native kernel is
 available.
 
+On 2026-07-09T12:57Z, the verifier passed locally on Apple Silicon MPS with
+the `torch212-metal-aarch64-darwin` local kernel variant and the published
+`WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact. It verified
+`transformer_blocks.0.attn.to_q` (3072x3072) with
+`runtime_mode="native_packed_matmul"` against `dequant_bf16` and reported
+`finite=true`, `allclose_to_dequant_bf16=true`,
+`max_abs_error_vs_dequant_bf16=0.001953125`, and
+`packed_weight_path_vs_materialized_weight_ratio=0.2503289116753472`.
+
+On 2026-07-09T12:58Z, `WaveCut` posted that verifier command and JSON result
+summary in discussion 15.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
