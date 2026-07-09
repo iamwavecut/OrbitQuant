@@ -172,6 +172,19 @@ for the current artifact format and runtime modes.
   `quantize-bench` with exit 0. This verifies the Python/Triton CUDA path and
   packed-weight CUDA runtime fallback behavior, not the separate native CUDA
   kernel-builder package.
+- A public-package CUDA smoke passed on 2026-07-09T13:15Z on the active RunPod
+  `orbitquant-cuda-gate-4090` pod (`ofz7pyxcw6vlzm`) with Torch 2.9.1+cu128,
+  CUDA 12.8, driver 580.159.04, and an NVIDIA GeForce RTX 4090. It installed
+  `orbitquant[kernels]==0.1.0` from PyPI into a temporary `/tmp` venv using
+  `--system-site-packages`, ran `orbitquant kernel-info`, and ran
+  `orbitquant kernel-bench --device cuda --dtype float16 --runtime-mode
+  auto_fused --tokens 16 --in-features 128 --out-features 128 --warmup 1
+  --iterations 2`. The benchmark selected `triton_cuda` for both activation
+  kernels and weight quantization, kept packed weight indices and row norms on
+  `cuda:0`, reported `forward_prewarmed_ms=0.14182400703430176`, and removed
+  the temporary venv after completion. This verifies the published PyPI package
+  CUDA/Triton `auto_fused` path, not the separate native CUDA Kernel Hub
+  package.
 - Native CUDA `native_packed_matmul` still needs a compatible loadable variant.
   A locally built `build/torch29-cxx11-cu130-x86_64-linux` variant was copied
   to the same CUDA 12.8 host and failed before execution with

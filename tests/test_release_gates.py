@@ -114,6 +114,14 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "OrbitQuant commit\n  `301d836`" in release_gates
     assert "Torch 2.9.1+cu128" in release_gates
     assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0" in release_gates
+    assert "public-package CUDA smoke\n  passed on 2026-07-09T13:15Z" in (
+        release_gates
+    )
+    assert "`orbitquant[kernels]==0.1.0` from PyPI" in release_gates
+    assert "`forward_prewarmed_ms=0.14182400703430176`" in release_gates
+    assert "published PyPI package\n  CUDA/Triton `auto_fused` path" in (
+        release_gates
+    )
     assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
     assert "`ImportError: libcudart.so.13`" in release_gates
     assert "`torch211-cxx11-cu128-x86_64-linux`" in release_gates
@@ -133,6 +141,10 @@ def test_release_gates_document_final_acceptance_checklist():
     )
     assert "ComfyUI-OrbitQuant commit `3f2ea7a`" in release_gates
     assert "GitHub CI run\n  `28977790874`" in release_gates
+    assert "public-readiness commit `97d7efc`" in release_gates
+    assert "`orbitquant>=0.1.0`" in release_gates
+    assert "passed GitHub CI run\n  `29020564152`" in release_gates
+    assert "`iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`" in release_gates
     assert "`uv run pytest -q`, `uv run ruff check .`, package build, and\n  `twine check`" in (
         release_gates
     )
@@ -394,6 +406,14 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "CUDA/Triton partial gate passed on 2026-07-08T19:31Z" in kernel_audit
     assert "Torch 2.9.1+cu128" in kernel_audit
     assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0" in kernel_audit
+    assert "public-package CUDA smoke passed on 2026-07-09T13:15Z" in (
+        kernel_audit
+    )
+    assert "`orbitquant[kernels]==0.1.0` from PyPI" in kernel_audit
+    assert "`forward_prewarmed_ms=0.14182400703430176`" in kernel_audit
+    assert "published PyPI package\n  CUDA/Triton `auto_fused` path" in (
+        kernel_audit
+    )
     assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
     assert "`ImportError: libcudart.so.13`" in kernel_audit
     assert "`torch211-cxx11-cu128-x86_64-linux`" in kernel_audit

@@ -105,7 +105,20 @@ URL, or signed-off audit note.
   CUDA 12.8, Triton 3.5.1, and driver 570.211.01. The run completed CUDA
   kernel tests, `orbitquant kernel-info`, `auto_fused` CUDA `kernel-bench`,
   and CUDA `quantize-bench` with exit 0 using
-  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0`. Native CUDA
+  `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0`. A public-package CUDA smoke
+  passed on 2026-07-09T13:15Z on the active RunPod
+  `orbitquant-cuda-gate-4090` pod (`ofz7pyxcw6vlzm`) with Torch 2.9.1+cu128,
+  CUDA 12.8, driver 580.159.04, and an NVIDIA GeForce RTX 4090. The smoke
+  installed `orbitquant[kernels]==0.1.0` from PyPI into a temporary `/tmp` venv
+  using `--system-site-packages`, ran `orbitquant kernel-info`, and ran
+  `orbitquant kernel-bench --device cuda --dtype float16 --runtime-mode
+  auto_fused --tokens 16 --in-features 128 --out-features 128 --warmup 1
+  --iterations 2`. The benchmark selected `triton_cuda` for both activation
+  kernels and weight quantization, kept packed weight indices and row norms on
+  `cuda:0`, reported `forward_prewarmed_ms=0.14182400703430176`, and removed
+  the temporary venv after completion. This verifies the published PyPI package
+  CUDA/Triton `auto_fused` path, not the separate native CUDA Kernel Hub
+  package. Native CUDA
   `native_packed_matmul` remains open: the available local
   `build/torch29-cxx11-cu130-x86_64-linux` variant failed to load on that CUDA
   12.8 host with `ImportError: libcudart.so.13`, so a CUDA 12.8-compatible
@@ -231,7 +244,14 @@ URL, or signed-off audit note.
   `twine check`. The package smoke covers legacy node mappings,
   V3 entrypoint/schema/delegation, real OrbitQuant artifact load,
   inspector-to-loader node graph behavior, metadata propagation, and finite
-  forward execution through the restored `OrbitQuantLinear`.
+  forward execution through the restored `OrbitQuantLinear`. The
+  public-readiness commit `97d7efc` replaced the OrbitQuant dependency with the
+  PyPI release constraint `orbitquant>=0.1.0`, switched the README clone command
+  to HTTPS, restored the full Apache-2.0 license text, passed local `pytest`,
+  `ruff`, package build, and `twine check`, and passed GitHub CI run
+  `29020564152` on 2026-07-09. A live GitHub check then reported
+  `iamwavecut/ComfyUI-OrbitQuant` as `PUBLIC`, Apache-2.0 licensed, with
+  default branch `main`.
 - [x] MPS shader-only gate can be run independently from the native packed
   matmul package gate. Evidence: on 2026-07-09,
   `ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0` with tiny benchmark dimensions
