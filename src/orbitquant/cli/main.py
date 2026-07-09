@@ -1175,6 +1175,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip SHA256 validation while loading the local OrbitQuant artifact",
     )
+    compare_native_parser.add_argument(
+        "--skip-comparison-validation",
+        action="store_true",
+        help="do not run local bundle validation after generation",
+    )
     compare_native_parser.add_argument("--dry-run", action="store_true")
 
     generate_pack_parser = subparsers.add_parser(
@@ -2037,6 +2042,9 @@ def main(argv: list[str] | None = None) -> int:
             "comparison_path": str(comparison_path),
         }
         summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        validation = None
+        if not args.skip_comparison_validation:
+            validation = _validate_compare_native_bundle(output_dir)
         print(
             json.dumps(
                 {
@@ -2046,6 +2054,7 @@ def main(argv: list[str] | None = None) -> int:
                     "orbitquant_output_path": str(orbitquant_result.output_path),
                     "runtime_mode": effective_config.runtime_mode,
                     "activation_kernel_backend": effective_config.activation_kernel_backend,
+                    "validation": validation,
                 }
             )
         )

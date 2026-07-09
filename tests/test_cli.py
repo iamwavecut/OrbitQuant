@@ -900,7 +900,25 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
         assert kwargs["torch_dtype"] is torch.float32
         return next(pipelines)
 
+    validation_calls = []
+
+    def fake_validate_compare_native_bundle(bundle_dir):
+        validation_calls.append(bundle_dir)
+        return {
+            "valid": True,
+            "orbitquant_runtime": {
+                "runtime_mode_counts": {
+                    "dequant_bf16": 1,
+                },
+            },
+        }
+
     monkeypatch.setattr(cli_main, "load_pipeline_for_suite", fake_load_pipeline_for_suite)
+    monkeypatch.setattr(
+        cli_main,
+        "_validate_compare_native_bundle",
+        fake_validate_compare_native_bundle,
+    )
 
     assert (
         main(
@@ -934,6 +952,11 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
     )
     assert output["summary_path"] == str(tmp_path / "comparison" / "summary.json")
     assert output["comparison_path"] == str(comparison_path)
+    assert output["validation"]["valid"] is True
+    assert output["validation"]["orbitquant_runtime"]["runtime_mode_counts"] == {
+        "dequant_bf16": 1
+    }
+    assert validation_calls == [tmp_path / "comparison"]
     assert comparison_path.is_file()
     assert summary["original"]["output_path"].endswith("flux2-native_seed4_original.png")
     assert summary["orbitquant"]["output_path"].endswith("flux2-native_seed4_W4A4.png")
@@ -952,6 +975,85 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
         "unexecuted_module_sample": [],
     }
     assert not any((tmp_path / "artifact" / "assets").iterdir())
+
+
+def test_cli_compare_native_can_skip_post_generation_validation(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    class TinyPipeline:
+        def __init__(self, color="red"):
+            self.color = color
+            self.transformer = torch.nn.Module()
+            self.transformer.transformer_blocks = torch.nn.ModuleList(
+                [
+                    torch.nn.ModuleDict(
+                        {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(8, 8)})}
+                    )
+                ]
+            )
+
+        def to(self, device):
+            return self
+
+        def __call__(self, **kwargs):
+            layer = self.transformer.transformer_blocks[0]["attn"]["to_q"]
+            layer(torch.zeros(1, 1, 8))
+            return SimpleNamespace(images=[Image.new("RGB", (16, 16), self.color)])
+
+    source = TinyPipeline()
+    config = OrbitQuantConfig(block_size=4, target_policy="generic_dit")
+    summary = quantize_linear_modules(source.transformer, config)
+    save_orbitquant_artifact(
+        source.transformer,
+        tmp_path / "artifact",
+        config=config,
+        source_model_id="example/artifact-model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    pipelines = iter([TinyPipeline("red"), TinyPipeline("blue")])
+
+    monkeypatch.setattr(
+        cli_main,
+        "load_pipeline_for_suite",
+        lambda *args, **kwargs: next(pipelines),
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "_validate_compare_native_bundle",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("post-generation validation should be skipped")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "compare-native",
+                "--suite",
+                "flux2-native",
+                "--artifact",
+                str(tmp_path / "artifact"),
+                "--prompt",
+                "A native prompt",
+                "--output",
+                str(tmp_path / "comparison"),
+                "--device",
+                "cpu",
+                "--dtype",
+                "float32",
+                "--skip-comparison-validation",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["validation"] is None
+    assert (tmp_path / "comparison" / "summary.json").is_file()
 
 
 def test_cli_validate_comparison_accepts_copied_runpod_bundle(capsys, tmp_path):
