@@ -3199,6 +3199,89 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
     }
 
 
+def test_cli_audit_hf_artifacts_summary_only_omits_full_rows(
+    capsys, tmp_path, monkeypatch
+):
+    def fake_audit_hf_artifacts(*, namespace, suites, revision, policy_inventory_root):
+        return {
+            "namespace": namespace,
+            "policy_inventory_root": policy_inventory_root,
+            "repo_count": 1,
+            "existing_count": 1,
+            "artifact_ready_count": 1,
+            "native_smoke_ready_count": 1,
+            "metadata_complete_ready_count": 1,
+            "policy_inventory_ready_count": 1,
+            "policy_inventory_error_count": 0,
+            "release_eval_applicable_count": 1,
+            "release_eval_ready_count": 0,
+            "missing_required_metric_count": 2,
+            "manifest_warning_count": 0,
+            "metadata_missing_count": 0,
+            "remote_checksum_mismatch_count": 0,
+            "readme_mismatch_count": 0,
+            "forbidden_file_count": 0,
+            "rows": [
+                {
+                    "repo_id": "WaveCut/example",
+                    "suite": "flux1-schnell-native",
+                    "bit_setting": "W4A4",
+                    "artifact_ready": True,
+                    "native_smoke_ready": True,
+                    "release_eval_applicable": True,
+                    "release_eval_ready": False,
+                    "metadata_complete_ready": True,
+                    "policy_inventory_ready": True,
+                    "forbidden_file_count": 0,
+                    "missing_required_metrics": [
+                        {"split": "original", "metric": "geneval_overall"},
+                        {"split": "orbitquant", "metric": "geneval_overall"},
+                    ],
+                    "large_remote_row_detail": {"not": "printed"},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli_main, "audit_hf_artifact_repos", fake_audit_hf_artifacts)
+    output_path = tmp_path / "audit-summary.json"
+
+    assert (
+        main(
+            [
+                "audit-hf-artifacts",
+                "--summary-only",
+                "--output",
+                str(output_path),
+                "--fail-on-artifact-regression",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text())
+    assert output == written
+    assert "rows" not in output
+    assert output["repo_count"] == 1
+    assert output["row_count"] == 1
+    assert output["repos"] == [
+        {
+            "repo_id": "WaveCut/example",
+            "suite": "flux1-schnell-native",
+            "bit_setting": "W4A4",
+            "artifact_ready": True,
+            "native_smoke_ready": True,
+            "release_eval_applicable": True,
+            "release_eval_ready": False,
+            "metadata_complete_ready": True,
+            "policy_inventory_ready": True,
+            "forbidden_file_count": 0,
+            "missing_required_metric_count": 2,
+        }
+    ]
+    assert "large_remote_row_detail" not in json.dumps(output)
+
+
 def test_cli_audit_hf_artifacts_artifact_regression_gate_ignores_release_metrics(
     capsys, tmp_path, monkeypatch
 ):

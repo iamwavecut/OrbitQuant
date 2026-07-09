@@ -186,6 +186,51 @@ def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
     return regressions
 
 
+def _hf_artifact_audit_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = payload.get("rows") or []
+    summary_keys = (
+        "namespace",
+        "policy_inventory_root",
+        "repo_count",
+        "existing_count",
+        "artifact_ready_count",
+        "native_smoke_ready_count",
+        "metadata_complete_ready_count",
+        "policy_inventory_ready_count",
+        "policy_inventory_error_count",
+        "release_eval_applicable_count",
+        "release_eval_not_applicable_count",
+        "release_eval_ready_count",
+        "missing_required_metric_count",
+        "manifest_warning_count",
+        "metadata_missing_count",
+        "remote_checksum_mismatch_count",
+        "readme_mismatch_count",
+        "forbidden_file_count",
+    )
+    summary = {key: payload.get(key) for key in summary_keys if key in payload}
+    summary["row_count"] = len(rows)
+    summary["repos"] = [
+        {
+            "repo_id": row.get("repo_id"),
+            "suite": row.get("suite"),
+            "bit_setting": row.get("bit_setting"),
+            "artifact_ready": row.get("artifact_ready"),
+            "native_smoke_ready": row.get("native_smoke_ready"),
+            "release_eval_applicable": row.get("release_eval_applicable"),
+            "release_eval_ready": row.get("release_eval_ready"),
+            "metadata_complete_ready": row.get("metadata_complete_ready"),
+            "policy_inventory_ready": row.get("policy_inventory_ready"),
+            "forbidden_file_count": row.get("forbidden_file_count"),
+            "missing_required_metric_count": len(
+                row.get("missing_required_metrics") or []
+            ),
+        }
+        for row in rows
+    ]
+    return summary
+
+
 def _parse_block_size(value: str) -> int | str:
     if value == "paper":
         return value
@@ -685,6 +730,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     audit_hf_parser.add_argument("--output")
     audit_hf_parser.add_argument("--markdown-output")
+    audit_hf_parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="print/write compact counts plus per-repo readiness instead of full row details",
+    )
     audit_hf_parser.add_argument(
         "--fail-on-artifact-regression",
         action="store_true",
@@ -1252,7 +1302,8 @@ def main(argv: list[str] | None = None) -> int:
             revision=args.revision,
             policy_inventory_root=args.policy_inventory_root,
         )
-        rendered = json.dumps(payload, indent=2)
+        rendered_payload = _hf_artifact_audit_summary(payload) if args.summary_only else payload
+        rendered = json.dumps(rendered_payload, indent=2)
         if args.output is not None:
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)

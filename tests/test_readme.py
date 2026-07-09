@@ -62,6 +62,7 @@ def test_readme_documents_component_artifact_usage():
     assert "Compact artifact readiness is tracked\nseparately" in readme
     assert "native validation evidence" in readme
     assert "orbitquant fetch-hf-artifacts" in readme
+    assert "--summary-only" in readme
     assert "orbitquant native-script" in readme
     assert "--prompt-metadata-jsonl /path/to/GenEval/evaluation_metadata.jsonl" in readme
     assert "orbitquant external-eval-script" in readme
