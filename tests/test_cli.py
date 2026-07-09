@@ -747,6 +747,25 @@ def test_cli_record_metrics_imports_nested_json_into_artifact(capsys, tmp_path):
     assert "geneval_per_task_single_object,0.92" in csv_text
     assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
 
+    report_dir = tmp_path / "reports"
+    assert (
+        main(["report", "--artifact", str(tmp_path), "--output", str(report_dir)])
+        == 0
+    )
+
+    report_output = json.loads(capsys.readouterr().out)
+    missing_table = (report_dir / "tables" / "missing_required_metrics.csv").read_text()
+    assert report_output["missing_required_metric_count"] == 11
+    assert "orbitquant,flux1-schnell-native,geneval_overall" not in missing_table
+    assert "orbitquant,flux1-schnell-native,geneval_per_task_single_object" not in (
+        missing_table
+    )
+    assert "orbitquant,flux1-schnell-native,geneval_per_task_counting" not in (
+        missing_table
+    )
+    assert "original,flux1-schnell-native,geneval_overall" in missing_table
+    assert "orbitquant,flux1-schnell-native,geneval_per_task_color_attr" in missing_table
+
 
 def test_cli_generate_dry_run_prints_native_request(capsys, tmp_path):
     assert (

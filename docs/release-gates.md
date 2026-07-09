@@ -539,4 +539,9 @@ URL, or signed-off audit note.
   non-empty metric summary JSON files, preserved 16 GenEval jobs and 4 VBench
   jobs, preserved 20 `orbitquant record-metrics` imports, ran the final
   `orbitquant report` with `--fail-on-missing-required`, and contained no
-  range-smoke path.
+  range-smoke path. A 2026-07-09T18:32Z synthetic CLI check verified that
+  `orbitquant record-metrics` imports nested GenEval summary JSON into an
+  artifact, preserves artifact checksums, and that the subsequent
+  `orbitquant report` removes the imported OrbitQuant metrics from
+  `missing_required_metrics.csv` while still flagging absent baseline and
+  per-task metrics.

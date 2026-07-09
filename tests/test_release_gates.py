@@ -76,6 +76,15 @@ def test_release_gates_document_final_acceptance_checklist():
         release_gates
     )
     assert "contained no\n  range-smoke path" in release_gates
+    assert "2026-07-09T18:32Z synthetic CLI check" in release_gates
+    assert "`orbitquant record-metrics` imports nested GenEval summary JSON" in (
+        release_gates
+    )
+    assert "preserves artifact checksums" in release_gates
+    assert "removes the imported OrbitQuant metrics from\n  `missing_required_metrics.csv`" in (
+        release_gates
+    )
+    assert "still flagging absent baseline and\n  per-task metrics" in release_gates
     assert "- [x] Full-model module classification inventories" in release_gates
     assert "Raw inventory JSON may\n  remain unpublished" in release_gates
     assert "`scripts/run_paper_methodology_checks.sh` produced and hash-checked" in (
