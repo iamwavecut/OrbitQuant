@@ -129,6 +129,11 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "not a throughput win on this RTX 4090\n  microbenchmark" in (
         release_gates
     )
+    assert "follow-up tile sweep on the same RTX 4090" in release_gates
+    assert "`block_n=128` default" in release_gates
+    assert "`forward_prewarmed_ms=0.6374400138854981`" in release_gates
+    assert "`forward_prewarmed_ms=0.596992015838623`" in release_gates
+    assert "`peak_memory_bytes=69293568`" in release_gates
     assert "Native CUDA\n  `native_packed_matmul` remains open" in release_gates
     assert "`ImportError: libcudart.so.13`" in release_gates
     assert "`torch211-cxx11-cu128-x86_64-linux`" in release_gates
@@ -428,6 +433,11 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "not a throughput win on this RTX 4090\n  microbenchmark" in (
         kernel_audit
     )
+    assert "follow-up tile sweep on the same RTX 4090" in kernel_audit
+    assert "`block_n=128` default" in kernel_audit
+    assert "`forward_prewarmed_ms=0.6374400138854981`" in kernel_audit
+    assert "`forward_prewarmed_ms=0.596992015838623`" in kernel_audit
+    assert "`peak_memory_bytes=69293568`" in kernel_audit
     assert "Native CUDA `native_packed_matmul` still needs" in kernel_audit
     assert "`ImportError: libcudart.so.13`" in kernel_audit
     assert "`torch211-cxx11-cu128-x86_64-linux`" in kernel_audit

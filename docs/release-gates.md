@@ -130,7 +130,15 @@ URL, or signed-off audit note.
   `peak_memory_bytes=115025408`. These numbers were posted to discussion 15 on
   2026-07-09T13:22Z with the explicit caveat that current CUDA/Triton
   `auto_fused` is memory-path evidence, not a throughput win on this RTX 4090
-  microbenchmark. Native CUDA
+  microbenchmark. A follow-up tile sweep on the same RTX 4090, PyPI package,
+  and 512x3072x3072 W4A4 float16 benchmark found the best tested Triton packed
+  matmul tile at `block_m=32`, `block_n=128`, `block_k=64`, `num_warps=8`.
+  A focused 20-iteration confirmation measured the previous default
+  `block_n=64` at `forward_prewarmed_ms=0.6374400138854981` and the selected
+  `block_n=128` default at `forward_prewarmed_ms=0.596992015838623`, both with
+  `peak_memory_bytes=69293568`. This updates the package default tile for the
+  packed matmul path, but it remains a local CUDA/Triton microbenchmark result
+  and does not change the no-throughput-win claim boundary. Native CUDA
   `native_packed_matmul` remains open: the available local
   `build/torch29-cxx11-cu130-x86_64-linux` variant failed to load on that CUDA
   12.8 host with `ImportError: libcudart.so.13`, so a CUDA 12.8-compatible

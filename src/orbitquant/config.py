@@ -71,7 +71,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     runtime_mode: str = "auto_fused"
     activation_kernel_backend: str = "auto"
     packed_matmul_block_m: int = 32
-    packed_matmul_block_n: int = 64
+    packed_matmul_block_n: int = 128
     packed_matmul_block_k: int = 64
     packed_matmul_num_warps: int = 8
 

@@ -98,7 +98,7 @@ def matmul_packed_weight_with_native_kernel(
     in_features: int,
     bias: torch.Tensor | None = None,
     block_m: int = 32,
-    block_n: int = 64,
+    block_n: int = 128,
     block_k: int = 64,
 ) -> torch.Tensor:
     if x.device.type not in {"cuda", "mps"}:

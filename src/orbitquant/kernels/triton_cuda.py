@@ -983,7 +983,7 @@ def matmul_packed_weight_with_triton(
     in_features: int,
     bias: torch.Tensor | None = None,
     block_m: int = 32,
-    block_n: int = 64,
+    block_n: int = 128,
     block_k: int = 64,
     num_warps: int = 8,
 ) -> torch.Tensor:

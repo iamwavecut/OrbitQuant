@@ -77,7 +77,7 @@ def test_benchmark_orbit_linear_reports_tuned_packed_matmul_default_tile_on_cpu(
 
     assert result["packed_matmul_tile"] == {
         "block_m": 32,
-        "block_n": 64,
+        "block_n": 128,
         "block_k": 64,
         "num_warps": 8,
     }

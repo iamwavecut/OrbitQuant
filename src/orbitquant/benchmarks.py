@@ -128,7 +128,7 @@ def benchmark_orbit_linear(
     activation_kernel_backend: str = "auto",
     runtime_mode: str = "auto_fused",
     packed_matmul_block_m: int = 32,
-    packed_matmul_block_n: int = 64,
+    packed_matmul_block_n: int = 128,
     packed_matmul_block_k: int = 64,
     packed_matmul_num_warps: int = 8,
     device: str | torch.device = "auto",
