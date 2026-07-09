@@ -49,6 +49,9 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     cuda_script = Path("scripts/run_cuda_kernel_checks.sh").read_text(encoding="utf-8")
     assert "triton-cuda-kernel-contract-ok" in cuda_script
     assert "native-kernel-package-ci-start" in cuda_script
+    assert "native-kernel-package-prebuilt-load-start" in cuda_script
+    assert "native-kernel-package-prebuilt-load-done" in cuda_script
+    assert "native-kernel-package-prebuilt-load-unavailable" in cuda_script
     assert "native_kernel_runtime_variant_name" in cuda_script
     assert "native_kernel_build_variant_dir" in cuda_script
     assert "ensure_native_kernel_source_git" in cuda_script
@@ -75,6 +78,7 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "tests/test_packed_matmul.py" in cuda_script
     assert "native-packed-matmul-bench-skipped-no-local-kernel" in cuda_script
     assert "native-packed-matmul-kernel-ok" in cuda_script
+    assert "NATIVE_PACKED_MATMUL_READY=1" in cuda_script
     assert "--runtime-mode native_packed_matmul" in cuda_script
     assert "activation_norm_rpbh_quant_rescale" in cuda_script
     assert "packed_weight_matmul" in cuda_script

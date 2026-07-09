@@ -213,28 +213,8 @@ stage quantize-bench-done
 
 if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
   stage native-kernel-package-ci-start
-  if ! command -v nix >/dev/null 2>&1; then
-    printf '%s\n' \
-      "native kernel package CI requires nix for kernel-builder." \
-      "Install nix, use a GPU image with nix, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when a compatible native packed-matmul kernel is already loadable through Hugging Face kernels or an importable package." \
-      >&2
-    exit 1
-  fi
-  native_kernel_variant="$(native_kernel_runtime_variant_name)"
-  ensure_native_kernel_source_git
-  stage "native-kernel-package-build-start variant=$native_kernel_variant"
-  native_kernel_variant_dir="$(
-    cd "$NATIVE_KERNEL_SOURCE_DIR"
-    native_kernel_build_variant_dir "$native_kernel_variant"
-  )"
-  assert_native_kernel_variant_dir "$native_kernel_variant_dir"
-  export LOCAL_KERNELS="$NATIVE_KERNEL_REPO_ID=$native_kernel_variant_dir"
-  stage "native-kernel-package-build-done variant=$native_kernel_variant"
-  stage native-kernel-package-tests-start
-  PYTHONPATH="$native_kernel_variant_dir${PYTHONPATH:+:$PYTHONPATH}" \
-    pytest "$NATIVE_KERNEL_SOURCE_DIR/tests/test_packed_matmul.py" -q
-  stage native-kernel-package-tests-done
-  stage native-packed-matmul-load-start
+  stage native-kernel-package-prebuilt-load-start
+  set +e
   python - <<'PY'
 from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
 
@@ -243,11 +223,50 @@ if not hasattr(kernel, "matmul_packed_weight"):
     raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
 print("native-packed-matmul-kernel-ok", kernel)
 PY
-  stage native-packed-matmul-load-done
+  prebuilt_native_kernel_status=$?
+  set -e
+  if [[ "$prebuilt_native_kernel_status" -eq 0 ]]; then
+    stage native-kernel-package-prebuilt-load-done
+    NATIVE_PACKED_MATMUL_READY=1
+  else
+    stage "native-kernel-package-prebuilt-load-unavailable status=$prebuilt_native_kernel_status"
+    if ! command -v nix >/dev/null 2>&1; then
+      printf '%s\n' \
+        "native kernel package CI requires either a loadable prebuilt native packed-matmul kernel or nix for kernel-builder." \
+        "Install nix, use a GPU image with nix, set LOCAL_KERNELS to a compatible built variant, wait for the Hugging Face kernel repo to become loadable, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 only when intentionally skipping native package closure." \
+        >&2
+      exit 1
+    fi
+    native_kernel_variant="$(native_kernel_runtime_variant_name)"
+    ensure_native_kernel_source_git
+    stage "native-kernel-package-build-start variant=$native_kernel_variant"
+    native_kernel_variant_dir="$(
+      cd "$NATIVE_KERNEL_SOURCE_DIR"
+      native_kernel_build_variant_dir "$native_kernel_variant"
+    )"
+    assert_native_kernel_variant_dir "$native_kernel_variant_dir"
+    export LOCAL_KERNELS="$NATIVE_KERNEL_REPO_ID=$native_kernel_variant_dir"
+    stage "native-kernel-package-build-done variant=$native_kernel_variant"
+    stage native-kernel-package-tests-start
+    PYTHONPATH="$native_kernel_variant_dir${PYTHONPATH:+:$PYTHONPATH}" \
+      pytest "$NATIVE_KERNEL_SOURCE_DIR/tests/test_packed_matmul.py" -q
+    stage native-kernel-package-tests-done
+    stage native-packed-matmul-load-start
+    python - <<'PY'
+from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
+kernel = load_native_packed_matmul_kernel()
+if not hasattr(kernel, "matmul_packed_weight"):
+    raise SystemExit("native packed matmul kernel is missing matmul_packed_weight")
+print("native-packed-matmul-kernel-ok", kernel)
+PY
+    stage native-packed-matmul-load-done
+    NATIVE_PACKED_MATMUL_READY=1
+  fi
   stage native-kernel-package-ci-done
 fi
 
-if [[ -n "${LOCAL_KERNELS:-}" ]]; then
+if [[ "${NATIVE_PACKED_MATMUL_READY:-0}" == "1" || -n "${LOCAL_KERNELS:-}" ]]; then
   stage native-packed-matmul-bench-start
   orbitquant kernel-bench \
     --tokens "$TOKENS" \

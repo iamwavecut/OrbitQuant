@@ -20,14 +20,16 @@ for the current artifact format and runtime modes.
   package; `optimized_stage` is populated only when that backend is active in
   the current environment.
 - `scripts/run_cuda_kernel_checks.sh` is the CUDA correctness and benchmark
-  gate for GPU hosts. By default it builds the exact
+  gate for GPU hosts. It first tries to load a prebuilt
+  `native_packed_matmul` package through Hugging Face `kernels`,
+  `LOCAL_KERNELS`, or an importable package. If no compatible prebuilt package
+  is available, it builds the exact
   `native-kernels/orbitquant-packed-matmul` kernel-builder redistributable
-  variant matching the runtime Torch/CUDA/platform tuple, loads that native
-  package through Hugging Face `kernels` via `LOCAL_KERNELS`, runs the native
+  variant matching the runtime Torch/CUDA/platform tuple, runs the native
   package tests, and benchmarks `native_packed_matmul` explicitly, matching the
-  `auto_fused` runtime priority. If the current kernel-builder matrix has no
-  matching variant, the gate fails explicitly instead of loading an
-  incompatible local build.
+  `auto_fused` runtime priority. If neither a compatible prebuilt package nor a
+  matching kernel-builder variant is available, the gate fails explicitly
+  instead of loading an incompatible build.
 - `scripts/runpod_ssh_health.sh` is the preflight for RunPod basic SSH hosts.
   It checks actual SSH authentication and remote command execution with
   `ssh -F /dev/null -tt`, ignoring local SSH config and ControlMaster state.
