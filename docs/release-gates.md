@@ -507,5 +507,15 @@ URL, or signed-off audit note.
   metric-table claims. Image paper-target artifacts then include GenEval
   overall and per-task scores; Wan artifacts then include all required VBench
   dimensions. Missing release metrics block only those metric/reproduction
-  claims; compact artifacts without those metrics must present native comparison
-  status instead of paper-reproduction metric claims.
+  claims; compact artifacts without those metrics must present native
+  comparison status instead of paper-reproduction metric claims. A
+  2026-07-09T18:12Z dry-run readiness check generated the external eval plan
+  and script without running GenEval or VBench. It verified 20 metric jobs:
+  8 `flux1-schnell-native` GenEval jobs, 8 `z-image-native` GenEval jobs, and
+  4 `wan-native` VBench jobs. The job matrix covered BF16/original and
+  OrbitQuant splits for W4A4/W3A3/W2A4/W2A3 image artifacts and W4A6/W4A4 Wan
+  artifacts. It also verified the generated VBench commands pass all required
+  dimensions as separate `--dimension` values:
+  `imaging_quality`, `aesthetic_quality`, `motion_smoothness`,
+  `dynamic_degree`, `background_consistency`, `subject_consistency`, `scene`,
+  and `overall_consistency`.

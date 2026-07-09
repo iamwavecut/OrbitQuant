@@ -52,10 +52,21 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "GenEval\n  overall and per-task scores" in release_gates
     assert "all required VBench\n  dimensions" in release_gates
     assert "Missing release metrics block only those metric/reproduction\n  claims" in release_gates
-    assert "compact artifacts without those metrics must present native comparison" in (
+    assert "compact artifacts without those metrics must present native\n  comparison" in (
         release_gates
     )
     assert "status instead of paper-reproduction metric claims" in release_gates
+    assert "2026-07-09T18:12Z dry-run readiness check" in release_gates
+    assert "verified 20 metric jobs" in release_gates
+    assert "8 `flux1-schnell-native` GenEval jobs" in release_gates
+    assert "8 `z-image-native` GenEval jobs" in release_gates
+    assert "4 `wan-native` VBench jobs" in release_gates
+    assert "W4A4/W3A3/W2A4/W2A3 image artifacts" in release_gates
+    assert "W4A6/W4A4 Wan\n  artifacts" in release_gates
+    assert "`imaging_quality`, `aesthetic_quality`, `motion_smoothness`" in (
+        release_gates
+    )
+    assert "`overall_consistency`" in release_gates
     assert "- [x] Full-model module classification inventories" in release_gates
     assert "Raw inventory JSON may\n  remain unpublished" in release_gates
     assert "`scripts/run_paper_methodology_checks.sh` produced and hash-checked" in (
