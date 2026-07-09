@@ -224,6 +224,23 @@ def _image_validation_stats(path: Path, *, blank_stddev_threshold: float) -> dic
         }
 
 
+def _read_json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{label} is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} is not a JSON object: {path}")
+    return payload
+
+
+def _expected_video_contact_sheet_size(suite: Any) -> list[int]:
+    sample_count = min(int(suite.frames), 9)
+    columns = 4
+    rows = (sample_count + columns - 1) // columns
+    return [int(suite.width) * columns, int(suite.height) * rows]
+
+
 def _validate_compare_native_bundle(
     bundle_dir: str | Path,
     *,
@@ -275,7 +292,29 @@ def _validate_compare_native_bundle(
             "wall_time_seconds": split_summary.get("wall_time_seconds"),
             "peak_vram_bytes": split_summary.get("peak_vram_bytes"),
         }
-        if not is_video:
+        if is_video:
+            metadata = _read_json_object(metadata_path, label=f"{split} metadata")
+            contact_sheet_path = _resolve_local_bundle_path(
+                bundle_path,
+                metadata.get("contact_sheet_path"),
+                label=f"{split}.contact_sheet_path",
+            )
+            contact_sheet_stats = _image_validation_stats(
+                contact_sheet_path,
+                blank_stddev_threshold=blank_stddev_threshold,
+            )
+            expected_contact_sheet_size = _expected_video_contact_sheet_size(suite)
+            if contact_sheet_stats["size"] != expected_contact_sheet_size:
+                raise RuntimeError(
+                    f"{split} contact sheet size mismatch: expected "
+                    f"{expected_contact_sheet_size}, got {contact_sheet_stats['size']}"
+                )
+            if contact_sheet_stats["blank_like"]:
+                raise RuntimeError(
+                    f"{split} contact sheet looks blank: {contact_sheet_stats['path']}"
+                )
+            split_payloads[split]["contact_sheet"] = contact_sheet_stats
+        else:
             split_payloads[split]["image"] = _image_validation_stats(
                 output_path,
                 blank_stddev_threshold=blank_stddev_threshold,
@@ -308,6 +347,17 @@ def _validate_compare_native_bundle(
                 )
             if image_stats["blank_like"]:
                 raise RuntimeError(f"{split} image looks blank: {image_stats['path']}")
+    else:
+        expected_contact_sheet_size = _expected_video_contact_sheet_size(suite)
+        expected_size = [
+            expected_contact_sheet_size[0] * 2,
+            expected_contact_sheet_size[1] + 24,
+        ]
+        if comparison_stats["size"] != expected_size:
+            raise RuntimeError(
+                "video comparison image size mismatch: "
+                f"expected {expected_size}, got {comparison_stats['size']}"
+            )
 
     original_time = split_payloads["original"]["wall_time_seconds"]
     orbitquant_time = split_payloads["orbitquant"]["wall_time_seconds"]

@@ -1150,6 +1150,123 @@ def test_cli_validate_comparison_accepts_copied_runpod_bundle(capsys, tmp_path):
     }
 
 
+def test_cli_validate_comparison_accepts_wan_video_contact_sheets(capsys, tmp_path):
+    from orbitquant.eval.assets import create_image_comparison_sheet
+
+    suite = get_native_suite("wan-native")
+    original_path = tmp_path / "wan-native_seed4_original.mp4"
+    orbitquant_path = tmp_path / "wan-native_seed4_W4A4.mp4"
+    original_contact_sheet = tmp_path / "wan-native_seed4_original_contact_sheet.webp"
+    orbitquant_contact_sheet = tmp_path / "wan-native_seed4_W4A4_contact_sheet.webp"
+    comparison_path = tmp_path / "wan-native_seed4_W4A4_original_vs_orbitquant.webp"
+    contact_sheet_size = (suite.width * 4, suite.height * 3)
+
+    for path in (original_path, orbitquant_path):
+        path.write_bytes(b"fake-mp4")
+    for path, colors in (
+        (original_contact_sheet, ((0, 0, 0), (255, 255, 255))),
+        (orbitquant_contact_sheet, ((255, 0, 0), (0, 0, 255))),
+    ):
+        sheet = Image.new("RGB", contact_sheet_size, colors[0])
+        sheet.paste(colors[1], (0, 0, contact_sheet_size[0] // 2, contact_sheet_size[1]))
+        sheet.save(path)
+    create_image_comparison_sheet(
+        original_contact_sheet,
+        orbitquant_contact_sheet,
+        comparison_path,
+        labels=("BF16", "OrbitQuant W4A4"),
+    )
+
+    for path, contact_sheet, bit_setting in (
+        (original_path, original_contact_sheet, "original"),
+        (orbitquant_path, orbitquant_contact_sheet, "W4A4"),
+    ):
+        metadata = {
+            "suite": suite.name,
+            "model_id": "example/wan-artifact-model",
+            "prompt": "A native video prompt",
+            "seed": 4,
+            "height": suite.height,
+            "width": suite.width,
+            "frames": suite.frames,
+            "export_fps": suite.export_fps,
+            "steps": suite.steps,
+            "guidance": suite.guidance,
+            "contact_sheet_path": f"/workspace/run/{contact_sheet.name}",
+            "quantization": None
+            if bit_setting == "original"
+            else {"config": {"weight_bits": 4, "activation_bits": 4}},
+        }
+        path.with_suffix(path.suffix + ".json").write_text(
+            json.dumps(metadata) + "\n",
+            encoding="utf-8",
+        )
+
+    (tmp_path / "summary.json").write_text(
+        json.dumps(
+            {
+                "suite": suite.name,
+                "model_id": "example/wan-artifact-model",
+                "source_model": "/workspace/hf-models/example-wan",
+                "artifact": "/workspace/artifacts/example-wan",
+                "component": "transformer",
+                "prompt": "A native video prompt",
+                "seed": 4,
+                "height": suite.height,
+                "width": suite.width,
+                "frames": suite.frames,
+                "steps": suite.steps,
+                "guidance": suite.guidance,
+                "dtype": "bfloat16",
+                "device": "cuda",
+                "bit_setting": "W4A4",
+                "runtime_mode": "triton_packed_matmul",
+                "activation_kernel_backend": "triton_cuda",
+                "enable_model_cpu_offload": True,
+                "available_backends": {"cpu": True, "mps": False, "triton_cuda": True},
+                "original": {
+                    "output_path": f"/workspace/run/{original_path.name}",
+                    "metadata_path": f"/workspace/run/{original_path.name}.json",
+                    "wall_time_seconds": 10.0,
+                    "peak_vram_bytes": 1000,
+                },
+                "orbitquant": {
+                    "output_path": f"/workspace/run/{orbitquant_path.name}",
+                    "metadata_path": f"/workspace/run/{orbitquant_path.name}.json",
+                    "wall_time_seconds": 14.0,
+                    "peak_vram_bytes": 900,
+                    "runtime": {
+                        "runtime_mode_counts": {"triton_packed_matmul": 1},
+                        "activation_kernel_backend_counts": {"triton_cuda": 1},
+                    },
+                },
+                "comparison_path": f"/workspace/run/{comparison_path.name}",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["validate-comparison", "--input", str(tmp_path)]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["valid"] is True
+    assert output["native_settings"]["frames"] == 81
+    assert output["original"]["contact_sheet"]["size"] == [
+        contact_sheet_size[0],
+        contact_sheet_size[1],
+    ]
+    assert output["orbitquant"]["contact_sheet"]["size"] == [
+        contact_sheet_size[0],
+        contact_sheet_size[1],
+    ]
+    assert output["comparison"]["size"] == [
+        contact_sheet_size[0] * 2,
+        contact_sheet_size[1] + 24,
+    ]
+    assert output["speed_ratio_orbitquant_over_original"] == 1.4
+
+
 def test_cli_validate_comparison_rejects_blank_images(tmp_path):
     suite = get_native_suite("flux2-native")
     for name, quantization in (
