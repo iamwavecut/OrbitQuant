@@ -96,6 +96,21 @@ print("native-packed-matmul-variant-ok", variant_dir.name)
 PY
 }
 
+ensure_native_kernel_source_git() {
+  if git -C "$NATIVE_KERNEL_SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return
+  fi
+
+  stage native-kernel-package-source-git-init-start
+  git -C "$NATIVE_KERNEL_SOURCE_DIR" init
+  git -C "$NATIVE_KERNEL_SOURCE_DIR" add -A .
+  git -C "$NATIVE_KERNEL_SOURCE_DIR" \
+    -c user.name=orbitquant-kernel-ci \
+    -c user.email=orbitquant-kernel-ci@example.invalid \
+    commit -m "Prepare source archive for kernel-builder"
+  stage native-kernel-package-source-git-init-done
+}
+
 cd "$ROOT_DIR"
 
 stage env-start
@@ -206,6 +221,7 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
     exit 1
   fi
   native_kernel_variant="$(native_kernel_runtime_variant_name)"
+  ensure_native_kernel_source_git
   stage "native-kernel-package-build-start variant=$native_kernel_variant"
   native_kernel_variant_dir="$(
     cd "$NATIVE_KERNEL_SOURCE_DIR"

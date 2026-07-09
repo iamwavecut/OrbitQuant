@@ -51,6 +51,9 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "native-kernel-package-ci-start" in cuda_script
     assert "native_kernel_runtime_variant_name" in cuda_script
     assert "native_kernel_build_variant_dir" in cuda_script
+    assert "ensure_native_kernel_source_git" in cuda_script
+    assert "native-kernel-package-source-git-init-start" in cuda_script
+    assert "Prepare source archive for kernel-builder" in cuda_script
     assert (
         'nix --extra-experimental-features "nix-command flakes" '
         '--option sandbox relaxed build --no-link --json ".#redistributable.$variant"'
