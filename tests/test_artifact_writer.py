@@ -109,6 +109,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert model_index["weight_quantization_backend"] == summary.weight_quantization_backend
     assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
     assert model_index["activation_eps"] == 1e-10
+    assert model_index["codebook_version"] == 2
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "model_index.json" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
@@ -160,6 +161,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert any("КВАНТОВАНИЕ" in item["prompt"] for item in prompts["prompts"])
     assert benchmark_summary["status"] == "not_run"
     assert benchmark_summary["source_model_id"] == "example/model"
+    assert benchmark_summary["codebook_version"] == 2
     assert benchmark_summary["quantization_device"] == summary.quantization_device
     assert benchmark_summary["weight_quantization_backend"] == summary.weight_quantization_backend
     assert benchmark_summary["quantization_staging_mode"] == summary.quantization_staging_mode
@@ -609,6 +611,39 @@ def test_validate_orbitquant_artifact_rejects_corrupted_codebook_semantics(tmp_p
         raise AssertionError("validate_orbitquant_artifact accepted a corrupted codebook")
 
 
+def test_validate_orbitquant_artifact_rejects_wrong_versioned_codebook(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    codebook_path = tmp_path / "orbitquant_codebooks.safetensors"
+    tensors = load_file(codebook_path)
+    centroids = tensors["dim8_bits4.centroids"] * 0.99
+    tensors["dim8_bits4.centroids"] = centroids
+    tensors["dim8_bits4.boundaries"] = (centroids[:-1] + centroids[1:]) / 2
+    save_file(tensors, codebook_path)
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["checksums"]["orbitquant_codebooks.safetensors"] = sha256_file(codebook_path)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest["checksums"])
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "do not match codebook version 2" in str(exc)
+    else:
+        raise AssertionError("validator accepted centroids from a different algorithm")
+
+
 def test_validate_orbitquant_artifact_rejects_corrupted_rotation_semantics(tmp_path):
     source = TinyArtifactModel()
     config = OrbitQuantConfig(block_size=4)
@@ -638,6 +673,37 @@ def test_validate_orbitquant_artifact_rejects_corrupted_rotation_semantics(tmp_p
         assert "artifact rotation tensor mismatch" in str(exc)
     else:
         raise AssertionError("validate_orbitquant_artifact accepted a corrupted rotation")
+
+
+def test_validate_orbitquant_artifact_rejects_valid_but_wrong_runtime_rotation(tmp_path):
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=4)
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    rotation_path = tmp_path / "orbitquant_rotations.safetensors"
+    tensors = load_file(rotation_path)
+    tensors["dim8_seed0_block4.signs"] = -tensors["dim8_seed0_block4.signs"]
+    save_file(tensors, rotation_path)
+    manifest_path = tmp_path / "orbitquant_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["checksums"]["orbitquant_rotations.safetensors"] = sha256_file(rotation_path)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    write_sha256sums_from_manifest(tmp_path, manifest["checksums"])
+
+    try:
+        validate_orbitquant_artifact(tmp_path)
+    except RuntimeError as exc:
+        assert "signs do not match runtime rotation" in str(exc)
+    else:
+        raise AssertionError("validator accepted a different valid RPBH draw")
 
 
 def test_record_artifact_metrics_keeps_manifest_and_sha256sums_valid(tmp_path):

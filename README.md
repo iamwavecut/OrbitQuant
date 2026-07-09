@@ -9,14 +9,12 @@ The library targets Hugging Face Diffusers pipelines and stores compact
 transformer-component artifacts that can be patched back into the original
 pipeline.
 
-The repository contains the Python package, quantization code, artifact tools,
-and validation helpers. Release-ready model repositories must contain compact
-artifacts, usage instructions, provenance, native validation summaries, and the
-final comparison matrices embedded by the model card.
+The repository contains the Python package, quantization code, compact artifact
+format, native packed kernels, and validation helpers.
 
 ## What It Provides
 
-- Data-agnostic RPBH rotation and Lloyd-Max codebook quantization.
+- Data-agnostic RPBH rotation and converged beta-marginal Lloyd-Max codebooks.
 - Weight and activation quantization for diffusion transformer linear modules.
 - INT4 RTN weight-only handling for AdaLN modulation projections.
 - Compact `safetensors` artifacts with manifest, codebooks, rotations, and
@@ -28,6 +26,10 @@ final comparison matrices embedded by the model card.
 
 Text encoders, VAE, embeddings, timestep MLPs, and final projection heads are
 left in source precision by default.
+
+New quantization uses codebook version 2. Artifacts record the codebook version
+that produced their packed indices; legacy version 1 artifacts remain loadable
+with their original centroids.
 
 ## Install
 
@@ -239,7 +241,6 @@ config = OrbitQuantConfig(
     weight_bits=4,
     activation_bits=4,
     target_policy="flux2",
-    activation_kernel_backend="triton_cuda",
 )
 summary = quantize_pipeline(
     pipe,
@@ -294,7 +295,6 @@ orbitquant quantize \
   --target-policy flux2 \
   --weight-bits 4 \
   --activation-bits 4 \
-  --activation-kernel-backend triton_cuda \
   --device cuda \
   --staging-mode component \
   --output ./artifacts/flux2-klein-w4a4

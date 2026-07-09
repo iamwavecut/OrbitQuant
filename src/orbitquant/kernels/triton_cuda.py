@@ -120,7 +120,7 @@ def _permute_sign_normalize_activation_kernel(
     source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norms = tl.load(norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
-    denom = tl.maximum(norms, eps)
+    denom = norms + eps
     values = tl.load(input_ptr + rows * dim + source_cols, mask=mask, other=0.0).to(
         tl.float32
     )
@@ -194,7 +194,7 @@ def _fused_rpbh_quantize_activation_kernel(
     source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
-    denominator = tl.maximum(norm, eps)
+    denominator = norm + eps
     values = tl.load(
         input_ptr + row * dim + source_cols,
         mask=mask,

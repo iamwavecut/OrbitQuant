@@ -1,11 +1,11 @@
 # OrbitQuant Paper Methodology Audit
 
-Status date: 2026-07-08.
-Verification: `scripts/run_paper_methodology_checks.sh` passed on
-2026-07-08T15:49Z against arXiv 2607.02461v1. The audit covers method
-conformance and claim boundaries; native artifact proof, public artifact
-publication, and release-grade GenEval/VBench metric claims remain separate
-release gates.
+Paper revision: arXiv 2607.02461v1.
+
+This audit defines the method-conformance and claim boundaries for OrbitQuant.
+Run `scripts/run_paper_methodology_checks.sh` to verify the implementation,
+model policies, artifact basis metadata, and native settings. Native artifact
+proof and release-grade GenEval/VBench metrics are separate release gates.
 
 Paper source:
 
@@ -48,25 +48,25 @@ Status legend:
 | Paper requirement | Current status | Evidence | Notes |
 | --- | --- | --- | --- |
 | No calibration data, prompt statistics, timestep ranges, or generated-image statistics are used to construct the quantizer. | Pass | `src/orbitquant/codebooks/lloyd_max.py`, `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/functional.py`, `src/orbitquant/layers.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `tests/test_artifact_writer.py` | Codebooks depend on `(dim, bits, algorithm_version)`. Rotations depend on `(dim, seed, block_size)`. Activations use only runtime token norms, and serialized layer/artifact state excludes activation calibration/range tensors. |
-| One Lloyd-Max scalar codebook is built offline per input dimension and bit width. | Pass | `get_codebook(dim, bits)` in `src/orbitquant/codebooks/lloyd_max.py`; `tests/test_codebooks.py`; `tests/test_orbit_linear.py`; `tests/test_artifact_writer.py` | Persistent cache keys include algorithm version, dimension, bits, checksum, and structural validation. Artifact codebook tensors are deduplicated by dimension and bits, not by layer. No prompt or timestep identifier enters the codebook. |
+| One converged Lloyd-Max scalar codebook is built offline per input dimension and bit width. | Pass for codebook version 2 | `get_codebook(dim, bits, algorithm_version)` in `src/orbitquant/codebooks/lloyd_max.py`; `tests/test_codebooks.py`; `tests/test_orbit_linear.py`; `tests/test_artifact_writer.py` | Version 2 evaluates the exact beta marginal and iterates to the Lloyd-Max centroid condition. Version 1 remains read-only compatibility for existing packed indices. Persistent cache keys include algorithm version, dimension, bits, checksum, and structural validation. |
 | Lloyd-Max target distribution is the coordinate marginal of a random unit vector in dimension `d`. | Pass | `_coordinate_density()` in `src/orbitquant/codebooks/lloyd_max.py` | The implementation uses the paper density up to normalization: `(1 - z^2)^((d - 3) / 2)` on `[-1, 1]`, then normalizes numerically. |
 | Quantization uses nearest fixed centroids, with no zero-point, learned scale, per-channel range, or timestep/prompt range. | Pass | `LloydMaxCodebook.quantize_indices()` and `quantize()` in `src/orbitquant/codebooks/lloyd_max.py` | `torch.bucketize` against midpoint boundaries is equivalent to nearest-centroid lookup for sorted Lloyd-Max centroids. |
 | RPBH uses uniform random permutation, Rademacher signs, per-block Walsh-Hadamard transform, and `1 / sqrt(block_size)` normalization. | Pass | `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/rotations/fwht.py`, `tests/test_rpbh.py` | The implementation applies permutation first, then signs, then block FWHT and normalization. |
 | RPBH stores compact permutation/sign metadata, not dense rotation matrices. | Pass | `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/artifacts/writer.py` | Artifact rotation tensors are permutation, inverse permutation, signs, and normalization metadata. |
-| Compact artifact sidecar files are inspectable for basis semantics. | Pass | `src/orbitquant/artifacts/validator.py`, `tests/test_artifact_writer.py` | Validation checks codebook tensor names, centroid/boundary shapes, sorting, symmetry, midpoint boundaries, and rotation permutation/inverse/sign/normalization semantics. Checksums alone are not treated as sufficient evidence. |
+| Compact artifact sidecar files identify the exact runtime basis. | Pass | `src/orbitquant/artifacts/validator.py`, `tests/test_artifact_writer.py` | Validation checks shapes and semantics, then compares centroids and boundaries with the declared codebook version and compares permutation/sign tensors with the runtime RPBH draw. Checksums alone are not treated as sufficient evidence. |
 | Default paper block-size policy is the largest power of two dividing the input dimension. | Pass | `RPBHRotation.__post_init__()` in `src/orbitquant/rotations/rpbh.py`; `tests/test_rpbh.py` | Degenerate dimensions warn and fall back to signs/permutation only. |
 | Weight rotation is folded offline so activations and weights share the same basis. | Pass | `OrbitQuantLinear.from_linear()` in `src/orbitquant/layers.py`; `tests/test_rpbh.py`; `tests/test_orbit_linear.py` | For PyTorch `linear(x, W, b)`, the code stores `W @ R` and computes `(x @ R) @ (W @ R).T + b`. |
 | No inverse rotation is used in runtime quantized forward. | Pass | `OrbitQuantLinear.forward()` in `src/orbitquant/layers.py` | Inverse rotation appears only in `_dequantize()` conversion back to ordinary linear modules. |
 | Weight rows are split into row norm plus unit direction; row norm is BF16. | Pass | `OrbitQuantLinear.from_linear()` in `src/orbitquant/layers.py`, `tests/test_orbit_linear.py` | Raw row norms are stored as BF16 buffers. The epsilon guard is used only for division, so zero rows dequantize back to zero rows instead of receiving an epsilon-scaled codebook value. |
 | Weight direction coordinates are quantized with the Lloyd-Max codebook and packed into low-bit indices. | Pass | `src/orbitquant/layers.py`, `src/orbitquant/packing/bitpack.py`, `tests/test_bitpack.py`, `tests/test_kernels.py` | Bit packing covers 2, 3, 4, and 6 bit paths. |
-| Runtime activations compute per-token norm `s`, normalize with `max(s, ε)` as the zero-norm guard, apply RPBH, nearest-centroid quantize, and rescale by the raw token norm `s` with `ε = 1e-10` by default. | Pass | `src/orbitquant/config.py`, `src/orbitquant/functional.py`, `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `tests/test_config.py`, `tests/test_orbit_linear.py`, `tests/test_kernels.py` | Arbitrary leading dimensions are preserved; the final feature dimension is the rotation dimension. Tests cover per-token positive scale equivariance, batch independence from unrelated outlier tokens, exact zero-token preservation, and a manual CPU golden path for the clamp guard. `activation_eps` remains configurable for debugging or compatibility, and manifests record the actual value. |
+| Runtime activations compute per-token norm `s`, normalize by `s + ε`, apply RPBH, nearest-centroid quantize, and rescale by the raw token norm `s`, with `ε = 1e-10` by default. | Pass | `src/orbitquant/config.py`, `src/orbitquant/functional.py`, `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_config.py`, `tests/test_orbit_linear.py`, `tests/test_kernels.py` | This follows Algorithm 1 exactly. Arbitrary leading dimensions are preserved, zero tokens remain zero after rescaling, and CPU, Triton/CUDA, and Metal/MPS paths use the same denominator. Manifests record the actual epsilon. |
 | The only input-dependent runtime scalar is the per-token norm. | Pass | `src/orbitquant/functional.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Codebook, rotation, centroids, boundaries, signs, and permutation are fixed after construction; persistent layer state is limited to packed weight indices, row norms, and optional bias. |
 | AdaLN modulation projections use INT4 weight-only RTN with group size 64 and BF16 activations. | Pass | `src/orbitquant/adaln.py`, `src/orbitquant/config.py`, `src/orbitquant/artifacts/manifest.py`, `tests/test_adaln_rtn.py` | AdaLN wrappers do not call OrbitQuant activation rotation. Default `adaln_group_size` is 64, and artifacts record the actual group size so non-default artifacts are labeled. |
 | Transformer-block linear projections are quantized through OrbitQuant. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Current Diffusers transformer configs are covered for FLUX.1, FLUX.2, Z-Image, and Wan. Artifact manifests still need per-artifact cross-checks before final publication. |
 | Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
 | Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Native artifact-readiness evidence is separate from release-grade metric tables. Full metric runs are required before metric-table or paper-reproduction claims. |
 | FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py`, `docs/release-gates.md` | It is treated as an additional target using paper-style native settings. |
-| Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Default `auto_fused` runtime requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. Full-model speedup claims still require benchmark artifacts. |
+| Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Default `auto_fused` requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. CUDA and MPS avoid full weight materialization; throughput varies by model and is reported only from measured benchmarks. |
 | Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `docs/release-gates.md` | Missing metrics block only paper metric/reproduction claims. |
 
 ## Model Policy Evidence
@@ -124,7 +124,7 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 | --- | --- | --- | --- |
 | CPU | Pass as reference | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/functional.py` | Correctness baseline only; no optimized CPU kernel claim. |
 | CUDA/Triton | Partial optimized path | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Covers activation norm/RPBH/lookup/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and packed matmul. Default `auto_fused` selects native packed matmul first, then Triton packed matmul when available. |
-| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_orbit_linear.py` | Default `auto_fused` requires the native Metal packed matmul package. Lower-level Metal helpers cover codebook lookup/rescale and packed weight dequant. |
+| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | A fused Metal shader performs activation norm, RPBH/FWHT, codebook lookup, and rescale. `auto_fused` requires the native Metal packed matmul package and avoids full weight materialization. Offline weight and AdaLN quantization remain reference paths on MPS. |
 | ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
 | XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
 
@@ -161,17 +161,16 @@ the paper's GenEval or VBench numbers.
 | Explicit `dequant_bf16` runtime uses dequantized BF16 matmul. | Accepted reference path | It is kept for compatibility and debugging. Do not claim it as low-bit fused inference. |
 | Zero weight rows use an epsilon guard for direction quantization. | Accepted implementation guard | The paper defines weight directions as `w' / ||w'||` for nonzero rows. The implementation divides by `max(||w'||, ε)` only when choosing codebook indices, stores the raw BF16 row norm, and dequantizes zero rows back to exactly zero. |
 | Full-model speedup is not yet a release claim. | Accepted claim boundary | `auto_fused`, `native_packed_matmul`, and `triton_packed_matmul` use packed matmul paths, but model-specific benchmark artifacts are still required before broad acceleration claims. |
+| The paper's block-size enumeration omits `h=256`, although its stated largest-power-of-two-divisor rule gives `h=256` for Z-Image `d=3840` and Wan `d=8960` projections. | Paper inconsistency | The implementation follows the formal rule. The selected target dimensions produce `h` in `{256, 512, 1024, 2048, 4096}`. |
+| Public checkpoints with `codebook_version=1` use the legacy, prematurely stopped Lloyd-Max iteration. | Artifact replacement required | They remain loadable with version 1 semantics, but they do not support a paper-conformance claim. Paper-conformant checkpoints must be regenerated with codebook version 2 and `activation_eps=1e-10`. |
 | Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
 | Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
 
 ## Next Audit Actions
 
-1. Cross-check each published artifact manifest against the matching inventory
-   summary before public release.
-2. Run or verify targeted native comparison evidence for each published
-   artifact before refreshing cards.
-3. Run full GenEval/VBench only before paper-reproduction or metric-table
-   claims.
-4. Complete backend-specific release notes for CUDA, CPU, MPS/Metal, ROCm, and
-   XPU before public release.
+1. Replace all version 1 public checkpoints with version 2 artifacts using
+   `activation_eps=1e-10`.
+2. Validate each replacement manifest against its model-policy inventory and
+   publish a native BF16-versus-OrbitQuant comparison.
+3. Run full GenEval/VBench before making paper-reproduction metric claims.

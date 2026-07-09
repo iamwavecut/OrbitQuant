@@ -78,7 +78,7 @@ inline void orbitquant_fused_activation_impl(
   const uint block_start = block * uint(block_size);
   const uint row_offset = row * uint(dim);
   const float norm = norms[row];
-  const float inverse_norm = 1.0f / max(norm, eps);
+  const float inverse_norm = 1.0f / (norm + eps);
 
   for (uint col = thread_index; col < uint(block_size); col += thread_count) {
     const uint rotated_col = block_start + col;

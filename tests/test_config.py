@@ -41,6 +41,16 @@ def test_orbit_quant_config_default_epsilon_matches_paper_equation():
     assert config.activation_eps == 1e-10
 
 
+def test_orbit_quant_config_defaults_to_converged_codebook_version():
+    assert OrbitQuantConfig().codebook_version == 2
+
+
+def test_orbit_quant_config_reads_unversioned_artifacts_as_legacy_codebooks():
+    restored = OrbitQuantConfig.from_dict({"weight_bits": 4, "activation_bits": 4})
+
+    assert restored.codebook_version == 1
+
+
 def test_orbit_quant_config_defaults_to_auto_fused_runtime_mode():
     config = OrbitQuantConfig()
 

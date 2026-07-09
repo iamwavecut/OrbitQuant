@@ -4,6 +4,7 @@ from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.functional import quantize_activations
 from orbitquant.layers import OrbitQuantLinear
+from orbitquant.rotations import RPBHRotation
 
 
 def test_layers_with_same_input_dimension_share_orbit_state():
@@ -95,3 +96,22 @@ def test_manifest_records_data_agnostic_quantization_without_calibration_state()
         for value in payload.values()
         for term in forbidden_terms
     )
+
+
+def test_paper_block_rule_covers_all_target_projection_dimensions():
+    expected = {
+        1536: 512,
+        3072: 1024,
+        3840: 256,
+        8960: 256,
+        9216: 1024,
+        10240: 2048,
+        12288: 4096,
+        15360: 1024,
+    }
+
+    actual = {
+        dim: RPBHRotation(dim=dim, block_size="paper").block_size for dim in expected
+    }
+
+    assert actual == expected

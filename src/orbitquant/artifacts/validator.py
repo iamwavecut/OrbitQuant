@@ -11,7 +11,9 @@ from safetensors.torch import load_file
 
 from orbitquant.artifacts.checksums import validate_checksums, validate_sha256sums
 from orbitquant.artifacts.manifest import OrbitQuantManifest
+from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.rotations import get_rpbh_rotation
 
 _REQUIRED_ARTIFACT_FILES = (
     "README.md",
@@ -56,6 +58,7 @@ def _validate_config_manifest(config: OrbitQuantConfig, manifest: OrbitQuantMani
         "activation_bits": config.activation_bits,
         "rotation_seed": config.rotation_seed,
         "block_size": config.block_size,
+        "codebook_version": config.codebook_version,
         "target_policy": config.target_policy,
         "runtime_mode": config.runtime_mode,
         "activation_kernel_backend": config.activation_kernel_backend,
@@ -97,6 +100,8 @@ def _validate_model_index(
     }
     if "activation_eps" in model_index:
         expected["activation_eps"] = config.activation_eps
+    if "codebook_version" in model_index:
+        expected["codebook_version"] = config.codebook_version
     if manifest.quantization_device != "unknown" or "quantization_device" in model_index:
         expected["quantization_device"] = manifest.quantization_device
     if (
@@ -179,6 +184,17 @@ def _validate_codebook_tensors(
         expected_boundaries = (centroids[:-1] + centroids[1:]) / 2
         if not torch.allclose(boundaries, expected_boundaries, atol=1e-6):
             mismatches.append(f"dim{dim}_bits{bits}: boundaries are not midpoints")
+        expected_codebook = get_codebook(dim, bits, config.codebook_version)
+        if not torch.equal(centroids, expected_codebook.centroids):
+            mismatches.append(
+                f"dim{dim}_bits{bits}: centroids do not match codebook version "
+                f"{config.codebook_version}"
+            )
+        if not torch.equal(boundaries, expected_codebook.boundaries):
+            mismatches.append(
+                f"dim{dim}_bits{bits}: boundaries do not match codebook version "
+                f"{config.codebook_version}"
+            )
 
     if mismatches:
         raise RuntimeError("artifact codebook tensor mismatch: " + "; ".join(mismatches))
@@ -251,6 +267,13 @@ def _validate_rotation_tensors(
             normalization, torch.tensor([1.0 / math.sqrt(block)], dtype=torch.float32)
         ):
             mismatches.append(f"{prefix}: normalization mismatch")
+        expected_rotation = get_rpbh_rotation(dim, seed=seed, block_size=block)
+        if not torch.equal(permutation, expected_rotation.permutation):
+            mismatches.append(f"{prefix}: permutation does not match runtime rotation")
+        if not torch.equal(inverse, expected_rotation.inverse_permutation):
+            mismatches.append(f"{prefix}: inverse does not match runtime rotation")
+        if not torch.equal(signs.to(torch.int8), expected_rotation.signs):
+            mismatches.append(f"{prefix}: signs do not match runtime rotation")
 
     if mismatches:
         raise RuntimeError("artifact rotation tensor mismatch: " + "; ".join(mismatches))
@@ -323,6 +346,7 @@ def validate_orbitquant_artifact(
         "source_license": manifest.source_license,
         "weight_bits": config.weight_bits,
         "activation_bits": config.activation_bits,
+        "codebook_version": config.codebook_version,
         "target_policy": config.target_policy,
         "component": model_index["component"],
         "runtime_mode": config.runtime_mode,

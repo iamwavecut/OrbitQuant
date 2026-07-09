@@ -59,7 +59,7 @@ class OrbitQuantManifest:
             block_size_policy="largest_power_of_two_dividing_dim"
             if config.block_size == "paper"
             else "explicit",
-            codebook_version=1,
+            codebook_version=config.codebook_version,
             target_policy=config.target_policy,
             runtime_mode=config.runtime_mode,
             activation_kernel_backend=config.activation_kernel_backend,

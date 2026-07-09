@@ -32,7 +32,7 @@ def test_manifest_records_source_and_quantization_settings():
     assert data["block_size"] == 128
     assert data["block_size_policy"] == "explicit"
     assert data["codebook"] == "lloyd_max"
-    assert data["codebook_version"] == 1
+    assert data["codebook_version"] == 2
     assert data["activation_eps"] == 1e-10
     assert data["quantized_modules"] == ["transformer_blocks.0.attn.to_q"]
 
@@ -40,7 +40,7 @@ def test_manifest_records_source_and_quantization_settings():
     assert restored.rotation_seed == 17
     assert restored.block_size == 128
     assert restored.block_size_policy == "explicit"
-    assert restored.codebook_version == 1
+    assert restored.codebook_version == 2
     assert restored.activation_eps == 1e-10
 
 

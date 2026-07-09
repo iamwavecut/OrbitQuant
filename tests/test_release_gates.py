@@ -931,15 +931,19 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
 def test_paper_methodology_audit_uses_claim_boundary_language():
     audit = Path("docs/paper-methodology-audit.md").read_text(encoding="utf-8")
 
-    assert "Verification: `scripts/run_paper_methodology_checks.sh` passed" in audit
-    assert "2026-07-08T15:49Z against arXiv 2607.02461v1" in audit
-    assert "release-grade GenEval/VBench metric claims remain separate" in audit
+    assert "Paper revision: arXiv 2607.02461v1" in audit
+    assert "Run `scripts/run_paper_methodology_checks.sh`" in audit
+    assert "release-grade GenEval/VBench metrics are separate release gates" in audit
     assert "Native artifact readiness is separate from full GenEval or VBench scoring" in (
         audit
     )
     assert "Pending Evidence For Acceleration Claims" in audit
     assert "Raw inventory JSON is audit evidence" in audit
     assert "not a development log" in audit
+    assert "normalize by `s + ε`" in audit
+    assert "Pass for codebook version 2" in audit
+    assert "Public checkpoints with `codebook_version=1`" in audit
+    assert "paper's block-size enumeration omits `h=256`" in audit
     for forbidden in (
         "Full GenEval/VBench is optional during development",
         "The current development path",

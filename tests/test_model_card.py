@@ -67,7 +67,7 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     assert "- Rotation seed: `9`" in card
     assert "- Block size: `paper`" in card
     assert "- Block size policy: `largest_power_of_two_dividing_dim`" in card
-    assert "- Codebook version: `1`" in card
+    assert "- Codebook version: `2`" in card
     assert "- Target policy: `z_image`" in card
     assert "- Quantized transformer modules: `1`" in card
     assert "## Native Settings" in card

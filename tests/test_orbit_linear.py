@@ -98,6 +98,26 @@ def test_orbit_linear_weight_indices_quantize_rotated_unit_directions():
     assert torch.equal(actual_indices, expected_indices)
 
 
+def test_orbit_linear_uses_configured_codebook_algorithm_version():
+    source = torch.nn.Linear(16, 7)
+
+    legacy = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(codebook_version=1),
+        module_name="block.ff.linear",
+    )
+    current = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(codebook_version=2),
+        module_name="block.ff.linear",
+    )
+
+    assert legacy.weight_codebook.algorithm_version == 1
+    assert legacy.activation_codebook.algorithm_version == 1
+    assert current.weight_codebook.algorithm_version == 2
+    assert current.activation_codebook.algorithm_version == 2
+
+
 def test_orbit_linear_stores_raw_zero_row_norm_and_dequantizes_zero_row():
     source = torch.nn.Linear(16, 7, bias=False)
     with torch.no_grad():
@@ -143,7 +163,7 @@ def test_orbit_linear_quantized_forward_matches_manual_paper_equation(monkeypatc
     work = x.to(torch.float32)
     token_norms = work.norm(dim=-1, keepdim=True)
     activation_unit = quantized.rotation.apply_to_activations(
-        work / token_norms.clamp_min(config.activation_eps)
+        work / (token_norms + config.activation_eps)
     )
     dequantized_activation = token_norms * quantized.activation_codebook.quantize(
         activation_unit

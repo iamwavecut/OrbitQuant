@@ -57,6 +57,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     rotation_seed: int = 0
     block_size: int | str = "paper"
     codebook: str = "lloyd_max"
+    codebook_version: int = 2
     codebook_dtype: str = "float32"
     row_norm_dtype: str = "bfloat16"
     activation_norm_dtype: str = "float32"
@@ -87,6 +88,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("only RPBH rotation is implemented")
         if self.codebook != "lloyd_max":
             raise ValueError("only Lloyd-Max codebooks are implemented")
+        if self.codebook_version not in {1, 2}:
+            raise ValueError("codebook_version must be 1 or 2")
         if self.codebook_dtype.lower() not in _SUPPORTED_CODEBOOK_DTYPES:
             raise ValueError("codebook_dtype must be 'float32'")
         if self.row_norm_dtype.lower() not in _SUPPORTED_ROW_NORM_DTYPES:
@@ -145,4 +148,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
         values = dict(data)
         values.pop("_class_name", None)
         values.pop("_diffusers_version", None)
+        # Artifacts produced before codebook versioning used the legacy v1
+        # centroids. Preserve their packed-index interpretation on load.
+        values.setdefault("codebook_version", 1)
         return cls(**values)

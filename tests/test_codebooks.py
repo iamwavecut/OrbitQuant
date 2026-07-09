@@ -38,26 +38,26 @@ def test_lloyd_max_codebook_matches_deterministic_unit_sphere_oracle(monkeypatch
 
     expected_centroids = torch.tensor(
         [
-            -0.36600566,
-            -0.23213057,
-            -0.13146324,
-            -0.04273151,
-            0.04273151,
-            0.13146324,
-            0.23213057,
-            0.36600566,
+            -0.36626825,
+            -0.23246057,
+            -0.13175610,
+            -0.04285152,
+            0.04285152,
+            0.13175610,
+            0.23246057,
+            0.36626825,
         ],
         dtype=torch.float32,
     )
     expected_boundaries = torch.tensor(
         [
-            -0.29906812,
-            -0.18179691,
-            -0.08709738,
+            -0.29936442,
+            -0.18210834,
+            -0.08730381,
             0.0,
-            0.08709738,
-            0.18179691,
-            0.29906812,
+            0.08730381,
+            0.18210834,
+            0.29936442,
         ],
         dtype=torch.float32,
     )
@@ -77,6 +77,55 @@ def test_lloyd_max_codebook_matches_deterministic_unit_sphere_oracle(monkeypatch
     uniform_mse = torch.mean((uniform_centroids[uniform_indices] - coordinates) ** 2)
 
     assert lloyd_mse < uniform_mse * 0.2
+
+
+def test_legacy_codebook_version_preserves_existing_artifact_centroids(monkeypatch):
+    monkeypatch.setenv("ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE", "1")
+    clear_codebook_cache()
+
+    legacy = get_codebook(dim=32, bits=3, algorithm_version=1)
+
+    expected = torch.tensor(
+        [
+            -0.36600566,
+            -0.23213057,
+            -0.13146324,
+            -0.04273151,
+            0.04273151,
+            0.13146324,
+            0.23213057,
+            0.36600566,
+        ],
+        dtype=torch.float32,
+    )
+    assert legacy.algorithm_version == 1
+    torch.testing.assert_close(legacy.centroids, expected, atol=1e-6, rtol=0)
+
+
+def test_v2_codebook_satisfies_lloyd_max_centroid_condition(monkeypatch):
+    monkeypatch.setenv("ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE", "1")
+    clear_codebook_cache()
+    codebook = get_codebook(dim=128, bits=6, algorithm_version=2)
+    positive = codebook.centroids[codebook.centroids.numel() // 2 :].double()
+    edges = torch.cat(
+        (
+            torch.zeros(1, dtype=torch.float64),
+            (positive[:-1] + positive[1:]) / 2,
+            torch.ones(1, dtype=torch.float64),
+        )
+    )
+
+    conditional_means = torch.tensor(
+        [
+            lloyd_max_module._positive_interval_centroid(
+                128, float(edges[index]), float(edges[index + 1])
+            )
+            for index in range(positive.numel())
+        ],
+        dtype=torch.float64,
+    )
+
+    torch.testing.assert_close(positive, conditional_means, atol=1e-7, rtol=0)
 
 
 def test_lloyd_max_quantization_error_decreases_with_bits():

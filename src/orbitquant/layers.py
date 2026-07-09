@@ -160,8 +160,12 @@ class OrbitQuantLinear(nn.Module):
         self.rotation = get_rpbh_rotation(
             dim=in_features, seed=config.rotation_seed, block_size=config.block_size
         )
-        self.weight_codebook = get_codebook(in_features, config.weight_bits)
-        self.activation_codebook = get_codebook(in_features, config.activation_bits)
+        self.weight_codebook = get_codebook(
+            in_features, config.weight_bits, config.codebook_version
+        )
+        self.activation_codebook = get_codebook(
+            in_features, config.activation_bits, config.codebook_version
+        )
         constant_device = _first_available_device(
             packed_weight_indices,
             row_norms,
@@ -248,7 +252,9 @@ class OrbitQuantLinear(nn.Module):
         else:
             quantization_weight = source_weight.to(torch.float32)
             row_norms = quantization_weight.norm(dim=-1)
-        codebook = get_codebook(layer.in_features, config.weight_bits)
+        codebook = get_codebook(
+            layer.in_features, config.weight_bits, config.codebook_version
+        )
         packed = _quantize_weight_pack(
             quantization_weight,
             row_norms,
@@ -512,7 +518,7 @@ class OrbitQuantLinear(nn.Module):
             work = x.to(torch.float32)
             norms = work.norm(dim=-1, keepdim=True)
             rotated_x = (
-                self.rotation.apply_to_activations(work / norms.clamp_min(self.activation_eps))
+                self.rotation.apply_to_activations(work / (norms + self.activation_eps))
                 * norms
             ).to(x.dtype)
         else:
