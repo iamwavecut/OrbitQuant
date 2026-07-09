@@ -83,9 +83,7 @@ class FakeAuditHfApi:
                     if lfs_sha256 is not None
                     else None
                 )
-                siblings.append(
-                    SimpleNamespace(rfilename=name, size=metadata.get("size"), lfs=lfs)
-                )
+                siblings.append(SimpleNamespace(rfilename=name, size=metadata.get("size"), lfs=lfs))
             else:
                 siblings.append(SimpleNamespace(rfilename=name, size=metadata, lfs=None))
         return SimpleNamespace(
@@ -195,9 +193,7 @@ def _audit_file_map(
         manifest_payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
         manifest_payload.setdefault("source_revision", "unknown")
         manifest_payload.setdefault("source_license", "unknown")
-        manifest = hub_module.OrbitQuantManifest.from_dict(
-            manifest_payload
-        )
+        manifest = hub_module.OrbitQuantManifest.from_dict(manifest_payload)
         benchmark_summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
         Path(readme_path).write_text(
             hub_module.render_model_card(manifest, benchmark_summary=benchmark_summary),
@@ -345,10 +341,7 @@ def _write_native_smoke_backup(
                 },
             ),
         ):
-            media_path = (
-                assets
-                / f"{suite.name}_seed0_{split_token}_{prompt_id}.{extension}"
-            )
+            media_path = assets / f"{suite.name}_seed0_{split_token}_{prompt_id}.{extension}"
             media_path.write_bytes(b"not empty")
             metadata = {
                 "suite": suite.name,
@@ -463,9 +456,7 @@ def test_recover_native_smoke_proof_rejects_missing_generated_samples():
         guidance=1.0,
         bit_settings=["W4A4"],
     )
-    summary = json.loads(
-        _legacy_compact_summary_without_native_smoke(suite, generated_samples=0)
-    )
+    summary = json.loads(_legacy_compact_summary_without_native_smoke(suite, generated_samples=0))
     summary.pop("raw_generation_records")
 
     proof, reason = hub_module._recover_native_smoke_proof_from_compact_summary(
@@ -532,9 +523,7 @@ def test_stage_compact_upload_artifact_omits_raw_eval_reports_and_promotes_matri
     raw_eval_metadata = raw_eval_asset.with_suffix(".png.json")
     visual_asset = tmp_path / "assets" / "flux2-native_seed0_W4A4_simple-object.png"
     comparison_asset = (
-        tmp_path
-        / "assets"
-        / "original_vs_orbitquant_flux2-native_seed0_W4A4_simple-object.webp"
+        tmp_path / "assets" / "original_vs_orbitquant_flux2-native_seed0_W4A4_simple-object.webp"
     )
     raw_video_asset = tmp_path / "assets" / "wan-native_seed0_W4A4_simple-motion.mp4"
     raw_video_metadata = raw_video_asset.with_suffix(".mp4.json")
@@ -649,9 +638,7 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
     raw_video = tmp_path / "assets" / "wan-native_seed0_W4A4_motion.mp4"
     raw_video_sidecar = raw_video.with_suffix(".mp4.json")
     nested_raw = tmp_path / "assets" / "nested" / "debug_frame.png"
-    nested_matrix = (
-        tmp_path / "assets" / "nested" / "debug_generation_comparison_matrix.webp"
-    )
+    nested_matrix = tmp_path / "assets" / "nested" / "debug_generation_comparison_matrix.webp"
     unexpected_file = tmp_path / "debug.txt"
     ignored_cache = tmp_path / ".cache" / "upload.tmp"
     for path, payload in (
@@ -676,9 +663,7 @@ def test_stage_compact_upload_artifact_enforces_asset_allowlist(tmp_path):
     result = stage_compact_upload_artifact(tmp_path, stage_dir, validate_tensors=False)
 
     staged_files = {
-        path.relative_to(stage_dir).as_posix()
-        for path in stage_dir.rglob("*")
-        if path.is_file()
+        path.relative_to(stage_dir).as_posix() for path in stage_dir.rglob("*") if path.is_file()
     }
     expected_files = set(hub_module._REQUIRED_ARTIFACT_FILES) | {
         "assets/image_generation_comparison_matrix.webp"
@@ -824,6 +809,77 @@ def test_stage_compact_upload_artifact_writes_native_smoke_proof(tmp_path):
     }
 
 
+def test_stage_compact_upload_artifact_promotes_compare_native_bundle(tmp_path):
+    _write_artifact(tmp_path)
+    bundle_dir = tmp_path.parent / f"{tmp_path.name}-compare-native"
+    bundle_dir.mkdir()
+    comparison = bundle_dir / "flux2-native_seed0_W4A4_original_vs_orbitquant.webp"
+    original = bundle_dir / "flux2-native_seed0_original.png"
+    orbitquant = bundle_dir / "flux2-native_seed0_W4A4.png"
+    for path, payload in (
+        (comparison, b"comparison"),
+        (original, b"original"),
+        (orbitquant, b"orbitquant"),
+    ):
+        path.write_bytes(payload)
+    metadata = {
+        "suite": "flux2-native",
+        "prompt": "A native prompt",
+        "prompt_record": {"id": "simple-object"},
+        "seed": 0,
+        "height": 1024,
+        "width": 1024,
+        "frames": None,
+        "steps": 4,
+        "guidance": 1.0,
+    }
+    for output in (original, orbitquant):
+        output.with_suffix(output.suffix + ".json").write_text(
+            json.dumps(metadata) + "\n", encoding="utf-8"
+        )
+    (bundle_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                **metadata,
+                "model_id": "example/model",
+                "bit_setting": "W4A4",
+                "comparison_path": "/workspace/run/" + comparison.name,
+                "original": {
+                    "output_path": "/workspace/run/" + original.name,
+                    "metadata_path": "/workspace/run/" + original.name + ".json",
+                },
+                "orbitquant": {
+                    "output_path": "/workspace/run/" + orbitquant.name,
+                    "metadata_path": "/workspace/run/" + orbitquant.name + ".json",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    stage_dir = tmp_path.parent / f"{tmp_path.name}-compare-native-stage"
+    result = stage_compact_upload_artifact(
+        tmp_path,
+        stage_dir,
+        report_dirs=[bundle_dir],
+        validate_tensors=False,
+    )
+
+    matrix_path = stage_dir / "assets" / "image_generation_comparison_matrix.webp"
+    summary = json.loads((stage_dir / "benchmark" / "summary.json").read_text())
+    proof = summary["native_smoke"]
+    assert result["copied_report_assets"] == ["assets/image_generation_comparison_matrix.webp"]
+    assert matrix_path.read_bytes() == b"comparison"
+    assert proof["proof_source"] == "local_compare_native_bundle"
+    assert proof["comparison_asset_path"] == ("assets/image_generation_comparison_matrix.webp")
+    assert proof["paired_prompt_seed_keys"] == [["flux2-native", "0", "simple-object"]]
+    assert proof["splits"]["original"]["nonempty_output_count"] == 1
+    assert proof["splits"]["orbitquant"]["nonempty_output_count"] == 1
+    assert not (stage_dir / original.name).exists()
+    assert not (stage_dir / orbitquant.name).exists()
+
+
 def test_repair_hf_artifact_metadata_dry_run_preserves_large_file_checksum(
     tmp_path,
     monkeypatch,
@@ -865,9 +921,7 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
     stale_cache_metadata.parent.mkdir(parents=True)
     stale_cache_metadata.write_text("transient hub metadata", encoding="utf-8")
     with (tmp_path / "SHA256SUMS").open("a", encoding="utf-8") as handle:
-        handle.write(
-            "0" * 64 + "  .cache/huggingface/download/README.md.metadata\n"
-        )
+        handle.write("0" * 64 + "  .cache/huggingface/download/README.md.metadata\n")
     old_checksums = read_sha256sums(tmp_path / "SHA256SUMS")
 
     def fake_download(repo, filename, **kwargs):
@@ -916,10 +970,7 @@ def test_repair_hf_artifact_metadata_commits_only_metadata_files_and_sha256sums(
         for operation in commit_call["operations"]
         if operation.path_in_repo == "orbitquant_manifest.json"
     )
-    assert (
-        b'"quantization_staging_mode": "component"'
-        in manifest_operation.path_or_fileobj
-    )
+    assert b'"quantization_staging_mode": "component"' in manifest_operation.path_or_fileobj
     assert b'"activation_eps": 1e-10' in manifest_operation.path_or_fileobj
 
 
@@ -980,9 +1031,7 @@ def test_cleanup_hf_artifact_reports_promotes_matrices_and_deletes_report_folder
         if isinstance(operation, CommitOperationAdd)
     }
     deleted = [
-        operation
-        for operation in operations
-        if isinstance(operation, CommitOperationDelete)
+        operation for operation in operations if isinstance(operation, CommitOperationDelete)
     ]
     assert "model.safetensors" not in added
     assert added["assets/image_generation_comparison_matrix.webp"] == b"report matrix"
@@ -1257,12 +1306,11 @@ def test_repair_hf_native_smoke_proof_removes_recovered_pair_claim(
 
     assert "native_smoke" not in repaired_summary
     assert "## Native Validation Proof" not in repaired_readme
-    assert repaired_manifest["checksums"]["benchmark/summary.json"] == sha_entries[
-        "benchmark/summary.json"
-    ]
-    assert sha_entries["README.md"] == hub_module._sha256_bytes(
-        operation_by_path["README.md"]
+    assert (
+        repaired_manifest["checksums"]["benchmark/summary.json"]
+        == sha_entries["benchmark/summary.json"]
     )
+    assert sha_entries["README.md"] == hub_module._sha256_bytes(operation_by_path["README.md"])
 
 
 def test_repair_hf_native_smoke_proof_restores_from_local_backup_without_raw_upload(
@@ -2592,9 +2640,7 @@ def test_audit_hf_artifact_repos_flags_stale_remote_readme(tmp_path, monkeypatch
     assert result["artifact_ready_count"] == 0
     assert result["readme_mismatch_count"] == 1
     assert row["artifact_ready"] is False
-    assert row["readme_mismatches"] == [
-        "README.md does not match generated OrbitQuant model card"
-    ]
+    assert row["readme_mismatches"] == ["README.md does not match generated OrbitQuant model card"]
 
 
 def test_audit_hf_artifact_repos_marks_visual_only_extra_target_not_applicable(

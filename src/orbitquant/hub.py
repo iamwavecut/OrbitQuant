@@ -252,9 +252,7 @@ def _parse_sha256sums_bytes(payload: bytes) -> dict[str, str]:
     return entries
 
 
-def _read_remote_jsonl(
-    repo_id: str, filename: str, *, revision: str | None = None
-) -> list[dict]:
+def _read_remote_jsonl(repo_id: str, filename: str, *, revision: str | None = None) -> list[dict]:
     path = hf_hub_download(repo_id, filename, repo_type="model", revision=revision)
     records = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -671,9 +669,7 @@ def _native_smoke_proof_from_backup_assets(
         split, record = parsed
         split_records[split].append(record)
 
-    original_pairs = {
-        _native_smoke_record_pair_key(record) for record in split_records["original"]
-    }
+    original_pairs = {_native_smoke_record_pair_key(record) for record in split_records["original"]}
     orbitquant_pairs = {
         _native_smoke_record_pair_key(record) for record in split_records["orbitquant"]
     }
@@ -683,9 +679,7 @@ def _native_smoke_proof_from_backup_assets(
     paired_key_set = set(paired_keys)
     paired_records = {
         split: [
-            record
-            for record in records
-            if _native_smoke_record_pair_key(record) in paired_key_set
+            record for record in records if _native_smoke_record_pair_key(record) in paired_key_set
         ]
         for split, records in split_records.items()
     }
@@ -796,8 +790,7 @@ def _sha256sums_bytes(entries: dict[str, str]) -> bytes:
     filtered = {
         relative_path: digest
         for relative_path, digest in entries.items()
-        if relative_path != "SHA256SUMS"
-        and not is_ignored_artifact_relative_path(relative_path)
+        if relative_path != "SHA256SUMS" and not is_ignored_artifact_relative_path(relative_path)
     }
     return (
         "\n".join(
@@ -961,6 +954,103 @@ def _compact_native_smoke_proof(
     }
 
 
+def _resolve_compare_bundle_path(bundle_path: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    candidates = [path]
+    if path.is_absolute():
+        candidates.append(bundle_path / path.name)
+    else:
+        candidates.extend((bundle_path / path, bundle_path / path.name))
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def _read_compare_native_bundle(bundle_path: Path) -> dict[str, Any] | None:
+    summary_path = bundle_path / "summary.json"
+    if not summary_path.is_file():
+        return None
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not all(
+        key in payload for key in ("suite", "seed", "bit_setting", "original", "orbitquant")
+    ):
+        return None
+    comparison_path = _resolve_compare_bundle_path(bundle_path, payload.get("comparison_path"))
+    if comparison_path is None or not _is_comparison_matrix_asset(comparison_path):
+        return None
+    payload["_comparison_path"] = comparison_path
+    return payload
+
+
+def _compact_native_smoke_proof_from_compare_bundle(
+    report_dirs: list[Path], *, comparison_asset_path: str | None
+) -> dict[str, Any] | None:
+    if comparison_asset_path is None:
+        return None
+    for report_dir in report_dirs:
+        bundle_path = report_dir.resolve()
+        payload = _read_compare_native_bundle(bundle_path)
+        if payload is None:
+            continue
+        records: dict[str, list[dict[str, Any]]] = {}
+        for split in ("original", "orbitquant"):
+            split_payload = payload.get(split)
+            if not isinstance(split_payload, dict):
+                break
+            output_path = _resolve_compare_bundle_path(
+                bundle_path, split_payload.get("output_path")
+            )
+            metadata_path = _resolve_compare_bundle_path(
+                bundle_path, split_payload.get("metadata_path")
+            )
+            if output_path is None or metadata_path is None:
+                break
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                break
+            metadata = dict(metadata)
+            metadata.update(
+                {
+                    "suite": payload["suite"],
+                    "seed": payload["seed"],
+                    "output_path": str(output_path),
+                }
+            )
+            if payload.get("prompt_record") is not None:
+                metadata["prompt_record"] = payload["prompt_record"]
+            elif payload.get("prompt") is not None:
+                metadata["prompt"] = payload["prompt"]
+            records[split] = [
+                {
+                    "metrics": {
+                        "generated_samples": 1,
+                        "generated_frames": int(payload.get("frames") or 0),
+                    },
+                    "metadata": metadata,
+                }
+            ]
+        if set(records) != {"original", "orbitquant"}:
+            continue
+        splits = {
+            split: _native_smoke_split_summary(bundle_path, split_records)
+            for split, split_records in records.items()
+        }
+        original_pairs = {tuple(item) for item in splits["original"]["pair_keys"]}
+        orbitquant_pairs = {tuple(item) for item in splits["orbitquant"]["pair_keys"]}
+        paired_keys = sorted(original_pairs & orbitquant_pairs)
+        if not paired_keys:
+            continue
+        return {
+            "proof_format": "orbitquant-native-smoke-v1",
+            "proof_source": "local_compare_native_bundle",
+            "comparison_asset_path": comparison_asset_path,
+            "paired_prompt_seed_count": len(paired_keys),
+            "paired_prompt_seed_keys": [list(item) for item in paired_keys],
+            "splits": splits,
+        }
+    return None
+
+
 def _compact_benchmark_summary_payload(
     payload: dict[str, Any],
     *,
@@ -995,6 +1085,7 @@ def _rewrite_compact_benchmark_summary(
     output_path: Path,
     *,
     comparison_asset_path: str | None,
+    report_dirs: list[Path],
 ) -> None:
     source_path = artifact_path / "benchmark" / "summary.json"
     target_path = output_path / "benchmark" / "summary.json"
@@ -1002,6 +1093,11 @@ def _rewrite_compact_benchmark_summary(
         artifact_path,
         comparison_asset_path=comparison_asset_path,
     )
+    if native_smoke is None:
+        native_smoke = _compact_native_smoke_proof_from_compare_bundle(
+            report_dirs,
+            comparison_asset_path=comparison_asset_path,
+        )
     payload = json.loads(source_path.read_text(encoding="utf-8"))
     target_path.write_bytes(
         _json_bytes(_compact_benchmark_summary_payload(payload, native_smoke=native_smoke))
@@ -1072,23 +1168,30 @@ def _is_report_file(relative_path: str) -> bool:
 
 
 def _is_comparison_matrix_asset(path: Path) -> bool:
-    return path.name.lower().endswith("_generation_comparison_matrix.webp")
+    name = path.name.lower()
+    return name.endswith("_generation_comparison_matrix.webp") or name.endswith(
+        "_original_vs_orbitquant.webp"
+    )
 
 
-def _comparison_matrix_target_path(
-    source_path: Path, report_dir: Path, output_path: Path
-) -> Path:
+def _comparison_matrix_target_path(source_path: Path, report_dir: Path, output_path: Path) -> Path:
     target_path = output_path / "assets" / source_path.name
     if not target_path.exists() or sha256_file(source_path) == sha256_file(target_path):
         return target_path
     return output_path / "assets" / f"{report_dir.name}_{source_path.name}"
 
 
-def _copy_first_report_comparison_asset(
-    report_dirs: list[Path], output_path: Path
-) -> list[str]:
+def _copy_first_report_comparison_asset(report_dirs: list[Path], output_path: Path) -> list[str]:
     for report_dir in report_dirs:
         report_dir = report_dir.resolve()
+        bundle = _read_compare_native_bundle(report_dir)
+        if bundle is not None:
+            source_path = bundle["_comparison_path"]
+            media_type = "video" if bundle.get("frames") is not None else "image"
+            target_path = output_path / "assets" / f"{media_type}_generation_comparison_matrix.webp"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+            return [target_path.relative_to(output_path).as_posix()]
         for source_path in sorted(report_dir.rglob("*")):
             if not source_path.is_file() or not _is_comparison_matrix_asset(source_path):
                 continue
@@ -1154,9 +1257,7 @@ def stage_compact_upload_artifact(
     omitted_report_files = []
     omitted_unexpected_files = []
     source_files = [
-        source_path
-        for source_path in sorted(artifact_path.rglob("*"))
-        if source_path.is_file()
+        source_path for source_path in sorted(artifact_path.rglob("*")) if source_path.is_file()
     ]
     source_relative_paths = [
         source_path.relative_to(artifact_path).as_posix() for source_path in source_files
@@ -1204,9 +1305,7 @@ def stage_compact_upload_artifact(
             raise RuntimeError(f"report directory missing: {path}")
         report_paths.append(path)
     if selected_card_asset is None:
-        copied_report_assets.extend(
-            _copy_first_report_comparison_asset(report_paths, output_path)
-        )
+        copied_report_assets.extend(_copy_first_report_comparison_asset(report_paths, output_path))
 
     published_card_asset = selected_card_asset
     if published_card_asset is None and copied_report_assets:
@@ -1215,6 +1314,7 @@ def stage_compact_upload_artifact(
         artifact_path,
         output_path,
         comparison_asset_path=published_card_asset,
+        report_dirs=report_paths,
     )
     checksum_refresh = refresh_artifact_checksums(output_path)
     staged_validation = validate_orbitquant_artifact(
@@ -1280,8 +1380,7 @@ def audit_hf_artifact_repos(
             siblings = list(info.siblings or [])
             siblings_by_file = {sibling.rfilename: sibling for sibling in siblings}
             files = {
-                name: getattr(sibling, "size", None)
-                for name, sibling in siblings_by_file.items()
+                name: getattr(sibling, "size", None) for name, sibling in siblings_by_file.items()
             }
             file_names = set(files)
             required_missing = [
@@ -1309,9 +1408,7 @@ def audit_hf_artifact_repos(
             model_index_error = None
             if "model_index.json" in file_names:
                 try:
-                    model_index = _read_remote_json(
-                        repo_id, "model_index.json", revision=revision
-                    )
+                    model_index = _read_remote_json(repo_id, "model_index.json", revision=revision)
                 except Exception as exc:
                     model_index_error = f"{type(exc).__name__}: {str(exc)}"
             policy_inventory_validation = None
@@ -1420,9 +1517,7 @@ def audit_hf_artifact_repos(
                     "file_count": len(file_names),
                     "model_size": files.get("model.safetensors"),
                     "asset_count": sum(
-                        1
-                        for filename in file_names
-                        if _is_published_card_asset(filename)
+                        1 for filename in file_names if _is_published_card_asset(filename)
                     ),
                     "forbidden_file_count": len(forbidden_files),
                     "forbidden_files": forbidden_files[:100],
@@ -1439,8 +1534,7 @@ def audit_hf_artifact_repos(
                         None if policy_inventory_file is None else str(policy_inventory_file)
                     ),
                     "policy_inventory_ready": (
-                        policy_inventory_validation is not None
-                        and policy_inventory_error is None
+                        policy_inventory_validation is not None and policy_inventory_error is None
                     ),
                     "policy_inventory_error": policy_inventory_error,
                     "policy_inventory_validation": policy_inventory_validation,
@@ -1468,10 +1562,7 @@ def audit_hf_artifact_repos(
                 and not readme_error
                 and (
                     policy_inventory_path is None
-                    or (
-                        row["policy_inventory_ready"]
-                        and row["policy_inventory_error"] is None
-                    )
+                    or (row["policy_inventory_ready"] and row["policy_inventory_error"] is None)
                 )
                 and not manifest_mismatches
                 and not forbidden_files
@@ -1479,10 +1570,7 @@ def audit_hf_artifact_repos(
                 and not remote_checksum_mismatches
                 and not readme_mismatches
             )
-            row["native_smoke_ready"] = (
-                row["artifact_ready"]
-                and native_smoke_proof["ready"]
-            )
+            row["native_smoke_ready"] = row["artifact_ready"] and native_smoke_proof["ready"]
             row["release_eval_ready"] = (
                 row["release_eval_applicable"]
                 and row["metadata_complete_ready"]
@@ -1490,9 +1578,7 @@ def audit_hf_artifact_repos(
                 and not missing_metrics
             )
             rows.append(row)
-    release_eval_applicable_count = sum(
-        1 for row in rows if row.get("release_eval_applicable")
-    )
+    release_eval_applicable_count = sum(1 for row in rows if row.get("release_eval_applicable"))
     return {
         "namespace": namespace,
         "policy_inventory_root": None
@@ -1505,12 +1591,8 @@ def audit_hf_artifact_repos(
         "metadata_complete_ready_count": sum(
             1 for row in rows if row.get("metadata_complete_ready")
         ),
-        "policy_inventory_ready_count": sum(
-            1 for row in rows if row.get("policy_inventory_ready")
-        ),
-        "policy_inventory_error_count": sum(
-            1 for row in rows if row.get("policy_inventory_error")
-        ),
+        "policy_inventory_ready_count": sum(1 for row in rows if row.get("policy_inventory_ready")),
+        "policy_inventory_error_count": sum(1 for row in rows if row.get("policy_inventory_error")),
         "release_eval_applicable_count": release_eval_applicable_count,
         "release_eval_not_applicable_count": len(rows) - release_eval_applicable_count,
         "release_eval_ready_count": sum(1 for row in rows if row["release_eval_ready"]),
@@ -1523,9 +1605,7 @@ def audit_hf_artifact_repos(
             len(row.get("remote_checksum_mismatches", [])) for row in rows
         )
         + sum(1 for row in rows if row.get("sha256sums_error")),
-        "readme_mismatch_count": sum(
-            len(row.get("readme_mismatches", [])) for row in rows
-        )
+        "readme_mismatch_count": sum(len(row.get("readme_mismatches", [])) for row in rows)
         + sum(1 for row in rows if row.get("readme_error")),
         "forbidden_file_count": sum(row.get("forbidden_file_count", 0) for row in rows),
         "rows": rows,
@@ -1574,10 +1654,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         f"- Namespace: `{payload.get('namespace', '')}`",
         f"- Repositories: {payload.get('existing_count', 0)} / {repo_count} existing",
         f"- Artifact ready: {payload.get('artifact_ready_count', 0)} / {repo_count}",
-        (
-            f"- Metadata complete: {payload.get('metadata_complete_ready_count', 0)} / "
-            f"{repo_count}"
-        ),
+        (f"- Metadata complete: {payload.get('metadata_complete_ready_count', 0)} / {repo_count}"),
         (
             f"- Policy inventory ready: {payload.get('policy_inventory_ready_count', 0)} / "
             f"{repo_count}"
@@ -1668,9 +1745,7 @@ def render_hf_artifact_audit_markdown(payload: dict[str, Any]) -> str:
         lines.extend(["", "## Release Eval Gaps", ""])
         for row in blocking_rows:
             missing_label = _missing_metrics_label(row) or "release metrics missing"
-            lines.append(
-                f"- `{row.get('repo_id')}`: {missing_label}"
-            )
+            lines.append(f"- `{row.get('repo_id')}`: {missing_label}")
 
     return "\n".join(lines) + "\n"
 
@@ -1723,8 +1798,7 @@ def repair_hf_artifact_metadata(
         activation_eps=float(manifest_payload.get("activation_eps", config.activation_eps)),
         quantization_device=quantization_device,
         weight_quantization_backend=weight_quantization_backend,
-        quantization_staging_mode=quantization_staging_mode
-        or manifest.quantization_staging_mode,
+        quantization_staging_mode=quantization_staging_mode or manifest.quantization_staging_mode,
         quantized_modules=manifest.quantized_modules,
         adaln_modules=manifest.adaln_modules,
         skipped_modules=manifest.skipped_modules,
@@ -2007,8 +2081,7 @@ def repair_hf_native_smoke_proof(
             repo_type="model",
             revision=revision,
             operations=operations,
-            commit_message=commit_message
-            or "Remove unverified OrbitQuant native smoke proof",
+            commit_message=commit_message or "Remove unverified OrbitQuant native smoke proof",
         )
         result["commit"] = _commit_info_payload(commit_info)
         return result
@@ -2028,9 +2101,8 @@ def repair_hf_native_smoke_proof(
         file_names=file_names,
     )
     if not recovered_status["ready"]:
-        result["repair_skipped_reason"] = (
-            "recovered_native_smoke_invalid: "
-            + ",".join(recovered_status["missing"])
+        result["repair_skipped_reason"] = "recovered_native_smoke_invalid: " + ",".join(
+            recovered_status["missing"]
         )
         return result
 
@@ -2193,9 +2265,7 @@ def cleanup_hf_artifact_reports(
         target_path = _promoted_remote_matrix_path(report_matrix, used_paths)
         if target_path in file_names and target_path not in forbidden_files:
             continue
-        promoted_assets[target_path] = _read_remote_bytes(
-            repo_id, report_matrix, revision=revision
-        )
+        promoted_assets[target_path] = _read_remote_bytes(repo_id, report_matrix, revision=revision)
 
     cleaned_checksums = {
         relative_path: digest
