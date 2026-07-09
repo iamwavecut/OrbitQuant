@@ -98,6 +98,13 @@ for the current artifact format and runtime modes.
   `0.045x` versus dequantize-then-F.linear, and W4 512x3072x3072 fp16 measured
   about `0.044x` versus dequantize-then-F.linear. Treat those MPS numbers as
   correctness and memory-path evidence only, not performance evidence.
+  A fourth follow-up comment on 2026-07-09T12:27Z answered the model-scope
+  question: the kernel is intended for OrbitQuant-converted diffusion
+  transformer backbones with packed `OrbitQuantLinear` layers, currently FLUX.1
+  Schnell, FLUX.2 Klein, Z-Image-Turbo, and Wan2.1-T2V-1.3B-Diffusers; it is
+  not a drop-in kernel for arbitrary unquantized models or skipped components
+  such as text encoders, VAEs, embeddings, timestep MLPs, or final projection
+  heads.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same

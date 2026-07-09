@@ -356,6 +356,9 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "`dequantize_then_f_linear_seconds_per_iter`" in kernel_audit
     assert "`0.045x` versus dequantize-then-F.linear" in kernel_audit
     assert "`0.044x` versus dequantize-then-F.linear" in kernel_audit
+    assert "fourth follow-up comment on 2026-07-09T12:27Z" in kernel_audit
+    assert "OrbitQuant-converted diffusion\n  transformer backbones" in kernel_audit
+    assert "not a drop-in kernel for arbitrary unquantized models" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -404,6 +407,13 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "updating the benchmark source" in request
     assert "`0.045x` versus" in request
     assert "`0.044x`" in request
+    assert "On 2026-07-09T12:27Z" in request
+    assert "answered the model-scope question" in request
+    assert "OrbitQuant-converted\n" in request
+    assert "FLUX.1-schnell" in request
+    assert "FLUX.2 Klein" in request
+    assert "Z-Image-Turbo" in request
+    assert "Wan2.1-T2V-1.3B-Diffusers" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )

@@ -73,6 +73,14 @@ versus dequantize-then-F.linear. The current CUDA source uses WMMA for
 FP16/BF16 low-bit modes, but native CUDA package benchmarks remain pending a
 compatible Kernel Hub/CUDA build path.
 
+On 2026-07-09T12:27Z, `WaveCut` answered the model-scope question. The kernel
+is model-agnostic at the operator level, but intended for OrbitQuant-converted
+diffusion transformer backbones with packed `OrbitQuantLinear` layers. Current
+target families are FLUX.1-schnell, FLUX.2 Klein, Z-Image-Turbo, and
+Wan2.1-T2V-1.3B-Diffusers. The kernel is not intended for arbitrary
+unquantized models, text encoders, VAEs, embeddings, timestep MLPs, or final
+projection heads.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`
