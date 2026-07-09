@@ -61,7 +61,9 @@ URL, or signed-off audit note.
   `cb0ceb1a4d070556c52cfba691aba3f6647c246b`; the benchmark now reports
   `packed_weight_path_bytes`, `materialized_weight_bytes`, and
   `packed_weight_path_vs_materialized_weight_ratio` to make weight-side storage
-  accounting explicit.
+  accounting explicit. A follow-up comment was posted to discussion 15 on
+  2026-07-09T12:41Z with the new snapshot URL and the same non-throughput
+  claim boundary.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4

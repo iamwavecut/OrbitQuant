@@ -110,6 +110,9 @@ for the current artifact format and runtime modes.
   `packed_weight_path_bytes`, `materialized_weight_bytes`, and
   `packed_weight_path_vs_materialized_weight_ratio` so kernel review can
   distinguish weight-side storage savings from throughput claims.
+  A fifth follow-up comment on 2026-07-09T12:41Z points reviewers to this
+  snapshot and repeats that the storage fields are memory-path accounting, not
+  large-matrix throughput proof.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same

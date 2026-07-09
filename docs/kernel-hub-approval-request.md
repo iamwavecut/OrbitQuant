@@ -89,6 +89,12 @@ packed weight storage fields:
 `packed_weight_path_bytes`, `materialized_weight_bytes`, and
 `packed_weight_path_vs_materialized_weight_ratio`.
 
+On 2026-07-09T12:41Z, `WaveCut` posted a follow-up comment in discussion 15
+with the `cb0ceb1a4d070556c52cfba691aba3f6647c246b` source snapshot URL and
+the same claim boundary: the new fields are weight-side storage accounting,
+not throughput proof; native CUDA package benchmark evidence remains pending a
+compatible Kernel Hub/CUDA build path.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`

@@ -363,6 +363,7 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "updated again on 2026-07-09T12:39Z" in kernel_audit
     assert "`packed_weight_path_bytes`" in kernel_audit
     assert "`packed_weight_path_vs_materialized_weight_ratio`" in kernel_audit
+    assert "fifth follow-up comment on 2026-07-09T12:41Z" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -421,6 +422,8 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "On 2026-07-09T12:39Z" in request
     assert "packed weight storage fields" in request
     assert "`packed_weight_path_vs_materialized_weight_ratio`" in request
+    assert "On 2026-07-09T12:41Z" in request
+    assert "the new fields are weight-side storage accounting" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )
