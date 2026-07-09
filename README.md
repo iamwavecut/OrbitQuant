@@ -37,8 +37,7 @@ Install the package with the Hugging Face runtime dependencies:
 pip install "orbitquant[hf]"
 ```
 
-Until the first PyPI release is available, install the same package directly
-from GitHub:
+The development branch can also be installed directly from GitHub:
 
 ```bash
 pip install "orbitquant[hf] @ git+https://github.com/iamwavecut/OrbitQuant.git"

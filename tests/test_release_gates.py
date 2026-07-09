@@ -157,35 +157,24 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "HF integration tests, full pytest, package build, `twine check`, and wheel" in (
         release_gates
     )
-    assert "python -m build" in release_gates
-    assert "python -m twine check dist/*" in release_gates
-    assert "python -m twine upload\n  dist/*" in release_gates
-    assert "PyPI token or browser\n  action" in release_gates
-    assert "local build/check/smoke passed on 2026-07-08T16:06Z" in release_gates
+    assert "- [x] The PyPI package is published as `orbitquant==0.1.0`" in (
+        release_gates
+    )
+    assert ".github/workflows/publish-pypi.yml" in release_gates
+    assert "PyPI\n  pending publisher was registered" in release_gates
+    assert "GitHub Actions run `29015072821` completed successfully" in release_gates
+    assert "full pytest, `ruff check`, package build, `twine check`,\n  wheel smoke" in (
+        release_gates
+    )
+    assert "PyPI digital attestations" in release_gates
     assert "`orbitquant-0.1.0.tar.gz`" in release_gates
     assert "`orbitquant-0.1.0-py3-none-any.whl`" in release_gates
-    assert "returned `0.1.0`" in release_gates
-    assert "Re-checked on 2026-07-08T17:27Z" in release_gates
-    assert "using a temporary build output directory" in release_gates
-    assert "`OrbitQuantConfig()` defaulted\n  to `runtime_mode=\"auto_fused\"`" in (
+    assert "python -m pip index versions\n  orbitquant` reports `0.1.0`" in (
         release_gates
     )
-    assert "Re-checked on 2026-07-08T18:07Z after the native kernel source refresh" in (
-        release_gates
-    )
-    assert "`tests/test_distribution.py` verifies" in release_gates
-    assert "source distribution keeps the tracked native\n  kernel source" in release_gates
-    assert "`/tmp/orbitquant-build-verify-20260708T180719Z`" in release_gates
-    assert "GitHub CI for OrbitQuant commit\n  `f0c4855` passed on 2026-07-08T18:42Z" in (
-        release_gates
-    )
-    assert "package build, metadata\n  check, and wheel smoke test" in release_gates
-    assert "2026-07-08T22:14Z at OrbitQuant commit `f54beba`" in release_gates
-    assert "`/tmp/orbitquant-build-verify-20260708T221429Z`" in release_gates
-    assert "a fresh venv installed the wheel" in release_gates
-    assert "2026-07-09 at OrbitQuant commit `c80b524`" in release_gates
-    assert "`/tmp/orbitquant-build-verify-20260709T111559Z`" in release_gates
-    assert "Upload remains pending" in release_gates
+    assert '`OrbitQuantConfig().runtime_mode == "auto_fused"`' in release_gates
+    assert '`orbitquant --version == "0.1.0"`' in release_gates
+    assert "Upload remains pending" not in release_gates
     assert "command transcript" not in release_gates
     assert "local under ignored" not in release_gates
     assert "chronology" not in release_gates.lower()
@@ -195,9 +184,11 @@ def test_publication_checklist_contains_gated_release_commands():
     checklist = Path("docs/publication-checklist.md").read_text(encoding="utf-8")
 
     assert "OrbitQuant 0.1.0 Publication Checklist" in checklist
-    assert "Do not run the publication commands until" in checklist
-    assert "explicitly approved" in checklist
-    assert "PyPI upload credentials" in checklist
+    assert "PyPI `orbitquant==0.1.0` is already published" in checklist
+    assert "repository visibility, tag creation, and GitHub release\ncreation remain gated" in (
+        checklist
+    )
+    assert "Trusted Publishing is configured" in checklist
     assert "git status --short --branch" in checklist
     assert "git fetch origin main --tags" in checklist
     assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in checklist
@@ -213,7 +204,6 @@ def test_publication_checklist_contains_gated_release_commands():
     assert "OrbitQuantConfig().runtime_mode" in checklist
     assert "gh repo edit iamwavecut/OrbitQuant" in checklist
     assert "https://pypi.org/pypi/orbitquant/json" in checklist
-    assert "PyPI project name `orbitquant` already exists" in checklist
     assert "--visibility public" in checklist
     assert "--accept-visibility-change-consequences" in checklist
     assert "git tag -a v0.1.0" in checklist
@@ -221,9 +211,10 @@ def test_publication_checklist_contains_gated_release_commands():
     assert "gh release create v0.1.0" in checklist
     assert "--verify-tag" in checklist
     assert "--notes-file docs/release-0.1.0.md" in checklist
-    assert "TWINE_USERNAME=__token__" in checklist
-    assert 'TWINE_PASSWORD="$PYPI_API_TOKEN"' in checklist
-    assert "python -m twine upload dist/*" in checklist
+    assert "gh workflow run publish-pypi.yml" in checklist
+    assert "gh run watch 29015072821" in checklist
+    assert "orbitquant-0.1.0.tar.gz" in checklist
+    assert "orbitquant-0.1.0-py3-none-any.whl" in checklist
     assert "gh release view v0.1.0" in checklist
     assert "python -m pip index versions orbitquant" in checklist
     assert "orbitquant-publication-ok" in checklist
@@ -243,7 +234,7 @@ def test_release_gates_keep_current_priority_order():
         "Compatibility is verified against",
         "Checkpoint and model repositories",
         "The GitHub repository is public",
-        "The PyPI package is built",
+        "The PyPI package is published",
         "ComfyUI compatibility is verified",
         "Release-grade metrics are complete",
     ]

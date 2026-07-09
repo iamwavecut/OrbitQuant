@@ -1,9 +1,9 @@
 # OrbitQuant 0.1.0 Publication Checklist
 
 This checklist is for the final public repository, GitHub release, and PyPI
-package publication step. Do not run the publication commands until repository
-visibility, tag creation, GitHub release creation, and PyPI upload are
-explicitly approved.
+package publication step. PyPI `orbitquant==0.1.0` is already published through
+Trusted Publishing; repository visibility, tag creation, and GitHub release
+creation remain gated by explicit approval.
 
 ## Preconditions
 
@@ -11,8 +11,9 @@ explicitly approved.
 - The release notes in `docs/release-0.1.0.md` match the package version.
 - The release gates in `docs/release-gates.md` are current.
 - The build artifacts are freshly produced from the release commit.
-- PyPI upload credentials are available as a token and are not written to disk,
-  committed, printed, or pasted into logs.
+- PyPI Trusted Publishing is configured for
+  `iamwavecut/OrbitQuant/.github/workflows/publish-pypi.yml` with environment
+  `pypi`.
 
 ## Preflight
 
@@ -28,17 +29,16 @@ PY
 test "$(git tag --list v0.1.0)" = ""
 gh repo view iamwavecut/OrbitQuant --json nameWithOwner,visibility,isPrivate,defaultBranchRef
 python - <<'PY'
-import urllib.error
+import json
 import urllib.request
 
-try:
-    urllib.request.urlopen("https://pypi.org/pypi/orbitquant/json", timeout=20)
-except urllib.error.HTTPError as exc:
-    if exc.code == 404:
-        raise SystemExit(0)
-    raise
+with urllib.request.urlopen("https://pypi.org/pypi/orbitquant/json", timeout=20) as response:
+    payload = json.load(response)
 
-raise SystemExit("PyPI project name `orbitquant` already exists")
+assert payload["info"]["version"] == "0.1.0"
+filenames = {file["filename"] for file in payload["releases"]["0.1.0"]}
+assert "orbitquant-0.1.0.tar.gz" in filenames
+assert "orbitquant-0.1.0-py3-none-any.whl" in filenames
 PY
 ```
 
@@ -94,14 +94,13 @@ gh release create v0.1.0 \
 
 ## Publish PyPI
 
-Run only after explicit approval and with a PyPI API token available in the
-environment:
+PyPI `orbitquant==0.1.0` was published with GitHub Actions Trusted Publishing,
+not a local token:
 
 ```bash
 cd /Users/Shared/src/github.com/iamwavecut/OrbitQuant
-TWINE_USERNAME=__token__ \
-TWINE_PASSWORD="$PYPI_API_TOKEN" \
-uv run --with twine python -m twine upload dist/*
+gh workflow run publish-pypi.yml --repo iamwavecut/OrbitQuant --ref main -f version=0.1.0
+gh run watch 29015072821 --repo iamwavecut/OrbitQuant --exit-status
 ```
 
 ## Post-Publication Checks
@@ -109,6 +108,18 @@ uv run --with twine python -m twine upload dist/*
 ```bash
 gh repo view iamwavecut/OrbitQuant --json visibility,isPrivate,url,defaultBranchRef
 gh release view v0.1.0 --repo iamwavecut/OrbitQuant
+python - <<'PY'
+import json
+import urllib.request
+
+with urllib.request.urlopen("https://pypi.org/pypi/orbitquant/json", timeout=20) as response:
+    payload = json.load(response)
+
+assert payload["info"]["version"] == "0.1.0"
+filenames = {file["filename"] for file in payload["releases"]["0.1.0"]}
+assert "orbitquant-0.1.0.tar.gz" in filenames
+assert "orbitquant-0.1.0-py3-none-any.whl" in filenames
+PY
 python -m pip index versions orbitquant
 python -m pip install --upgrade orbitquant
 python - <<'PY'

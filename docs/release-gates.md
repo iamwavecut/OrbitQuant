@@ -157,52 +157,20 @@ URL, or signed-off audit note.
   commit `b67af1a` passed as run `29010166749` on 2026-07-09, including
   HF integration tests, full pytest, package build, `twine check`, and wheel
   smoke.
-- [ ] The PyPI package is built and checked with `python -m build` and
-  `python -m twine check dist/*`, then uploaded with `python -m twine upload
-  dist/*`. Credentials may require a user-provided PyPI token or browser
-  action before upload can complete.
-  Current evidence: local build/check/smoke passed on 2026-07-08T16:06Z.
-  `uv run --with build python -m build` produced
-  `orbitquant-0.1.0.tar.gz` and `orbitquant-0.1.0-py3-none-any.whl`;
-  `uv run --with twine python -m twine check dist/*` passed for both files;
-  installing the wheel in a fresh venv, importing `orbitquant`, and running
-  `orbitquant --version` returned `0.1.0`. Re-checked on 2026-07-08T17:27Z
-  using a temporary build output directory: `twine check` passed for both
-  artifacts, fresh wheel install/import succeeded, `OrbitQuantConfig()` defaulted
-  to `runtime_mode="auto_fused"`, and `orbitquant --version` returned `0.1.0`.
-  Re-checked on 2026-07-08T18:07Z after the native kernel source refresh:
-  `tests/test_distribution.py` verifies that the wheel target contains only the
-  Python runtime package while the source distribution keeps the tracked native
-  kernel source and excludes generated `build/`, `.venv/`, `__pycache__/`,
-  `.pyc`, `.so`, local artifact, and report paths. A fresh build in
-  `/tmp/orbitquant-build-verify-20260708T180719Z` produced both expected
-  artifacts and `twine check` passed. GitHub CI for OrbitQuant commit
-  `f0c4855` passed on 2026-07-08T18:42Z, including package build, metadata
-  check, and wheel smoke test after adding the RunPod SSH health preflight. On
-  2026-07-08T22:14Z at OrbitQuant commit `f54beba`, a fresh temporary build in
-  `/tmp/orbitquant-build-verify-20260708T221429Z` produced both expected
-  artifacts, `twine check` passed, a fresh venv installed the wheel, importing
-  `orbitquant` returned version `0.1.0`, `OrbitQuantConfig()` defaulted to
-  `runtime_mode="auto_fused"`, and `orbitquant --version` returned `0.1.0`.
-  Re-checked on 2026-07-09 at OrbitQuant commit `f12aabe`: fresh build in
-  `/tmp/orbitquant-build-verify-20260709T093205Z`, `twine check`, fresh wheel
-  install/import, `OrbitQuantConfig().runtime_mode`, `to_json_string()` round
-  trip, and `orbitquant --version` all passed.
-  Re-checked on 2026-07-09 at OrbitQuant commit `46ce58d`: fresh build in
-  `/tmp/orbitquant-build-verify-20260709T094823Z`, `twine check`, and an
-  isolated `uv run --with ...whl` wheel install/import outside the checkout all
-  passed. The smoke verified `orbitquant.__version__ == "0.1.0"`,
-  `OrbitQuantConfig().runtime_mode == "auto_fused"`, `to_json_string()` retains
-  `runtime_mode="auto_fused"`, and `orbitquant --version` returns `0.1.0`.
-  Re-checked on 2026-07-09 at OrbitQuant commit `c80b524`: fresh build in
-  `/tmp/orbitquant-build-verify-20260709T111559Z`, `twine check`, and isolated
-  wheel install/import passed; the smoke verified `orbitquant.__version__ ==
-  "0.1.0"` and `OrbitQuantConfig().runtime_mode == "auto_fused"`.
-  A live PyPI JSON check for `orbitquant` returned 404 at the time of this
-  verification, so the package name was not occupied then.
-  The exact upload command and post-publication checks are prepared in
-  [publication-checklist.md](publication-checklist.md).
-  Upload remains pending.
+- [x] The PyPI package is published as `orbitquant==0.1.0`.
+  Evidence: commit `ce5c232` added the manual
+  `.github/workflows/publish-pypi.yml` Trusted Publishing workflow. A PyPI
+  pending publisher was registered for project `orbitquant`, owner
+  `iamwavecut`, repository `OrbitQuant`, workflow `publish-pypi.yml`, and
+  environment `pypi`. GitHub Actions run `29015072821` completed successfully on
+  2026-07-09, including full pytest, `ruff check`, package build, `twine check`,
+  wheel smoke, OIDC publication, and PyPI digital attestations. The PyPI JSON
+  API reports version `0.1.0` with `orbitquant-0.1.0.tar.gz` and
+  `orbitquant-0.1.0-py3-none-any.whl`; `python -m pip index versions
+  orbitquant` reports `0.1.0`; a fresh venv installed `orbitquant==0.1.0` from
+  PyPI and verified `orbitquant.__version__ == "0.1.0"`,
+  `OrbitQuantConfig().runtime_mode == "auto_fused"`, and
+  `orbitquant --version == "0.1.0"`.
 - [x] ComfyUI compatibility is verified after the relevant schema stabilizes,
   including load, graph execution, artifact metadata behavior, and kernel extra
   install guidance for the default `auto_fused` runtime.

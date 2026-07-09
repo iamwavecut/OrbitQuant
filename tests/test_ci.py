@@ -36,6 +36,28 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "orbitquant --version" in text
 
 
+def test_github_actions_pypi_publish_workflow_uses_trusted_publishing():
+    workflow = Path(".github/workflows/publish-pypi.yml")
+
+    assert workflow.is_file()
+    text = workflow.read_text(encoding="utf-8")
+    assert "workflow_dispatch" in text
+    assert "version:" in text
+    assert "test \"$version\" = \"${{ inputs.version }}\"" in text
+    assert "uv run pytest" in text
+    assert "uv run ruff check ." in text
+    assert "uv run --with build python -m build" in text
+    assert "uv run --with twine python -m twine check dist/*" in text
+    assert "uses: actions/upload-artifact@v6.0.0" in text
+    assert "uses: actions/download-artifact@v7.0.0" in text
+    assert "environment:" in text
+    assert "name: pypi" in text
+    assert "id-token: write" in text
+    assert "uses: pypa/gh-action-pypi-publish@release/v1" in text
+    assert "TWINE_PASSWORD" not in text
+    assert "PYPI_API_TOKEN" not in text
+
+
 def test_kernel_check_scripts_are_executable_and_stage_logged():
     for script_name in ("run_cuda_kernel_checks.sh", "run_mps_kernel_checks.sh"):
         script = Path("scripts") / script_name
