@@ -280,6 +280,11 @@ orbitquant quantize \
 orbitquant validate-artifact --artifact ./artifacts/flux2-klein-w4a4
 ```
 
+For native generation on GPUs that cannot hold the full source pipeline at
+once, add `--enable-model-cpu-offload` to `orbitquant generate` or
+`orbitquant generate-pack`. The flag uses Diffusers model CPU offload instead
+of moving the entire pipeline to the generation device.
+
 ## Inspect A Policy Inventory
 
 Use `inspect-policy` to produce a JSON inventory of every linear module in a

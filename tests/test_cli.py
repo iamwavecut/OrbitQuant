@@ -45,6 +45,41 @@ def test_cli_packed_matmul_runtime_modes_skip_dequant_prewarm():
     )
 
 
+def test_cli_generation_placement_uses_model_cpu_offload_when_requested():
+    class TinyPipeline:
+        def __init__(self):
+            self.calls = []
+
+        def to(self, device):
+            self.calls.append(("to", device))
+            return self
+
+        def enable_model_cpu_offload(self, *, device):
+            self.calls.append(("offload", device))
+
+    pipeline = TinyPipeline()
+    cli_main._place_pipeline_for_generation(
+        pipeline,
+        device="cuda",
+        enable_model_cpu_offload=True,
+    )
+
+    assert pipeline.calls == [("offload", "cuda")]
+
+
+def test_cli_generation_placement_fails_loud_when_offload_is_missing():
+    class TinyPipeline:
+        def to(self, device):
+            return self
+
+    with pytest.raises(RuntimeError, match="enable_model_cpu_offload"):
+        cli_main._place_pipeline_for_generation(
+            TinyPipeline(),
+            device="cuda",
+            enable_model_cpu_offload=True,
+        )
+
+
 def test_cli_native_suites_lists_no_range_smoke_settings(capsys):
     assert main(["native-suites"]) == 0
 
@@ -697,16 +732,18 @@ def test_cli_generate_dry_run_prints_native_request(capsys, tmp_path):
                 "9",
                 "--device",
                 "cpu",
+                "--enable-model-cpu-offload",
                 "--dry-run",
             ]
         )
         == 0
     )
 
-    output = capsys.readouterr().out
-    assert "black-forest-labs/FLUX.2-klein-4B" in output
-    assert '"height": 1024' in output
-    assert '"width": 1024' in output
+    output = json.loads(capsys.readouterr().out)
+    assert output["model_id"] == "black-forest-labs/FLUX.2-klein-4B"
+    assert output["pipeline_kwargs"]["height"] == 1024
+    assert output["pipeline_kwargs"]["width"] == 1024
+    assert output["enable_model_cpu_offload"] is True
 
 
 @pytest.mark.parametrize("runtime_mode", ["triton_packed_matmul", "native_packed_matmul"])

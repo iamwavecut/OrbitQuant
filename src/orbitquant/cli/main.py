@@ -132,6 +132,24 @@ def _should_prewarm_quantized_weights(config: OrbitQuantConfig | None) -> bool:
     return config is None or config.runtime_mode not in _PACKED_MATMUL_RUNTIME_MODES
 
 
+def _place_pipeline_for_generation(
+    pipeline: Any,
+    *,
+    device: str,
+    enable_model_cpu_offload: bool,
+) -> None:
+    if enable_model_cpu_offload:
+        if not hasattr(pipeline, "enable_model_cpu_offload"):
+            raise RuntimeError(
+                "pipeline does not support enable_model_cpu_offload(); use a Diffusers "
+                "pipeline with model CPU offload support, or omit "
+                "--enable-model-cpu-offload and ensure the full pipeline fits on the device"
+            )
+        pipeline.enable_model_cpu_offload(device=device)
+        return
+    pipeline.to(device)
+
+
 def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
     repo_count = int(payload.get("repo_count") or 0)
     regressions: list[str] = []
@@ -799,6 +817,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="do not prewarm quantized weight caches before generation",
     )
+    generate_parser.add_argument(
+        "--enable-model-cpu-offload",
+        action="store_true",
+        help=(
+            "use Diffusers model CPU offload instead of moving the whole pipeline to "
+            "the generation device"
+        ),
+    )
     generate_parser.add_argument("--dry-run", action="store_true")
 
     generate_pack_parser = subparsers.add_parser(
@@ -842,6 +868,14 @@ def main(argv: list[str] | None = None) -> int:
         "--no-prewarm",
         action="store_true",
         help="do not prewarm quantized weight caches before generation",
+    )
+    generate_pack_parser.add_argument(
+        "--enable-model-cpu-offload",
+        action="store_true",
+        help=(
+            "use Diffusers model CPU offload instead of moving the whole pipeline to "
+            "the generation device"
+        ),
     )
     generate_pack_parser.add_argument(
         "--skip-artifact-checksums",
@@ -1490,6 +1524,7 @@ def main(argv: list[str] | None = None) -> int:
                         "bit_setting": bit_setting,
                         "split": args.split,
                         "prompt_pack": prompt_payload.get("prompt_pack"),
+                        "enable_model_cpu_offload": args.enable_model_cpu_offload,
                         "job_count": len(jobs),
                         "run_count": len(pending_jobs),
                         "skipped_count": len(skipped_outputs),
@@ -1535,7 +1570,6 @@ def main(argv: list[str] | None = None) -> int:
             model_id=artifact_validation["source_model_id"],
             torch_dtype=_torch_dtype(args.dtype),
         )
-        pipeline.to(args.device)
         prewarm_metadata = None
         if args.split == "orbitquant":
             load_quantized_pipeline_component(
@@ -1543,15 +1577,23 @@ def main(argv: list[str] | None = None) -> int:
                 artifact_path,
                 component=args.component,
                 validate_checksums=not args.skip_artifact_checksums,
-                device=args.device,
             )
-            if not args.no_prewarm and _should_prewarm_quantized_weights(artifact_config):
-                prewarm_metadata = _prewarm_pipeline_component(
-                    pipeline,
-                    args.component,
-                    device=args.device,
-                    dtype=_torch_dtype(args.dtype),
-                )
+        _place_pipeline_for_generation(
+            pipeline,
+            device=args.device,
+            enable_model_cpu_offload=args.enable_model_cpu_offload,
+        )
+        if (
+            args.split == "orbitquant"
+            and not args.no_prewarm
+            and _should_prewarm_quantized_weights(artifact_config)
+        ):
+            prewarm_metadata = _prewarm_pipeline_component(
+                pipeline,
+                args.component,
+                device=args.device,
+                dtype=_torch_dtype(args.dtype),
+            )
         outputs = []
         for job in pending_jobs:
             prompt_record = job["prompt_record"]
@@ -1719,6 +1761,7 @@ def main(argv: list[str] | None = None) -> int:
                 "prompt_record": prompt_record,
                 "device": args.device,
                 "dtype": args.dtype,
+                "enable_model_cpu_offload": args.enable_model_cpu_offload,
                 "quantization_config": None
                 if quantization_config is None
                 else quantization_config.to_dict(),
@@ -1736,7 +1779,6 @@ def main(argv: list[str] | None = None) -> int:
             model_id=model_id,
             torch_dtype=_torch_dtype(args.dtype),
         )
-        pipeline.to(args.device)
         quantization_summary = None
         prewarm_metadata = None
         if artifact_path is not None:
@@ -1745,30 +1787,29 @@ def main(argv: list[str] | None = None) -> int:
                     pipeline,
                     artifact_path,
                     component=args.component,
-                    device=args.device,
                 )
-                if not args.no_prewarm and _should_prewarm_quantized_weights(
-                    quantization_config
-                ):
-                    prewarm_metadata = _prewarm_pipeline_component(
-                        pipeline,
-                        args.component,
-                        device=args.device,
-                        dtype=_torch_dtype(args.dtype),
-                    )
         elif quantization_config is not None:
             quantization_summary = apply_quantization_to_pipeline(
                 pipeline, suite, quantization_config
             )
-            if not args.no_prewarm and _should_prewarm_quantized_weights(
-                quantization_config
-            ):
-                prewarm_metadata = _prewarm_pipeline_component(
-                    pipeline,
-                    args.component,
-                    device=args.device,
-                    dtype=_torch_dtype(args.dtype),
-                )
+        _place_pipeline_for_generation(
+            pipeline,
+            device=args.device,
+            enable_model_cpu_offload=args.enable_model_cpu_offload,
+        )
+        should_prewarm = (
+            quantization_config is not None
+            and not args.no_prewarm
+            and _should_prewarm_quantized_weights(quantization_config)
+            and (artifact_path is None or args.split == "orbitquant")
+        )
+        if should_prewarm:
+            prewarm_metadata = _prewarm_pipeline_component(
+                pipeline,
+                args.component,
+                device=args.device,
+                dtype=_torch_dtype(args.dtype),
+            )
         result = run_native_generation(
             pipeline,
             suite,
