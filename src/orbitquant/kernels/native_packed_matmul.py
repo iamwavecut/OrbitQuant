@@ -33,8 +33,10 @@ def _load_native_packed_matmul_kernel() -> Any:
         raise RuntimeError(
             "native_packed_matmul runtime requires either an importable "
             "orbitquant_packed_matmul kernel package or the Hugging Face kernels package. "
-            "Install a compatible OrbitQuant native kernel build, install `kernels`, "
-            "or use runtime_mode='dequant_bf16'."
+            "Install `kernels` and point LOCAL_KERNELS at a compatible "
+            "built kernel variant directory containing metadata.json, make the "
+            "compatible variant directory importable through PYTHONPATH, or use "
+            "runtime_mode='dequant_bf16'."
         ) from exc
 
     try:
@@ -50,9 +52,12 @@ def _load_native_packed_matmul_kernel() -> Any:
         raise RuntimeError(
             "native_packed_matmul runtime could not load "
             f"{_KERNEL_REPO_ID} version {_KERNEL_VERSION}. For local development, set "
-            "LOCAL_KERNELS=WaveCut/orbitquant-packed-matmul=/absolute/path/to/"
-            "native-kernels/orbitquant-packed-matmul before importing OrbitQuant, "
-            "or make a compatible orbitquant_packed_matmul package importable."
+            "LOCAL_KERNELS=WaveCut/orbitquant-packed-matmul=/absolute/path/to/a/"
+            "built kernel variant directory that contains metadata.json, for example "
+            "native-kernels/orbitquant-packed-matmul/build/"
+            "torch212-metal-aarch64-darwin, before importing OrbitQuant; add that "
+            "same variant directory to PYTHONPATH; or make a compatible "
+            "orbitquant_packed_matmul package importable."
         ) from exc
     return _NATIVE_KERNEL
 

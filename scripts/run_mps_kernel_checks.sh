@@ -16,11 +16,40 @@ BLOCK_SIZE="${ORBITQUANT_BENCH_BLOCK_SIZE:-1024}"
 WARMUP="${ORBITQUANT_BENCH_WARMUP:-1}"
 ITERATIONS="${ORBITQUANT_BENCH_ITERATIONS:-3}"
 RUN_NATIVE_KERNEL_PACKAGE_CI="${ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI:-1}"
+NATIVE_KERNEL_REPO_ID="WaveCut/orbitquant-packed-matmul"
+NATIVE_KERNEL_SOURCE_DIR="$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
+
+native_kernel_local_variant_dir() {
+  python - "$NATIVE_KERNEL_SOURCE_DIR" <<'PY'
+import platform
+import re
+import sys
+from pathlib import Path
+
+import torch
+
+source_dir = Path(sys.argv[1])
+torch_match = re.match(r"^(\d+)\.(\d+)", torch.__version__)
+if torch_match is None:
+    raise SystemExit(f"could not parse torch version from {torch.__version__!r}")
+if sys.platform != "darwin":
+    raise SystemExit(f"MPS kernel package CI expects macOS, got {sys.platform}")
+machine = platform.machine()
+if machine == "arm64":
+    machine = "aarch64"
+variant = (
+    f"torch{torch_match.group(1)}{torch_match.group(2)}-metal-"
+    f"{machine}-darwin"
+)
+variant_dir = source_dir / "build" / variant
+metadata_path = variant_dir / "metadata.json"
+if not metadata_path.is_file():
+    raise SystemExit(f"native kernel variant metadata is missing: {metadata_path}")
+print(variant_dir)
+PY
+}
 
 cd "$ROOT_DIR"
-if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
-  export LOCAL_KERNELS="${LOCAL_KERNELS:-WaveCut/orbitquant-packed-matmul=$ROOT_DIR/native-kernels/orbitquant-packed-matmul}"
-fi
 
 stage env-start
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
@@ -52,6 +81,23 @@ print("mps", torch.backends.mps.is_available())
 print("compile_shader", hasattr(torch.mps, "compile_shader"))
 PY
 stage env-done
+
+if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" && -z "${LOCAL_KERNELS:-}" ]]; then
+  set +e
+  native_kernel_variant_dir="$(native_kernel_local_variant_dir)"
+  native_kernel_variant_status=$?
+  set -e
+  if [[ "$native_kernel_variant_status" -eq 0 ]]; then
+    export LOCAL_KERNELS="$NATIVE_KERNEL_REPO_ID=$native_kernel_variant_dir"
+    stage "native-packed-matmul-local-variant-selected variant=$(basename "$native_kernel_variant_dir")"
+  else
+    stage "native-packed-matmul-local-variant-missing status=$native_kernel_variant_status"
+    printf '%s\n' \
+      "native packed matmul local variant was not found for this MPS runtime." \
+      "Set LOCAL_KERNELS=$NATIVE_KERNEL_REPO_ID=/absolute/path/to/a/built/variant containing metadata.json, build the matching kernel-builder variant, or set ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI=0 to run only the inline Metal shader checks." \
+      >&2
+  fi
+fi
 
 if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
   stage native-packed-matmul-load-start

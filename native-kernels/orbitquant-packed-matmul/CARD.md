@@ -48,4 +48,10 @@ or enabled Nix sandboxing is required by `kernel-builder`.
 
 For direct local imports, add the matching `build/torch*-<backend>-<platform>`
 directory to `PYTHONPATH`; the `torch*` variant must match the runtime PyTorch
-version.
+version. For Hugging Face `kernels` local loading, set `LOCAL_KERNELS` to the
+same built variant directory containing `metadata.json`, not to the source
+package root:
+
+```bash
+export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/build/torch212-metal-aarch64-darwin"
+```

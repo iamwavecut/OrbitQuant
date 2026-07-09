@@ -89,5 +89,10 @@ def test_native_packed_matmul_loader_reports_missing_optional_dependency(monkeyp
     monkeypatch.delitem(sys.modules, "kernels", raising=False)
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    with pytest.raises(RuntimeError, match="orbitquant_packed_matmul"):
+    with pytest.raises(RuntimeError, match="orbitquant_packed_matmul") as exc_info:
         native_module._load_native_packed_matmul_kernel()
+
+    message = str(exc_info.value)
+    assert "built kernel variant directory" in message
+    assert "metadata.json" in message
+    assert "PYTHONPATH" in message

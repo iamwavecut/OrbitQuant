@@ -112,6 +112,13 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     assert "upstream_native_mps_op" in mps_script
     assert "kernels>=0.16" in mps_script
     assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI" in mps_script
+    assert "native_kernel_local_variant_dir" in mps_script
+    assert 'if machine == "arm64":' in mps_script
+    assert 'machine = "aarch64"' in mps_script
+    assert "native-packed-matmul-local-variant-selected" in mps_script
+    assert "native-packed-matmul-local-variant-missing" in mps_script
+    assert "metadata.json" in mps_script
+    assert "LOCAL_KERNELS=\"$NATIVE_KERNEL_REPO_ID=$native_kernel_variant_dir\"" in mps_script
     assert "native-packed-matmul-kernel-ok" in mps_script
     assert "native-packed-matmul-load-skipped" in mps_script
     assert "native-packed-matmul-bench-skipped" in mps_script

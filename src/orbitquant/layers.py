@@ -363,9 +363,9 @@ class OrbitQuantLinear(nn.Module):
         reference_hint = "Set runtime_mode='dequant_bf16' to use the reference/debug path."
         native_hint = (
             "Install the Hugging Face `kernels` package with access to "
-            "WaveCut/orbitquant-packed-matmul version 1, set LOCAL_KERNELS to a local "
-            "native-kernels/orbitquant-packed-matmul build, or make the "
-            "`orbitquant_packed_matmul` package importable."
+            "WaveCut/orbitquant-packed-matmul version 1, set LOCAL_KERNELS to a "
+            "compatible built kernel variant directory containing metadata.json, "
+            "or make the `orbitquant_packed_matmul` package importable."
         )
         if device_type == "cuda":
             triton_hint = "Install a CUDA-compatible Triton stack to use triton_packed_matmul."
