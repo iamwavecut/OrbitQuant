@@ -138,7 +138,24 @@ URL, or signed-off audit note.
   `block_n=128` default at `forward_prewarmed_ms=0.596992015838623`, both with
   `peak_memory_bytes=69293568`. This updates the package default tile for the
   packed matmul path, but it remains a local CUDA/Triton microbenchmark result
-  and does not change the no-throughput-win claim boundary. Native CUDA
+  and does not change the no-throughput-win claim boundary. A post-publication
+  CUDA smoke for `orbitquant[kernels]==0.1.1` passed on 2026-07-09T14:07Z on
+  the same active RunPod RTX 4090 with Torch 2.9.1+cu128, CUDA 12.8, driver
+  580.159.04, 512x3072x3072 W4A4 float16, warmup 5, and 20 measured
+  iterations. It verified the published package default
+  `OrbitQuantConfig().runtime_mode == "auto_fused"` and
+  `packed_matmul_block_n == 128`. The `auto_fused` run selected
+  `triton_cuda`, used tile `{block_m=32, block_n=128, block_k=64,
+  num_warps=8}`, kept packed weight indices and row norms on `cuda:0`,
+  reported `forward_prewarmed_ms=0.5946400165557861`,
+  `forward_cold_ms=0.6080512046813965`, and
+  `peak_memory_bytes=69293568`. The explicit `dequant_bf16` reference reported
+  `forward_prewarmed_ms=0.12743680477142333`,
+  `forward_cold_ms=0.1994752049446106`, and
+  `peak_memory_bytes=115025408`. The packed path saved 45,731,840 peak-memory
+  bytes in this isolated benchmark but remained 4.666x slower than
+  `dequant_bf16`, so the no-throughput-win claim boundary remains unchanged.
+  Native CUDA
   artifact-layer verification on the same active RunPod RTX 4090 passed on
   2026-07-09T13:54Z using the published
   `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact, source model

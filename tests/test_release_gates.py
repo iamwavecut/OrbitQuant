@@ -134,6 +134,14 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`forward_prewarmed_ms=0.6374400138854981`" in release_gates
     assert "`forward_prewarmed_ms=0.596992015838623`" in release_gates
     assert "`peak_memory_bytes=69293568`" in release_gates
+    assert "post-publication\n  CUDA smoke for `orbitquant[kernels]==0.1.1`" in (
+        release_gates
+    )
+    assert "`packed_matmul_block_n == 128`" in release_gates
+    assert "`forward_prewarmed_ms=0.5946400165557861`" in release_gates
+    assert "`forward_prewarmed_ms=0.12743680477142333`" in release_gates
+    assert "45,731,840 peak-memory\n  bytes" in release_gates
+    assert "4.666x slower than\n  `dequant_bf16`" in release_gates
     assert "CUDA\n  artifact-layer verification on the same active RunPod RTX 4090" in (
         release_gates
     )
@@ -376,6 +384,21 @@ def test_release_notes_are_artifact_focused_and_reproducible():
     assert "chronology" not in release_notes.lower()
 
 
+def test_release_011_notes_include_pypi_cuda_smoke_without_speedup_claims():
+    release_notes = Path("docs/release-0.1.1.md").read_text(encoding="utf-8")
+
+    assert "OrbitQuant 0.1.1 Release Notes" in release_notes
+    assert "`block_m=32`, `block_n=128`, `block_k=64`, `num_warps=8`" in (
+        release_notes
+    )
+    assert "`orbitquant[kernels]==0.1.1` from PyPI" in release_notes
+    assert "`runtime_mode=\"auto_fused\"`" in release_notes
+    assert "`packed_matmul_block_n == 128`" in release_notes
+    assert "selected\n  `triton_cuda`" in release_notes
+    assert "finite benchmark output" in release_notes
+    assert "does not claim full-model speedup" in release_notes
+
+
 def test_kernel_audit_documents_backend_claim_boundaries():
     kernel_audit = Path("docs/kernel-audit.md").read_text(encoding="utf-8")
 
@@ -474,6 +497,13 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "`forward_prewarmed_ms=0.6374400138854981`" in kernel_audit
     assert "`forward_prewarmed_ms=0.596992015838623`" in kernel_audit
     assert "`peak_memory_bytes=69293568`" in kernel_audit
+    assert "post-publication CUDA smoke for `orbitquant[kernels]==0.1.1`" in (
+        kernel_audit
+    )
+    assert "`packed_matmul_block_n == 128`" in kernel_audit
+    assert "`forward_prewarmed_ms=0.5946400165557861`" in kernel_audit
+    assert "`forward_prewarmed_ms=0.12743680477142333`" in kernel_audit
+    assert "favors `dequant_bf16` for throughput by about 4.666x" in kernel_audit
     assert "After reviewer asked to run on an actual model" in kernel_audit
     assert "CUDA artifact-layer\n  verification passed" in kernel_audit
     assert "installed OrbitQuant from GitHub `main`" in kernel_audit

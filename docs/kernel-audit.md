@@ -207,6 +207,22 @@ for the current artifact format and runtime modes.
   `peak_memory_bytes=69293568`. This updates the package default tile for the
   packed matmul path, but it remains a local CUDA/Triton microbenchmark result
   and does not change the no-throughput-win claim boundary above.
+- A post-publication CUDA smoke for `orbitquant[kernels]==0.1.1` passed on
+  2026-07-09T14:07Z on the same active RunPod RTX 4090 with Torch 2.9.1+cu128,
+  CUDA 12.8, driver 580.159.04, 512x3072x3072 W4A4 float16, warmup 5, and 20
+  measured iterations. It verified `OrbitQuantConfig().runtime_mode ==
+  "auto_fused"` and `packed_matmul_block_n == 128` from the published package.
+  The `auto_fused` run selected `triton_cuda`, used tile `{block_m=32,
+  block_n=128, block_k=64, num_warps=8}`, kept packed weight indices and row
+  norms on `cuda:0`, and reported
+  `forward_prewarmed_ms=0.5946400165557861`,
+  `forward_cold_ms=0.6080512046813965`, and
+  `peak_memory_bytes=69293568`. The explicit `dequant_bf16` reference reported
+  `forward_prewarmed_ms=0.12743680477142333`,
+  `forward_cold_ms=0.1994752049446106`, and
+  `peak_memory_bytes=115025408`. This confirms the published 0.1.1 CUDA/Triton
+  memory path and tile default; it also confirms that this RTX 4090 isolated
+  benchmark still favors `dequant_bf16` for throughput by about 4.666x.
 - After reviewer asked to run on an actual model, CUDA artifact-layer
   verification passed on the same active RunPod RTX 4090 on 2026-07-09T13:54Z.
   The verifier installed OrbitQuant from GitHub `main`, downloaded the

@@ -17,6 +17,12 @@ defaults.
 - A CUDA smoke on RTX 4090 with Torch 2.9.1+cu128 verified that fresh `main`
   uses `runtime_mode="auto_fused"`, selects `triton_cuda`, keeps packed
   tensors on CUDA, and reports `packed_matmul_tile.block_n == 128`.
+- A post-publication CUDA smoke on RTX 4090 installed
+  `orbitquant[kernels]==0.1.1` from PyPI and verified the same default:
+  `runtime_mode="auto_fused"`, `packed_matmul_block_n == 128`, selected
+  `triton_cuda`, tile `{block_m=32, block_n=128, block_k=64, num_warps=8}`,
+  packed buffers on CUDA, and finite benchmark output for a 512x3072x3072 W4A4
+  float16 layer.
 
 ## Claim Boundary
 
