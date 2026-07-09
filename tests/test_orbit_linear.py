@@ -188,6 +188,31 @@ def test_orbit_linear_passes_configured_activation_kernel_backend(monkeypatch):
     assert seen_backends == ["cpu"]
 
 
+def test_orbit_linear_records_last_effective_runtime_and_activation_backend():
+    torch.manual_seed(2)
+    source = torch.nn.Linear(16, 7)
+    x = torch.randn(2, 5, 16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="auto_fused",
+        activation_kernel_backend="auto",
+    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+
+    assert quantized.last_effective_runtime_mode is None
+    assert quantized.last_activation_kernel_backend is None
+    assert quantized.last_forward_device_type is None
+
+    quantized(x)
+
+    assert quantized.last_effective_runtime_mode == "dequant_bf16"
+    assert quantized.last_activation_kernel_backend == "cpu"
+    assert quantized.last_forward_device_type == "cpu"
+
+
 def test_orbit_linear_reuses_cuda_activation_constant_buffers(monkeypatch):
     if not torch.cuda.is_available():
         pytest.skip("CUDA is not available")
@@ -421,6 +446,11 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
         )
 
     monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_activation_kernel)
+    monkeypatch.setattr(
+        layers_module,
+        "select_backend",
+        lambda device, *, requested: requested,
+    )
     monkeypatch.setattr(quantized, "_validate_triton_packed_matmul_input", lambda x: None)
     monkeypatch.setitem(
         sys.modules,

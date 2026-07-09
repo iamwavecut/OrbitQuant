@@ -6,7 +6,7 @@ from torch.nn import functional as F
 
 from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.kernels import quantize_activations_kernel
+from orbitquant.kernels import quantize_activations_kernel, select_backend
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
 
@@ -208,6 +208,9 @@ class OrbitQuantLinear(nn.Module):
             self.debug_weight = None
         self._dequantized_weight_cache: torch.Tensor | None = None
         self._dequantized_weight_cache_key: tuple[str, torch.dtype] | None = None
+        self.last_effective_runtime_mode: str | None = None
+        self.last_activation_kernel_backend: str | None = None
+        self.last_forward_device_type: str | None = None
 
     @classmethod
     def from_linear(
@@ -493,6 +496,8 @@ class OrbitQuantLinear(nn.Module):
             if self.runtime_mode == "auto_fused"
             else self.runtime_mode
         )
+        self.last_effective_runtime_mode = runtime_mode
+        self.last_forward_device_type = x.device.type
 
         if runtime_mode == "triton_packed_matmul":
             self._validate_triton_packed_matmul_input(x)
@@ -500,8 +505,10 @@ class OrbitQuantLinear(nn.Module):
             self._validate_native_packed_matmul_input(x)
 
         if runtime_mode == "debug_no_quant":
+            self.last_activation_kernel_backend = None
             rotated_x = self.rotation.apply_to_activations(x.to(torch.float32)).to(x.dtype)
         elif runtime_mode == "debug_no_activation_quant":
+            self.last_activation_kernel_backend = None
             work = x.to(torch.float32)
             norms = work.norm(dim=-1, keepdim=True)
             rotated_x = (
@@ -509,6 +516,9 @@ class OrbitQuantLinear(nn.Module):
                 * norms
             ).to(x.dtype)
         else:
+            self.last_activation_kernel_backend = select_backend(
+                x.device, requested=self.activation_kernel_backend
+            )
             rotated_x = quantize_activations_kernel(
                 x,
                 rotation=self.rotation,

@@ -67,6 +67,7 @@ from orbitquant.hub import (
     upload_orbitquant_artifact,
 )
 from orbitquant.kernels import available_backends, backend_capabilities
+from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import (
     inspect_linear_module_policy,
     prewarm_quantized_linear_modules,
@@ -183,6 +184,42 @@ def _comparison_image_source(result: Any, *, is_video: bool) -> Path:
             raise RuntimeError("video comparison requires generated contact sheet assets")
         return result.asset_paths[0]
     return result.output_path
+
+
+def _orbitquant_runtime_summary(pipeline: Any, component: str) -> dict[str, Any]:
+    target = _pipeline_component(pipeline, component)
+    runtime_counts: dict[str, int] = {}
+    activation_backend_counts: dict[str, int] = {}
+    device_type_counts: dict[str, int] = {}
+    unexecuted_modules: list[str] = []
+    module_count = 0
+    executed_count = 0
+    for name, module in target.named_modules():
+        if not isinstance(module, OrbitQuantLinear):
+            continue
+        module_count += 1
+        runtime_mode = module.last_effective_runtime_mode
+        if runtime_mode is None:
+            unexecuted_modules.append(name)
+            continue
+        executed_count += 1
+        runtime_counts[runtime_mode] = runtime_counts.get(runtime_mode, 0) + 1
+        activation_backend = module.last_activation_kernel_backend
+        activation_backend_key = "none" if activation_backend is None else activation_backend
+        activation_backend_counts[activation_backend_key] = (
+            activation_backend_counts.get(activation_backend_key, 0) + 1
+        )
+        device_type = module.last_forward_device_type or "unknown"
+        device_type_counts[device_type] = device_type_counts.get(device_type, 0) + 1
+    return {
+        "orbitquant_linear_count": module_count,
+        "executed_module_count": executed_count,
+        "runtime_mode_counts": runtime_counts,
+        "activation_kernel_backend_counts": activation_backend_counts,
+        "forward_device_type_counts": device_type_counts,
+        "unexecuted_module_count": len(unexecuted_modules),
+        "unexecuted_module_sample": unexecuted_modules[:20],
+    }
 
 
 def _hf_artifact_audit_regressions(payload: dict[str, Any]) -> list[str]:
@@ -1753,6 +1790,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt=prompt,
             model_id=model_id,
         )
+        orbitquant_runtime = _orbitquant_runtime_summary(quantized_pipeline, args.component)
         _release_generation_pipeline(quantized_pipeline, device=args.device)
         quantized_pipeline = None
         print(
@@ -1806,6 +1844,7 @@ def main(argv: list[str] | None = None) -> int:
                 "wall_time_seconds": orbitquant_result.metadata["wall_time_seconds"],
                 "peak_vram_bytes": orbitquant_result.metadata["peak_vram_bytes"],
                 "prewarm": prewarm_metadata,
+                "runtime": orbitquant_runtime,
             },
             "comparison_path": str(comparison_path),
         }

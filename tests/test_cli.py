@@ -874,6 +874,8 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
 
         def __call__(self, **kwargs):
             self.kwargs = kwargs
+            layer = self.transformer.transformer_blocks[0]["attn"]["to_q"]
+            layer(torch.zeros(1, 1, 8))
             return SimpleNamespace(images=[Image.new("RGB", (16, 16), self.color)])
 
     source = TinyPipeline()
@@ -939,6 +941,15 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
     assert summary["runtime_mode"] == "auto_fused"
     assert summary["enable_model_cpu_offload"] is False
     assert summary["available_backends"]["cpu"] is True
+    assert summary["orbitquant"]["runtime"] == {
+        "orbitquant_linear_count": 1,
+        "executed_module_count": 1,
+        "runtime_mode_counts": {"dequant_bf16": 1},
+        "activation_kernel_backend_counts": {"cpu": 1},
+        "forward_device_type_counts": {"cpu": 1},
+        "unexecuted_module_count": 0,
+        "unexecuted_module_sample": [],
+    }
     assert not any((tmp_path / "artifact" / "assets").iterdir())
 
 
