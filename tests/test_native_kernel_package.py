@@ -132,6 +132,19 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert "packed_matmul_forward_half" in metal_source
 
 
+def test_cuda_kernel_uses_wmma_for_supported_bf16_and_fp16_low_bit_modes() -> None:
+    cuda_source = (KERNEL_ROOT / "orbitquant_packed_matmul_cuda/packed_matmul.cu").read_text(
+        encoding="utf-8"
+    )
+
+    assert "orbitquant_packed_matmul_wmma_bf16_kernel" in cuda_source
+    assert "orbitquant_packed_matmul_wmma_half_kernel" in cuda_source
+    assert "wmma::mma_sync" in cuda_source
+    for bits in (2, 3, 4, 6, 8):
+        assert f"ORBITQUANT_LAUNCH_BF16({bits});" in cuda_source
+        assert f"ORBITQUANT_LAUNCH_HALF({bits});" in cuda_source
+
+
 def test_metal_host_source_matches_cuda_packed_weight_contract() -> None:
     metal_host = (
         KERNEL_ROOT / "orbitquant_packed_matmul_metal/packed_matmul.mm"
