@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+from orbitquant import __version__
+
 
 def test_core_import_does_not_require_pillow():
     script = """
@@ -26,4 +28,4 @@ print(orbitquant.__version__)
     )
 
     assert result.returncode == 0, result.stderr
-    assert "0.1.0" in result.stdout
+    assert __version__ in result.stdout

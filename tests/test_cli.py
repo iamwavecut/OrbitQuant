@@ -8,6 +8,7 @@ import torch
 from PIL import Image
 
 import orbitquant.cli.main as cli_main
+from orbitquant import __version__
 from orbitquant.artifacts import save_orbitquant_artifact, validate_orbitquant_artifact
 from orbitquant.artifacts.checksums import write_sha256sums_from_manifest
 from orbitquant.cli.main import main
@@ -19,7 +20,7 @@ def test_cli_version_prints_version(capsys):
     assert main(["--version"]) == 0
 
     output = capsys.readouterr().out
-    assert "0.1.0" in output
+    assert __version__ in output
 
 
 def test_cli_packed_matmul_runtime_modes_skip_dequant_prewarm():

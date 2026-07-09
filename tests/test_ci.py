@@ -4,6 +4,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import orbitquant
+
 
 def _tracked_native_kernel_files(package_root: Path) -> list[Path]:
     result = subprocess.run(
@@ -34,6 +36,13 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "dist/*.whl" in text
     assert "orbitquant-0.1.0-py3-none-any.whl" not in text
     assert "orbitquant --version" in text
+
+
+def test_package_version_matches_import_version():
+    with Path("pyproject.toml").open("rb") as file:
+        project = tomllib.load(file)["project"]
+
+    assert project["version"] == orbitquant.__version__
 
 
 def test_github_actions_pypi_publish_workflow_uses_trusted_publishing():
