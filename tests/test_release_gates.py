@@ -164,7 +164,7 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "the release tag and GitHub\n  release remain pending explicit approval" in (
         release_gates
     )
-    assert "release-readiness\n  commit `162554f` passed as run `29015920751`" in (
+    assert "release-readiness\n  commit `0c0f63a` passed as run `29016554734`" in (
         release_gates
     )
     assert "`iamwavecut/OrbitQuant` as `PUBLIC`" in release_gates
@@ -327,10 +327,15 @@ def test_kernel_audit_documents_backend_claim_boundaries():
         kernel_audit
     )
     assert "2026-07-08T16:59Z" in kernel_audit
+    assert "b050a89d6e6f52098c73d904a85011231f77485c" in kernel_audit
+    assert "PyPI `orbitquant-0.1.0.tar.gz` source distribution" in kernel_audit
+    assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
+        kernel_audit
+    )
     assert "6821e4cd5ff1894994d7137c1d861660cfeed1c8" in kernel_audit
-    assert "adding CUDA launch-error checks" in kernel_audit
     assert "kernels-community/README/discussions/15" in kernel_audit
     assert "follow-up comment on 2026-07-08T18:03Z" in kernel_audit
+    assert "second follow-up comment on 2026-07-09T11:56Z" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit

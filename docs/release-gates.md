@@ -84,8 +84,8 @@ URL, or signed-off audit note.
   `scripts/run_cuda_kernel_checks.sh` will not start a kernel-builder/Nix
   source build unless `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. A
   2026-07-09 prebuilt-only loader check still returned 404 for the Kernel Hub
-  repo while the source snapshot model repo resolved to commit
-  `6821e4cd5ff1894994d7137c1d861660cfeed1c8`.
+  repo while the public source snapshot model repo resolved to commit
+  `b050a89d6e6f52098c73d904a85011231f77485c`.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
@@ -155,7 +155,7 @@ URL, or signed-off audit note.
   release remain pending explicit approval. The exact manual tag/release
   sequence is prepared in
   [publication-checklist.md](publication-checklist.md). GitHub CI for release-readiness
-  commit `162554f` passed as run `29015920751` on 2026-07-09, including HF
+  commit `0c0f63a` passed as run `29016554734` on 2026-07-09, including HF
   integration tests, full pytest, package build, `twine check`, and wheel
   smoke. A live GitHub check on 2026-07-09T11:54Z reported
   `iamwavecut/OrbitQuant` as `PUBLIC`, Apache-2.0 licensed, with homepage

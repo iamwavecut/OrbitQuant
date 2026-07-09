@@ -64,11 +64,17 @@ for the current artifact format and runtime modes.
   `upstream`/`source` metadata. The run verified kernel-builder layout hooks,
   macOS 15/Python ABI 3.9 compatibility, get-kernel loading, and 17 package
   tests for the Metal build.
-- A private Hugging Face source snapshot exists at
+- A public Hugging Face source snapshot exists at
   `WaveCut/orbitquant-packed-matmul` commit
-  `6821e4cd5ff1894994d7137c1d861660cfeed1c8`, refreshed on
-  2026-07-08T18:00Z after adding CUDA launch-error checks, but Kernel Hub
-  publication is not yet approved for the account. On 2026-07-08T17:02Z,
+  `b050a89d6e6f52098c73d904a85011231f77485c`. It contains the tracked
+  `native-kernels/orbitquant-packed-matmul` source package with no generated
+  `build/`, local `.venv/`, `__pycache__/`, binary extension, or benchmark
+  output files. The PyPI `orbitquant-0.1.0.tar.gz` source distribution also
+  contains this kernel source under
+  `orbitquant-0.1.0/native-kernels/orbitquant-packed-matmul/`, with SHA256
+  `6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89`.
+  Kernel Hub publication is not yet approved for the account. On
+  2026-07-08T17:02Z,
   `nix --option sandbox relaxed run .#build-and-copy -L` built and copied the
   three Metal variants, and
   `nix --option sandbox relaxed run .#build-and-upload -L` found those variants
@@ -79,6 +85,10 @@ for the current artifact format and runtime modes.
   source snapshot `6821e4cd5ff1894994d7137c1d861660cfeed1c8` and source
   archive SHA256
   `77aef6caa1bbdbbd77e2cbf5003423073e001191d008473c957795d7bed03651`.
+  A second follow-up comment on 2026-07-09T11:56Z points reviewers to the
+  public source snapshot, checked commit
+  `b050a89d6e6f52098c73d904a85011231f77485c`, public PyPI source
+  distribution URL, and SHA256.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same
@@ -138,8 +148,8 @@ for the current artifact format and runtime modes.
   and benchmark stages were explicitly skipped.
 - On 2026-07-09, a prebuilt-only native loader check still found no loadable
   CUDA/Metal Kernel Hub artifact: `repo_info(..., repo_type="kernel")`
-  returned 404 while the source snapshot model repo resolved to commit
-  `6821e4cd5ff1894994d7137c1d861660cfeed1c8`. The native loader therefore
+  returned 404 while the public source snapshot model repo resolved to commit
+  `b050a89d6e6f52098c73d904a85011231f77485c`. The native loader therefore
   still requires `LOCAL_KERNELS`, an importable package, or Kernel Hub approval.
 
 ## Packaging Boundary
