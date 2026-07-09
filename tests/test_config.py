@@ -45,7 +45,10 @@ def test_orbit_quant_config_defaults_to_auto_fused_runtime_mode():
     config = OrbitQuantConfig()
 
     assert config.runtime_mode == "auto_fused"
-    assert config.packed_matmul_block_n == 128
+    assert config.packed_matmul_block_m == 64
+    assert config.packed_matmul_block_n == 64
+    assert config.packed_matmul_block_k == 128
+    assert config.packed_matmul_num_warps == 4
 
 
 def test_orbit_quant_config_accepts_auto_fused_runtime_mode():

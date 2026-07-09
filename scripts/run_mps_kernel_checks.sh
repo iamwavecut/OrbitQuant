@@ -126,7 +126,7 @@ import os
 from orbitquant.kernels import backend_capabilities
 
 capability = backend_capabilities()["mps"]
-required_stages = {"codebook_lookup_rescale", "packed_weight_dequant"}
+required_stages = {"activation_norm_rpbh_quant_rescale", "packed_weight_dequant"}
 if os.environ.get("ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI", "1") == "1":
     required_stages.add("packed_weight_matmul")
 stages = set(str(capability["optimized_stage"] or "").split(","))
@@ -163,7 +163,7 @@ orbitquant kernel-bench \
   --activation-kernel-backend mps \
   "${BENCH_RUNTIME_ARGS[@]}" \
   --device mps \
-  --dtype float32 \
+  --dtype bfloat16 \
   --warmup "$WARMUP" \
   --iterations "$ITERATIONS"
 stage kernel-bench-done
@@ -180,7 +180,7 @@ if [[ "$RUN_NATIVE_KERNEL_PACKAGE_CI" == "1" ]]; then
     --activation-kernel-backend mps \
     --runtime-mode native_packed_matmul \
     --device mps \
-    --dtype float32 \
+    --dtype bfloat16 \
     --warmup "$WARMUP" \
     --iterations "$ITERATIONS"
   stage native-packed-matmul-bench-done

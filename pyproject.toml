@@ -73,3 +73,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["kernels_ci: native kernel package checks run by kernel-builder CI"]

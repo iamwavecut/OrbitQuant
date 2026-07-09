@@ -44,6 +44,193 @@ __device__ __forceinline__ uint32_t unpack_lowbit_index_const(
   return (raw >> bit_offset) & mask;
 }
 
+template <typename T>
+__device__ __forceinline__ T orbitquant_mma_from_float(float value);
+
+template <>
+__device__ __forceinline__ half orbitquant_mma_from_float<half>(float value) {
+  return __float2half(value);
+}
+
+template <>
+__device__ __forceinline__ __nv_bfloat16 orbitquant_mma_from_float<__nv_bfloat16>(
+    float value) {
+  return __float2bfloat16(value);
+}
+
+template <int Bits, typename mma_t>
+__device__ __forceinline__ void decode_mma64_weight_segment(
+    mma_t *__restrict__ destination,
+    uint8_t const *__restrict__ packed_weight_indices,
+    float const *__restrict__ row_norms,
+    float const *__restrict__ centroids,
+    int64_t global_col,
+    int64_t global_k,
+    int64_t in_features,
+    bool valid_segment) {
+  constexpr int values = 32;
+  constexpr uint32_t mask = (1u << Bits) - 1u;
+  uint32_t packed_words[Bits] = {};
+  float norm = 0.0f;
+  if (valid_segment) {
+    const int64_t value_offset = global_col * in_features + global_k;
+    const int64_t byte_index = (value_offset * Bits) >> 3;
+    auto const *words = reinterpret_cast<uint32_t const *>(
+        packed_weight_indices + byte_index);
+#pragma unroll
+    for (int word = 0; word < Bits; ++word) {
+      packed_words[word] = words[word];
+    }
+    norm = row_norms[global_col];
+  }
+
+#pragma unroll
+  for (int index_offset = 0; index_offset < values; ++index_offset) {
+    const int bit_start = index_offset * Bits;
+    const int word_index = bit_start >> 5;
+    const int shift = bit_start & 31;
+    uint32_t raw = packed_words[word_index] >> shift;
+    if (shift + Bits > 32) {
+      raw |= packed_words[word_index + 1] << (32 - shift);
+    }
+    const uint32_t codebook_index = raw & mask;
+    const float value = valid_segment ? norm * centroids[codebook_index] : 0.0f;
+    destination[index_offset] = orbitquant_mma_from_float<mma_t>(value);
+  }
+}
+
+template <typename storage_t, typename mma_t, int Bits>
+__global__ void orbitquant_packed_matmul_mma64_kernel(
+    storage_t *__restrict__ out,
+    storage_t const *__restrict__ x,
+    uint8_t const *__restrict__ packed_weight_indices,
+    float const *__restrict__ row_norms,
+    float const *__restrict__ centroids,
+    float const *__restrict__ bias,
+    bool has_bias,
+    int64_t rows,
+    int64_t out_features,
+    int64_t in_features) {
+  constexpr int tile_m = 64;
+  constexpr int tile_n = 64;
+  constexpr int tile_k = 64;
+  constexpr int padded_k = 72;
+  constexpr int warps_per_block = 4;
+  constexpr int warp_tile = 16;
+  constexpr int col_tiles = tile_n / warp_tile;
+  constexpr int x_vector_values = 8;
+  constexpr int x_vectors_per_row = tile_k / x_vector_values;
+  constexpr int weight_segment_values = 32;
+  constexpr int weight_segments_per_row = tile_k / weight_segment_values;
+  static_assert(sizeof(storage_t) == sizeof(mma_t));
+
+  __shared__ mma_t x_tile[tile_m * padded_k];
+  __shared__ mma_t weight_tile[tile_n * padded_k];
+  __shared__ float accumulator_tile[
+      warps_per_block * col_tiles * warp_tile * warp_tile];
+
+  const int warp_id = threadIdx.x / warpSize;
+  const int lane = threadIdx.x & (warpSize - 1);
+  const int64_t block_row = int64_t(blockIdx.y) * tile_m;
+  const int64_t block_col = int64_t(blockIdx.x) * tile_n;
+
+  wmma::fragment<wmma::accumulator, warp_tile, warp_tile, warp_tile, float>
+      accumulators[col_tiles];
+#pragma unroll
+  for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+    wmma::fill_fragment(accumulators[col_tile], 0.0f);
+  }
+
+  for (int64_t k_start = 0; k_start < in_features; k_start += tile_k) {
+    constexpr int x_vector_tasks = tile_m * x_vectors_per_row;
+    for (int task = threadIdx.x; task < x_vector_tasks; task += blockDim.x) {
+      const int local_row = task / x_vectors_per_row;
+      const int local_vector = task - local_row * x_vectors_per_row;
+      const int local_k = local_vector * x_vector_values;
+      const int64_t global_row = block_row + local_row;
+      auto *destination = reinterpret_cast<uint4 *>(
+          x_tile + local_row * padded_k + local_k);
+      if (global_row < rows) {
+        auto const *source = reinterpret_cast<uint4 const *>(
+            x + global_row * in_features + k_start + local_k);
+        *destination = *source;
+      } else {
+        *destination = make_uint4(0, 0, 0, 0);
+      }
+    }
+
+    constexpr int weight_tasks = tile_n * weight_segments_per_row;
+    const int weight_task = threadIdx.x;
+    if (weight_task < weight_tasks) {
+      const int local_col = weight_task / weight_segments_per_row;
+      const int local_segment =
+          weight_task - local_col * weight_segments_per_row;
+      const int local_k = local_segment * weight_segment_values;
+      const int64_t global_col = block_col + local_col;
+      decode_mma64_weight_segment<Bits>(
+          weight_tile + local_col * padded_k + local_k,
+          packed_weight_indices,
+          row_norms,
+          centroids,
+          global_col,
+          k_start + local_k,
+          in_features,
+          global_col < out_features);
+    }
+    __syncthreads();
+
+#pragma unroll
+    for (int local_k = 0; local_k < tile_k; local_k += warp_tile) {
+      wmma::fragment<wmma::matrix_a, warp_tile, warp_tile, warp_tile, mma_t,
+                     wmma::row_major>
+          lhs;
+      wmma::load_matrix_sync(
+          lhs,
+          x_tile + warp_id * warp_tile * padded_k + local_k,
+          padded_k);
+#pragma unroll
+      for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+        wmma::fragment<wmma::matrix_b, warp_tile, warp_tile, warp_tile, mma_t,
+                       wmma::col_major>
+            rhs;
+        wmma::load_matrix_sync(
+            rhs,
+            weight_tile + col_tile * warp_tile * padded_k + local_k,
+            padded_k);
+        wmma::mma_sync(
+            accumulators[col_tile], lhs, rhs, accumulators[col_tile]);
+      }
+    }
+    __syncthreads();
+  }
+
+#pragma unroll
+  for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+    float *warp_accumulator = accumulator_tile +
+        (warp_id * col_tiles + col_tile) * warp_tile * warp_tile;
+    wmma::store_matrix_sync(
+        warp_accumulator,
+        accumulators[col_tile],
+        warp_tile,
+        wmma::mem_row_major);
+    __syncwarp();
+    for (int offset = lane; offset < warp_tile * warp_tile; offset += warpSize) {
+      const int local_row = offset / warp_tile;
+      const int local_col = offset - local_row * warp_tile;
+      const int64_t global_row = block_row + warp_id * warp_tile + local_row;
+      const int64_t global_col = block_col + col_tile * warp_tile + local_col;
+      if (global_row < rows && global_col < out_features) {
+        float value = warp_accumulator[offset];
+        if (has_bias) {
+          value += bias[global_col];
+        }
+        out[global_row * out_features + global_col] =
+            static_cast<storage_t>(value);
+      }
+    }
+  }
+}
+
 template <int Bits>
 __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
     c10::BFloat16 *__restrict__ out,
@@ -369,6 +556,46 @@ void matmul_packed_weight(
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   if (x.scalar_type() == at::kBFloat16) {
+    if (in_features % 64 == 0 &&
+        (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
+      constexpr int mma_tile_m = 64;
+      constexpr int mma_tile_n = 64;
+      const dim3 mma_block(128);
+      const dim3 mma_grid(
+          (out_features + mma_tile_n - 1) / mma_tile_n,
+          (x.size(0) + mma_tile_m - 1) / mma_tile_m);
+#define ORBITQUANT_LAUNCH_MMA64_BF16(BITS_VALUE)                               \
+  orbitquant_packed_matmul_mma64_kernel<c10::BFloat16, __nv_bfloat16,          \
+                                         BITS_VALUE><<<mma_grid, mma_block, 0,  \
+                                                       stream>>>(               \
+      reinterpret_cast<c10::BFloat16 *>(out.data_ptr()),                         \
+      reinterpret_cast<c10::BFloat16 const *>(x.data_ptr()),                     \
+      packed_weight_indices.data_ptr<uint8_t>(),                                 \
+      row_norms.data_ptr<float>(),                                               \
+      centroids.data_ptr<float>(),                                               \
+      has_bias ? bias.data_ptr<float>() : nullptr,                               \
+      has_bias,                                                                  \
+      x.size(0),                                                                 \
+      out_features,                                                              \
+      in_features)
+      switch (bits) {
+        case 2:
+          ORBITQUANT_LAUNCH_MMA64_BF16(2);
+          break;
+        case 3:
+          ORBITQUANT_LAUNCH_MMA64_BF16(3);
+          break;
+        case 4:
+          ORBITQUANT_LAUNCH_MMA64_BF16(4);
+          break;
+        case 6:
+          ORBITQUANT_LAUNCH_MMA64_BF16(6);
+          break;
+      }
+#undef ORBITQUANT_LAUNCH_MMA64_BF16
+      C10_CUDA_KERNEL_LAUNCH_CHECK();
+      return;
+    }
     constexpr int tile = 16;
     constexpr int col_tiles = 4;
     constexpr int rows_per_block = tile * 8;
@@ -421,6 +648,45 @@ void matmul_packed_weight(
   }
 
   if (x.scalar_type() == at::kHalf) {
+    if (in_features % 64 == 0 &&
+        (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
+      constexpr int mma_tile_m = 64;
+      constexpr int mma_tile_n = 64;
+      const dim3 mma_block(128);
+      const dim3 mma_grid(
+          (out_features + mma_tile_n - 1) / mma_tile_n,
+          (x.size(0) + mma_tile_m - 1) / mma_tile_m);
+#define ORBITQUANT_LAUNCH_MMA64_HALF(BITS_VALUE)                                \
+  orbitquant_packed_matmul_mma64_kernel<c10::Half, half, BITS_VALUE>            \
+      <<<mma_grid, mma_block, 0, stream>>>(                                     \
+          reinterpret_cast<c10::Half *>(out.data_ptr()),                         \
+          reinterpret_cast<c10::Half const *>(x.data_ptr()),                     \
+          packed_weight_indices.data_ptr<uint8_t>(),                             \
+          row_norms.data_ptr<float>(),                                           \
+          centroids.data_ptr<float>(),                                           \
+          has_bias ? bias.data_ptr<float>() : nullptr,                           \
+          has_bias,                                                              \
+          x.size(0),                                                             \
+          out_features,                                                          \
+          in_features)
+      switch (bits) {
+        case 2:
+          ORBITQUANT_LAUNCH_MMA64_HALF(2);
+          break;
+        case 3:
+          ORBITQUANT_LAUNCH_MMA64_HALF(3);
+          break;
+        case 4:
+          ORBITQUANT_LAUNCH_MMA64_HALF(4);
+          break;
+        case 6:
+          ORBITQUANT_LAUNCH_MMA64_HALF(6);
+          break;
+      }
+#undef ORBITQUANT_LAUNCH_MMA64_HALF
+      C10_CUDA_KERNEL_LAUNCH_CHECK();
+      return;
+    }
     constexpr int tile = 16;
     constexpr int col_tiles = 4;
     constexpr int rows_per_block = tile * 8;

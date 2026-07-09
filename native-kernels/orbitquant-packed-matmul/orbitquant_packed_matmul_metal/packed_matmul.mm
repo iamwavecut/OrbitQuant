@@ -33,6 +33,8 @@ struct PackedMatmulPipelineCache {
   id<MTLComputePipelineState> float_pipeline;
   id<MTLComputePipelineState> half_pipeline;
   id<MTLComputePipelineState> bfloat16_pipeline;
+  id<MTLComputePipelineState> half_scalar_pipeline;
+  id<MTLComputePipelineState> bfloat16_scalar_pipeline;
 };
 
 static id<MTLComputePipelineState> create_pipeline(
@@ -68,6 +70,10 @@ static PackedMatmulPipelineCache &packed_matmul_pipeline_cache() {
           create_pipeline(cache.device, library, "packed_matmul_forward_half");
       cache.bfloat16_pipeline =
           create_pipeline(cache.device, library, "packed_matmul_forward_bfloat16");
+      cache.half_scalar_pipeline =
+          create_pipeline(cache.device, library, "packed_matmul_forward_half_scalar");
+      cache.bfloat16_scalar_pipeline =
+          create_pipeline(cache.device, library, "packed_matmul_forward_bfloat16_scalar");
     }
   });
   return cache;
@@ -75,14 +81,15 @@ static PackedMatmulPipelineCache &packed_matmul_pipeline_cache() {
 
 static id<MTLComputePipelineState> select_packed_matmul_pipeline(
     PackedMatmulPipelineCache &cache,
-    c10::ScalarType dtype) {
+    c10::ScalarType dtype,
+    bool use_padded_mma) {
   if (dtype == torch::kFloat) {
     return cache.float_pipeline;
   }
   if (dtype == torch::kHalf) {
-    return cache.half_pipeline;
+    return use_padded_mma ? cache.half_pipeline : cache.half_scalar_pipeline;
   }
-  return cache.bfloat16_pipeline;
+  return use_padded_mma ? cache.bfloat16_pipeline : cache.bfloat16_scalar_pipeline;
 }
 
 static void dispatch_packed_matmul_kernel(
@@ -100,9 +107,13 @@ static void dispatch_packed_matmul_kernel(
     int64_t block_n,
     int64_t block_k) {
   @autoreleasepool {
+    const bool use_padded_mma =
+        x.scalar_type() != torch::kFloat && x.size(0) % 32 == 0 &&
+        out_features % 32 == 0 && in_features % 32 == 0 &&
+        (bits == 2 || bits == 3 || bits == 4 || bits == 6);
     PackedMatmulPipelineCache &cache = packed_matmul_pipeline_cache();
     id<MTLComputePipelineState> pipeline =
-        select_packed_matmul_pipeline(cache, x.scalar_type());
+        select_packed_matmul_pipeline(cache, x.scalar_type(), use_padded_mma);
 
     id<MTLCommandBuffer> command_buffer = torch::mps::get_command_buffer();
     TORCH_CHECK(command_buffer, "Failed to retrieve MPS command buffer");
@@ -141,14 +152,43 @@ static void dispatch_packed_matmul_kernel(
                  atIndex:5];
       [encoder setBytes:&params length:sizeof(params) atIndex:6];
 
-      const NSUInteger threads_x = std::min<int64_t>(std::max<int64_t>(block_n, 1), 32);
-      const NSUInteger threads_y = std::min<int64_t>(std::max<int64_t>(block_m, 1), 32);
-      const NSUInteger tile_k = std::min<int64_t>(std::max<int64_t>(block_k, 1), 128);
-      const NSUInteger shared_bytes = (threads_y * tile_k + tile_k * threads_x) * sizeof(float);
-      [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
-      MTLSize grid_size = MTLSizeMake(out_features, x.size(0), 1);
-      MTLSize threadgroup_size = MTLSizeMake(threads_x, threads_y, 1);
-      [encoder dispatchThreads:grid_size threadsPerThreadgroup:threadgroup_size];
+      if (!use_padded_mma) {
+        const NSUInteger threads_x =
+            std::min<int64_t>(std::max<int64_t>(block_n, 1), 32);
+        const NSUInteger threads_y =
+            std::min<int64_t>(std::max<int64_t>(block_m, 1), 32);
+        const NSUInteger tile_k =
+            std::min<int64_t>(std::max<int64_t>(block_k, 1), 128);
+        const NSUInteger shared_bytes =
+            (threads_y * tile_k + tile_k * threads_x) * sizeof(float);
+        [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
+        MTLSize grid_size = MTLSizeMake(out_features, x.size(0), 1);
+        MTLSize threadgroup_size = MTLSizeMake(threads_x, threads_y, 1);
+        [encoder dispatchThreads:grid_size threadsPerThreadgroup:threadgroup_size];
+      } else {
+        constexpr NSUInteger tile_m = 32;
+        constexpr NSUInteger tile_n = 32;
+        constexpr NSUInteger padded_k = 40;
+        constexpr NSUInteger threads = 128;
+        const NSUInteger scalar_bytes = x.element_size();
+        const NSUInteger shared_bytes =
+            2 * tile_m * padded_k * scalar_bytes;
+        TORCH_CHECK(
+            threads <= pipeline.maxTotalThreadsPerThreadgroup,
+            "Metal packed matmul pipeline supports only ",
+            pipeline.maxTotalThreadsPerThreadgroup,
+            " threads per threadgroup, but ",
+            threads,
+            " are required");
+        [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
+        MTLSize threadgroups = MTLSizeMake(
+            (out_features + tile_n - 1) / tile_n,
+            (x.size(0) + tile_m - 1) / tile_m,
+            1);
+        MTLSize threadgroup_size = MTLSizeMake(threads, 1, 1);
+        [encoder dispatchThreadgroups:threadgroups
+            threadsPerThreadgroup:threadgroup_size];
+      }
       [encoder endEncoding];
       torch::mps::commit();
     });

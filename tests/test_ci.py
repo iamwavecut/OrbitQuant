@@ -140,7 +140,8 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     mps_script = Path("scripts/run_mps_kernel_checks.sh").read_text(encoding="utf-8")
     assert "MPS Metal compile_shader is not available" in mps_script
     assert "mps-kernel-contract-ok" in mps_script
-    assert "codebook_lookup_rescale" in mps_script
+    assert "activation_norm_rpbh_quant_rescale" in mps_script
+    assert "--dtype bfloat16" in mps_script
     assert "upstream_native_mps_op" in mps_script
     assert "kernels>=0.16" in mps_script
     assert "ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI" in mps_script
@@ -312,7 +313,7 @@ def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant
         package_root / "orbitquant_packed_matmul_cuda/packed_matmul.cu"
     ).read_text(encoding="utf-8")
     assert "#include <c10/cuda/CUDAException.h>" in cuda_source
-    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK();") == 3
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK();") == 5
 
     package_api = (
         package_root / "torch-ext/orbitquant_packed_matmul/__init__.py"

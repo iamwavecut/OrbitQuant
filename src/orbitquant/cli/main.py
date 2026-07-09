@@ -763,10 +763,10 @@ def main(argv: list[str] | None = None) -> int:
     kernel_bench_parser.add_argument("--warmup", type=int, default=5)
     kernel_bench_parser.add_argument("--iterations", type=int, default=20)
     kernel_bench_parser.add_argument("--seed", type=int, default=0)
-    kernel_bench_parser.add_argument("--packed-matmul-block-m", type=int, default=32)
-    kernel_bench_parser.add_argument("--packed-matmul-block-n", type=int, default=128)
-    kernel_bench_parser.add_argument("--packed-matmul-block-k", type=int, default=64)
-    kernel_bench_parser.add_argument("--packed-matmul-num-warps", type=int, default=8)
+    kernel_bench_parser.add_argument("--packed-matmul-block-m", type=int, default=64)
+    kernel_bench_parser.add_argument("--packed-matmul-block-n", type=int, default=64)
+    kernel_bench_parser.add_argument("--packed-matmul-block-k", type=int, default=128)
+    kernel_bench_parser.add_argument("--packed-matmul-num-warps", type=int, default=4)
 
     quantize_bench_parser = subparsers.add_parser(
         "quantize-bench", help="benchmark full model quantization staging"

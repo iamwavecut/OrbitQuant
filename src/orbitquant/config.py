@@ -70,10 +70,10 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     artifact_format_version: int = 1
     runtime_mode: str = "auto_fused"
     activation_kernel_backend: str = "auto"
-    packed_matmul_block_m: int = 32
-    packed_matmul_block_n: int = 128
-    packed_matmul_block_k: int = 64
-    packed_matmul_num_warps: int = 8
+    packed_matmul_block_m: int = 64
+    packed_matmul_block_n: int = 64
+    packed_matmul_block_k: int = 128
+    packed_matmul_num_warps: int = 4
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:

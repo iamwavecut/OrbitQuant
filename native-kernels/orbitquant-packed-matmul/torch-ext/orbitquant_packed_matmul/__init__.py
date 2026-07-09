@@ -17,9 +17,9 @@ def matmul_packed_weight(
     out_features: int,
     in_features: int,
     bias: torch.Tensor | None = None,
-    block_m: int = 32,
+    block_m: int = 64,
     block_n: int = 64,
-    block_k: int = 64,
+    block_k: int = 128,
 ) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")

@@ -169,24 +169,34 @@ the native packed low-bit matmul kernel first, then the Triton packed matmul
 kernel. On MPS it requires the native Metal packed low-bit matmul kernel. On CPU
 it uses the reference path.
 
-Install the optional Hugging Face Kernels loader when using Hub-published native
-kernels:
+Build the native package locally from the checked-in CUDA and Metal sources:
 
 ```bash
-pip install "orbitquant[kernels]"
+cd native-kernels/orbitquant-packed-matmul
+nix --option sandbox relaxed --option max-jobs 1 --option cores 8 \
+  run .#build-and-copy -L
 ```
 
-For local native-kernel builds, either add the matching
-`native-kernels/orbitquant-packed-matmul/build/torch*-<backend>-<platform>`
-directory to `PYTHONPATH`, or set `LOCAL_KERNELS` to that same built variant
-directory before importing OrbitQuant:
+This creates ABI3 variants under `build/` and does not publish or upload them.
+Add the variant matching the current Torch/backend/platform runtime to
+`PYTHONPATH` before importing OrbitQuant:
 
 ```bash
 # CUDA/Linux example.
-export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/native-kernels/orbitquant-packed-matmul/build/torch29-cxx11-cu128-x86_64-linux"
+export PYTHONPATH="$PWD/build/torch29-cxx11-cu130-x86_64-linux:$PYTHONPATH"
 
 # Metal/macOS example.
-export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/native-kernels/orbitquant-packed-matmul/build/torch212-metal-aarch64-darwin"
+export PYTHONPATH="$PWD/build/torch212-metal-aarch64-darwin:$PYTHONPATH"
+```
+
+OrbitQuant imports `orbitquant_packed_matmul` directly from that directory, so
+the Hugging Face `kernels` loader and a Kernel Hub repository are not required.
+As an alternative local loader, install `orbitquant[kernels]` and set
+`LOCAL_KERNELS` to the same variant directory:
+
+```bash
+pip install "orbitquant[kernels]"
+export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$PWD/build/torch212-metal-aarch64-darwin"
 ```
 
 `LOCAL_KERNELS` must point at a built variant directory that contains
@@ -486,8 +496,8 @@ are reported separately. Kernel support is backend-specific:
 - CPU is a correctness reference path only and does not claim optimized CPU
   kernels.
 - MPS/Metal uses the native packed low-bit matmul package in `auto_fused` mode
-  when it is importable. Lower-level Metal helpers also cover codebook
-  lookup/rescale and packed weight dequantization.
+  when it is importable. Fused Metal shaders cover activation norm, RPBH/FWHT
+  rotation, codebook lookup/rescale, and packed weight dequantization.
 - CUDA/Triton is partially optimized: Triton covers runtime activation norm,
   RPBH/FWHT rotation, codebook lookup/rescale, packed weight dequantization,
   low-bit pack/unpack, offline weight RPBH/FWHT codebook indexing with direct

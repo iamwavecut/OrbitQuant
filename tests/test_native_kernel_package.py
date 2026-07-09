@@ -131,8 +131,8 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert "packed_matmul_forward_float" in metal_source
     assert "packed_matmul_forward_half" in metal_source
     assert "packed_matmul_forward_bfloat16" in metal_source
-    assert "bf16_to_float" in metal_source
-    assert "float_to_bf16" in metal_source
+    assert "packed_matmul_padded_mma_value<bfloat" in metal_source
+    assert "scalar_t(acc)" in metal_source
     assert "threadgroup float *shared" in metal_source
     assert "threadgroup_barrier(mem_flags::mem_threadgroup)" in metal_source
     assert "params.block_k" in metal_source

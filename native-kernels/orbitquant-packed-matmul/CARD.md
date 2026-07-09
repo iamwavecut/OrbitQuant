@@ -38,19 +38,30 @@ Inputs:
 ## Build And Test
 
 ```bash
-nix --option sandbox relaxed run .#build-and-copy -L
-nix --option sandbox relaxed run .#ci-test -L
+nix --option sandbox relaxed --option max-jobs 1 --option cores 8 \
+  run .#build-and-copy -L
+nix --option sandbox relaxed --option max-jobs 1 --option cores 8 \
+  run .#ci-test -L
 ```
 
 The build produces ABI3 Hugging Face Kernels artifacts under `build/` for the
 supported backend variants on the current platform. On macOS, `sandbox relaxed`
-or enabled Nix sandboxing is required by `kernel-builder`.
+or enabled Nix sandboxing is required by `kernel-builder`. The commands build
+local files only; they do not upload to Kernel Hub.
 
 For direct local imports, add the matching `build/torch*-<backend>-<platform>`
 directory to `PYTHONPATH`; the `torch*` variant must match the runtime PyTorch
-version. For Hugging Face `kernels` local loading, set `LOCAL_KERNELS` to the
-same built variant directory containing `metadata.json`, not to the source
-package root:
+version:
+
+```bash
+export PYTHONPATH="/path/to/build/torch212-metal-aarch64-darwin:$PYTHONPATH"
+python -c "import orbitquant_packed_matmul; print(orbitquant_packed_matmul)"
+```
+
+OrbitQuant detects that importable package before trying any Hub loader. For
+Hugging Face `kernels` local loading instead, set `LOCAL_KERNELS` to the same
+built variant directory containing `metadata.json`, not to the source package
+root:
 
 ```bash
 export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=/path/to/build/torch212-metal-aarch64-darwin"

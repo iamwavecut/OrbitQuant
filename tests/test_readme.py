@@ -56,8 +56,10 @@ def test_readme_documents_component_artifact_usage():
     assert 'defaults to `runtime_mode="auto_fused"`' in readme
     assert "does not silently fall back to materializing" in readme
     assert 'runtime_mode="dequant_bf16"' in readme
-    assert "torch29-cxx11-cu128-x86_64-linux" in readme
+    assert "torch29-cxx11-cu130-x86_64-linux" in readme
     assert "torch212-metal-aarch64-darwin" in readme
+    assert "does not publish or upload" in readme
+    assert "Kernel Hub repository are not required" in readme
     assert "expected kernel-builder variant name" in readme
     assert "Full-model speedup claims still require" in readme
     assert "## Release Metrics" in readme

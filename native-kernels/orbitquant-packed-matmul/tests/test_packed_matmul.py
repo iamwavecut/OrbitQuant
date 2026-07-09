@@ -41,6 +41,12 @@ def _mps_bfloat16_device() -> str:
     return device
 
 
+def _cuda_device() -> str:
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    return "cuda"
+
+
 @pytest.mark.kernels_ci
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])
 @pytest.mark.parametrize("in_features", [16, 19])
@@ -167,3 +173,85 @@ def test_matmul_packed_weight_explicit_mps_bfloat16_path_matches_dequantized_ref
     assert actual.dtype == torch.bfloat16
     assert actual.shape == (rows, out_features)
     assert torch.allclose(actual.float().cpu(), expected, atol=3e-2, rtol=3e-2)
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_matmul_packed_weight_mps_aligned_mma_path_matches_dequantized_reference(
+    bits: int,
+    dtype: torch.dtype,
+) -> None:
+    device = _mps_bfloat16_device() if dtype == torch.bfloat16 else _mps_device()
+    rows = in_features = out_features = 32
+    x = torch.randn(rows, in_features, device=device, dtype=dtype)
+    indices = (
+        torch.arange(out_features * in_features, dtype=torch.uint8).reshape(
+            out_features, in_features
+        )
+        % (2**bits)
+    )
+    packed = _pack(indices, bits).to(device)
+    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
+    bias = torch.randn(out_features, device=device, dtype=dtype)
+
+    expected_weight = row_norms.cpu()[:, None] * centroids.cpu()[indices.long()]
+    expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, bias.float().cpu())
+    actual = matmul_packed_weight(
+        x,
+        packed,
+        row_norms,
+        centroids,
+        bits=bits,
+        out_features=out_features,
+        in_features=in_features,
+        bias=bias,
+    )
+
+    tolerance = 3e-2 if dtype == torch.bfloat16 else 2e-2
+    assert actual.dtype == dtype
+    assert torch.allclose(actual.float().cpu(), expected, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_matmul_packed_weight_cuda_mma64_path_matches_dequantized_reference(
+    bits: int,
+    dtype: torch.dtype,
+) -> None:
+    device = _cuda_device()
+    rows = 65
+    in_features = 64
+    out_features = 70
+    x = torch.randn(rows, in_features, device=device, dtype=dtype)
+    indices = (
+        torch.arange(out_features * in_features, dtype=torch.uint8).reshape(
+            out_features, in_features
+        )
+        % (2**bits)
+    )
+    packed = _pack(indices, bits).to(device)
+    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
+    bias = torch.randn(out_features, device=device, dtype=dtype)
+
+    expected_weight = (
+        row_norms[:, None] * centroids[indices.long().to(device)]
+    ).to(dtype)
+    expected = torch.nn.functional.linear(x, expected_weight, bias)
+    actual = matmul_packed_weight(
+        x,
+        packed,
+        row_norms,
+        centroids,
+        bits=bits,
+        out_features=out_features,
+        in_features=in_features,
+        bias=bias,
+    )
+
+    tolerance = 3e-2 if dtype == torch.bfloat16 else 2e-2
+    assert actual.dtype == dtype
+    assert torch.allclose(actual.float(), expected.float(), atol=tolerance, rtol=tolerance)

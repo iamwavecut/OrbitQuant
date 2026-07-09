@@ -135,7 +135,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["mps"]["optimized"] is False
     assert (
         capabilities["mps"]["implemented_stage"]
-        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+        == "activation_norm_rpbh_quant_rescale,packed_weight_dequant,packed_weight_matmul"
     )
     assert capabilities["mps"]["optimized_stage"] is None
     assert capabilities["mps"]["weight_dequant_optimized"] is False
@@ -182,7 +182,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["mps"]["optimized"] is True
     assert (
         capabilities["mps"]["implementation"]
-        == "torch_mps_compile_shader_codebook_rescale+native_packed_matmul"
+        == "torch_mps_compile_shader_fused_activation+native_packed_matmul"
     )
     assert (
         capabilities["mps"]["package_format"]
@@ -190,11 +190,11 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     )
     assert (
         capabilities["mps"]["optimized_stage"]
-        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+        == "activation_norm_rpbh_quant_rescale,packed_weight_dequant,packed_weight_matmul"
     )
     assert (
         capabilities["mps"]["implemented_stage"]
-        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+        == "activation_norm_rpbh_quant_rescale,packed_weight_dequant,packed_weight_matmul"
     )
     assert capabilities["mps"]["upstream_native_mps_op"] is False
     assert capabilities["mps"]["hf_kernel_builder_compliant"] is False
@@ -233,12 +233,18 @@ def test_backend_capabilities_report_mps_shader_without_native_matmul(monkeypatc
 
     assert capabilities["mps"]["claim_status"] == "partial_optimized"
     assert capabilities["mps"]["optimized"] is True
-    assert capabilities["mps"]["implementation"] == "torch_mps_compile_shader_codebook_rescale"
+    assert (
+        capabilities["mps"]["implementation"]
+        == "torch_mps_compile_shader_fused_activation"
+    )
     assert capabilities["mps"]["package_format"] == "torch.mps.compile_shader"
-    assert capabilities["mps"]["optimized_stage"] == "codebook_lookup_rescale,packed_weight_dequant"
+    assert (
+        capabilities["mps"]["optimized_stage"]
+        == "activation_norm_rpbh_quant_rescale,packed_weight_dequant"
+    )
     assert (
         capabilities["mps"]["implemented_stage"]
-        == "codebook_lookup_rescale,packed_weight_dequant,packed_weight_matmul"
+        == "activation_norm_rpbh_quant_rescale,packed_weight_dequant,packed_weight_matmul"
     )
     assert capabilities["mps"]["weight_dequant_optimized"] is True
 
@@ -284,15 +290,17 @@ def test_triton_availability_requires_importable_triton_modules(monkeypatch):
     assert available_backends()["triton_cuda"] is False
 
 
-def test_mps_shader_source_declares_only_current_custom_shader_boundary():
+def test_mps_shader_source_declares_fused_activation_and_dequant_kernels():
     import orbitquant.kernels.mps as mps_module
 
-    source = mps_module._MPS_CODEBOOK_RESCALE_SOURCE
+    source = mps_module._MPS_KERNEL_SOURCE
 
+    assert "orbitquant_row_norm_bfloat16" in source
+    assert "orbitquant_fused_activation_bfloat16" in source
+    assert "threadgroup float values" in source
+    assert "threadgroup_barrier" in source
     assert "orbitquant_codebook_rescale" in source
     assert "orbitquant_dequantize_packed_weight" in source
-    assert "Fast Walsh" not in source
-    assert "RPBH" not in source
     assert "linear" not in source.lower()
 
 
@@ -410,6 +418,34 @@ def test_mps_backend_matches_reference_without_full_reference_fallback(monkeypat
     )
 
     assert torch.allclose(actual.cpu(), expected.cpu())
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize(
+    "dim,block_size", [(16, 8), (3072, "paper"), (4096, "paper")]
+)
+def test_mps_fused_activation_matches_reference_without_torch_rotation(
+    monkeypatch, dtype, dim, block_size
+):
+    if not dispatch_module._mps_metal_available():
+        pytest.skip("MPS Metal shader backend is not available")
+
+    torch.manual_seed(0)
+    x = torch.randn(2, dim, device="mps", dtype=dtype)
+    rotation = RPBHRotation(dim=dim, seed=3, block_size=block_size)
+    codebook = get_codebook(dim=dim, bits=4)
+    expected = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
+
+    def fail_rotation(*args, **kwargs):
+        raise AssertionError("MPS fused activation path should not call PyTorch RPBH")
+
+    monkeypatch.setattr(RPBHRotation, "apply_to_activations", fail_rotation)
+    actual = quantize_activations_kernel(
+        x, rotation=rotation, codebook=codebook, eps=1e-12, backend="mps"
+    )
+
+    atol = 2e-3 if dtype == torch.float32 else 0.0
+    assert torch.allclose(actual.cpu(), expected.cpu(), atol=atol, rtol=0.0)
 
 
 def test_mps_codebook_kernel_matches_bucketize_boundary_semantics():

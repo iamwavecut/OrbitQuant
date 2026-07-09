@@ -5,12 +5,11 @@ import torch
 from orbitquant.codebooks import LloydMaxCodebook
 from orbitquant.functional import quantize_activations
 from orbitquant.rotations import RPBHRotation
-from orbitquant.rotations.fwht import fwht
 
 BackendAvailability = dict[str, bool]
 BackendCapabilities = dict[str, dict[str, object]]
 
-_MPS_SHADER_STAGE = "codebook_lookup_rescale,packed_weight_dequant"
+_MPS_SHADER_STAGE = "activation_norm_rpbh_quant_rescale,packed_weight_dequant"
 _MPS_NATIVE_STAGE = "packed_weight_matmul"
 _MPS_IMPLEMENTED_STAGE = f"{_MPS_SHADER_STAGE},{_MPS_NATIVE_STAGE}"
 _TRITON_CUDA_IMPLEMENTED_STAGE = (
@@ -74,15 +73,15 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
     mps_optimized = mps_optimized_stages is not None
     if mps_shader_optimized and mps_native_matmul_optimized:
         mps_notes = (
-            "Norm and RPBH rotation still run in PyTorch; a Metal shader handles "
-            "codebook lookup, norm rescale, and packed weight dequant. The native "
-            "packed matmul package handles packed low-bit matmul."
+            "Fused Metal shaders handle activation norm, RPBH/FWHT rotation, codebook "
+            "lookup/rescale, and packed weight dequant. The native packed matmul "
+            "package handles packed low-bit matmul."
         )
     elif mps_shader_optimized:
         mps_notes = (
-            "Norm and RPBH rotation still run in PyTorch; a Metal shader handles "
-            "codebook lookup, norm rescale, and packed weight dequant. The native "
-            "packed matmul package is not available in this environment."
+            "Fused Metal shaders handle activation norm, RPBH/FWHT rotation, codebook "
+            "lookup/rescale, and packed weight dequant. The native packed matmul "
+            "package is not available in this environment."
         )
     elif mps_native_matmul_optimized:
         mps_notes = (
@@ -131,9 +130,9 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "adaln_dequant_optimized": False,
             "device_types": ["mps"],
             "implementation": (
-                "torch_mps_compile_shader_codebook_rescale+native_packed_matmul"
+                "torch_mps_compile_shader_fused_activation+native_packed_matmul"
                 if mps_shader_optimized and mps_native_matmul_optimized
-                else "torch_mps_compile_shader_codebook_rescale"
+                else "torch_mps_compile_shader_fused_activation"
                 if mps_shader_optimized
                 else "native_packed_matmul"
                 if mps_native_matmul_optimized
@@ -231,31 +230,15 @@ def _mps_quantize_activations(
 ) -> torch.Tensor:
     if not _mps_metal_available():
         return _reference_quantize_activations(x, rotation=rotation, codebook=codebook, eps=eps)
-    from orbitquant.kernels.mps import quantize_rotated_activations_with_mps
+    from orbitquant.kernels.mps import quantize_activations_with_mps
 
-    original_dtype = x.dtype
-    work = x.to(torch.float32)
-    norms = work.norm(dim=-1, keepdim=True)
-    unit = work / norms.clamp_min(eps)
-    if constant_tensors is None:
-        rotated = rotation.apply_to_activations(unit)
-    else:
-        permutation = constant_tensors["permutation"].to(device=x.device)
-        signs = constant_tensors["signs"].to(device=x.device, dtype=unit.dtype)
-        rotated = unit.index_select(dim=-1, index=permutation)
-        rotated = rotated * signs
-        rotated = rotated.reshape(
-            *rotated.shape[:-1], rotation.num_blocks, rotation.block_size
-        )
-        rotated = fwht(rotated) * rotation.normalization
-        rotated = rotated.reshape(*unit.shape)
-    quantized = quantize_rotated_activations_with_mps(
-        rotated,
-        norms,
+    return quantize_activations_with_mps(
+        x,
+        rotation,
         codebook,
+        eps=eps,
         constant_tensors=constant_tensors,
     )
-    return quantized.to(original_dtype)
 
 
 def _triton_cuda_quantize_activations(

@@ -155,6 +155,88 @@ def _quantize_activation_work_rescale_kernel(
 
 
 @triton.jit
+def _fwht_local_stage(values, block_size: tl.constexpr, stage_width: tl.constexpr):
+    butterfly = tl.reshape(
+        values,
+        (block_size // (stage_width * 2), 2, stage_width),
+    )
+    butterfly = tl.permute(butterfly, (0, 2, 1))
+    left, right = tl.split(butterfly)
+    butterfly = tl.join(left + right, left - right)
+    butterfly = tl.permute(butterfly, (0, 2, 1))
+    return tl.reshape(butterfly, (block_size,))
+
+
+@triton.jit
+def _fused_rpbh_quantize_activation_kernel(
+    input_ptr,
+    norms_ptr,
+    permutation_ptr,
+    signs_ptr,
+    centroids_ptr,
+    boundaries_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    dim: tl.constexpr,
+    num_blocks: tl.constexpr,
+    orbit_block_size: tl.constexpr,
+    fwht_stages: tl.constexpr,
+    levels: tl.constexpr,
+    eps: tl.constexpr,
+    inv_sqrt_block: tl.constexpr,
+):
+    row_block = tl.program_id(0)
+    row = row_block // num_blocks
+    orbit_block = row_block % num_blocks
+    local_cols = tl.arange(0, orbit_block_size)
+    cols = orbit_block * orbit_block_size + local_cols
+    mask = (row < rows) & (cols < dim)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
+    norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
+    denominator = tl.maximum(norm, eps)
+    values = tl.load(
+        input_ptr + row * dim + source_cols,
+        mask=mask,
+        other=0.0,
+    ).to(tl.float32)
+    values = values * signs / denominator
+
+    if fwht_stages > 0:
+        values = _fwht_local_stage(values, orbit_block_size, 1)
+    if fwht_stages > 1:
+        values = _fwht_local_stage(values, orbit_block_size, 2)
+    if fwht_stages > 2:
+        values = _fwht_local_stage(values, orbit_block_size, 4)
+    if fwht_stages > 3:
+        values = _fwht_local_stage(values, orbit_block_size, 8)
+    if fwht_stages > 4:
+        values = _fwht_local_stage(values, orbit_block_size, 16)
+    if fwht_stages > 5:
+        values = _fwht_local_stage(values, orbit_block_size, 32)
+    if fwht_stages > 6:
+        values = _fwht_local_stage(values, orbit_block_size, 64)
+    if fwht_stages > 7:
+        values = _fwht_local_stage(values, orbit_block_size, 128)
+    if fwht_stages > 8:
+        values = _fwht_local_stage(values, orbit_block_size, 256)
+    if fwht_stages > 9:
+        values = _fwht_local_stage(values, orbit_block_size, 512)
+    if fwht_stages > 10:
+        values = _fwht_local_stage(values, orbit_block_size, 1024)
+    if fwht_stages > 11:
+        values = _fwht_local_stage(values, orbit_block_size, 2048)
+
+    values *= inv_sqrt_block
+    indices = tl.zeros((orbit_block_size,), dtype=tl.int32)
+    for index in tl.static_range(0, levels - 1):
+        boundary = tl.load(boundaries_ptr + index)
+        indices += (values > boundary).to(tl.int32)
+    quantized = tl.load(centroids_ptr + indices)
+    tl.store(output_ptr + row * dim + cols, quantized * norm, mask=mask)
+
+
+@triton.jit
 def _codebook_rescale_kernel(
     rotated_ptr,
     norms_ptr,
@@ -305,7 +387,7 @@ def _matmul_packed_weight_kernel(
             input_ptr + offs_m[:, None] * in_features + k[None, :],
             mask=(offs_m[:, None] < rows) & (k[None, :] < in_features),
             other=0.0,
-        ).to(tl.float32)
+        )
 
         value_offsets = offs_n[None, :] * in_features + k[:, None]
         weight_mask = (offs_n[None, :] < out_features) & (k[:, None] < in_features)
@@ -327,8 +409,8 @@ def _matmul_packed_weight_kernel(
         norms = tl.load(row_norms_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(
             tl.float32
         )
-        weights = centroids * norms[None, :]
-        accumulator += tl.dot(input_values, weights, input_precision="tf32")
+        weights = (centroids * norms[None, :]).to(input_values.dtype)
+        accumulator += tl.dot(input_values, weights)
 
     if has_bias:
         bias = tl.load(bias_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(tl.float32)
@@ -374,12 +456,12 @@ def _matmul_packed_weight_w4_kernel(
             input_ptr + offs_m[:, None] * in_features + k0[None, :],
             mask=(offs_m[:, None] < rows) & k_mask[None, :],
             other=0.0,
-        ).to(tl.float32)
+        )
         input_values1 = tl.load(
             input_ptr + offs_m[:, None] * in_features + k1[None, :],
             mask=(offs_m[:, None] < rows) & k_mask[None, :],
             other=0.0,
-        ).to(tl.float32)
+        )
 
         packed_offsets = offs_n[None, :] * packed_row_stride + k_bytes[:, None]
         weight_mask = (offs_n[None, :] < out_features) & k_mask[:, None]
@@ -397,10 +479,10 @@ def _matmul_packed_weight_w4_kernel(
         norms = tl.load(row_norms_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(
             tl.float32
         )
-        weights0 = centroids0 * norms[None, :]
-        weights1 = centroids1 * norms[None, :]
-        accumulator += tl.dot(input_values0, weights0, input_precision="tf32")
-        accumulator += tl.dot(input_values1, weights1, input_precision="tf32")
+        weights0 = (centroids0 * norms[None, :]).to(input_values0.dtype)
+        weights1 = (centroids1 * norms[None, :]).to(input_values1.dtype)
+        accumulator += tl.dot(input_values0, weights0)
+        accumulator += tl.dot(input_values1, weights1)
 
     if has_bias:
         bias = tl.load(bias_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(tl.float32)
@@ -763,7 +845,6 @@ def quantize_activations_with_triton(
         return output.reshape(original_shape)
 
     norms = torch.empty(rows, device=x.device, dtype=torch.float32)
-    work = torch.empty(total, device=x.device, dtype=torch.float32)
     constants = {} if constant_tensors is None else constant_tensors
     permutation_source = constants.get("permutation", rotation.permutation)
     signs_source = constants.get("signs", rotation.signs)
@@ -785,57 +866,26 @@ def quantize_activations_with_triton(
         num_warps=8,
     )
 
-    element_block_size = 256
-    _permute_sign_normalize_activation_kernel[(triton.cdiv(total, element_block_size),)](
+    orbit_block_size = int(rotation.block_size)
+    num_blocks = int(rotation.num_blocks)
+    fwht_stages = orbit_block_size.bit_length() - 1
+    _fused_rpbh_quantize_activation_kernel[(rows * num_blocks,)](
         input_contiguous,
         norms,
         permutation,
         signs,
-        work,
-        total=total,
-        dim=dim,
-        eps=float(eps),
-        block_size=element_block_size,
-    )
-
-    orbit_block_size = int(rotation.block_size)
-    num_blocks = int(rotation.num_blocks)
-    stage_width = 1
-    while stage_width * 2 < orbit_block_size:
-        total_quads = rows * num_blocks * (orbit_block_size // 4)
-        _fwht_two_stage_kernel[(triton.cdiv(total_quads, element_block_size),)](
-            work,
-            total_quads=total_quads,
-            in_features=dim,
-            num_blocks=num_blocks,
-            orbit_block_size=orbit_block_size,
-            stage_width=stage_width,
-            block_size=element_block_size,
-        )
-        stage_width *= 4
-    if stage_width < orbit_block_size:
-        total_pairs = rows * num_blocks * (orbit_block_size // 2)
-        _fwht_stage_kernel[(triton.cdiv(total_pairs, element_block_size),)](
-            work,
-            total_pairs=total_pairs,
-            in_features=dim,
-            num_blocks=num_blocks,
-            orbit_block_size=orbit_block_size,
-            stage_width=stage_width,
-            block_size=element_block_size,
-        )
-
-    _quantize_activation_work_rescale_kernel[(triton.cdiv(total, element_block_size),)](
-        work,
-        norms,
         centroids,
         boundaries,
         output,
-        total=total,
+        rows=rows,
         dim=dim,
+        num_blocks=num_blocks,
+        orbit_block_size=orbit_block_size,
+        fwht_stages=fwht_stages,
         levels=centroids.numel(),
+        eps=float(eps),
         inv_sqrt_block=float(rotation.normalization),
-        block_size=element_block_size,
+        num_warps=8 if orbit_block_size >= 512 else 4,
     )
     return output.reshape(original_shape)
 
@@ -982,10 +1032,10 @@ def matmul_packed_weight_with_triton(
     out_features: int,
     in_features: int,
     bias: torch.Tensor | None = None,
-    block_m: int = 32,
-    block_n: int = 128,
-    block_k: int = 64,
-    num_warps: int = 8,
+    block_m: int = 64,
+    block_n: int = 64,
+    block_k: int = 128,
+    num_warps: int = 4,
 ) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
