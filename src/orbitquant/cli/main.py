@@ -1785,6 +1785,7 @@ def main(argv: list[str] | None = None) -> int:
             "bit_setting": bit_setting,
             "runtime_mode": effective_config.runtime_mode,
             "activation_kernel_backend": effective_config.activation_kernel_backend,
+            "enable_model_cpu_offload": args.enable_model_cpu_offload,
             "available_backends": available_backends(),
             "original": {
                 "output_path": str(original_result.output_path),
