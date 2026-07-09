@@ -35,6 +35,15 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "`public_count=14`" in release_gates
     assert "`private_count=0`" in release_gates
     assert "14/14 policy-inventory-ready" in release_gates
+    assert "A 2026-07-09T14:56Z rerun with `--summary-only`" in release_gates
+    assert "again passed `--fail-on-artifact-regression`" in release_gates
+    assert (
+        "14/14 artifact-ready, native-smoke-ready, metadata-complete, and\n"
+        "  policy-inventory-ready"
+    ) in release_gates
+    assert "`release_eval_applicable_count=10`" in release_gates
+    assert "`release_eval_ready_count=0`" in release_gates
+    assert "`missing_required_metric_count=144`" in release_gates
     assert "paper reproduction or\n  metric-table claims" in release_gates
     assert "GenEval\n  overall and per-task scores" in release_gates
     assert "all required VBench\n  dimensions" in release_gates
@@ -52,6 +61,12 @@ def test_release_gates_document_final_acceptance_checklist():
     assert "policy_inventory_error_count=0" in release_gates
     assert "`policy_inventory_ready_count=14`" in release_gates
     assert "144 missing\n  release-grade metrics" in release_gates
+    assert "same compact artifact counts and still reported `forbidden_file_count=0`" in (
+        release_gates
+    )
+    assert "`remote_checksum_mismatch_count=0`, and `readme_mismatch_count=0`" in (
+        release_gates
+    )
     assert "CUDA/Triton partial optimized" in release_gates
     assert "Metal/MPS partial optimized" in release_gates
     assert "CPU\n  reference-only" in release_gates

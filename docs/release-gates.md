@@ -228,7 +228,11 @@ URL, or signed-off audit note.
   metadata, zero remote checksum mismatches, zero README mismatches, and zero
   forbidden remote files. It also reported `public_count=14`,
   `private_count=0`, 14/14 policy-inventory-ready, and 144 missing
-  release-grade metrics.
+  release-grade metrics. A 2026-07-09T14:56Z rerun with `--summary-only` and
+  the same policy inventory root again passed `--fail-on-artifact-regression`
+  with 14/14 artifact-ready, native-smoke-ready, metadata-complete, and
+  policy-inventory-ready; it reported `release_eval_applicable_count=10`,
+  `release_eval_ready_count=0`, and `missing_required_metric_count=144`.
 - [x] Full-model module classification inventories are captured for FLUX.2
   Klein, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1. Raw inventory JSON may
   remain unpublished, but each published artifact manifest must be
@@ -258,7 +262,9 @@ URL, or signed-off audit note.
   `repo_count=14`, `artifact_ready_count=14`, `metadata_complete_ready_count=14`,
   `native_smoke_ready_count=14`, `remote_checksum_mismatch_count=0`,
   `readme_mismatch_count=0`, `forbidden_file_count=0`, `public_count=14`, and
-  `private_count=0`.
+  `private_count=0`. A 2026-07-09T14:56Z `--summary-only` rerun preserved the
+  same compact artifact counts and still reported `forbidden_file_count=0`,
+  `remote_checksum_mismatch_count=0`, and `readme_mismatch_count=0`.
 - [x] The GitHub repository is public, tagged, released, and includes the
   release docs, license, source distribution expectations, and reproducible
   verification commands.
