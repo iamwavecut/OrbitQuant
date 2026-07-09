@@ -368,6 +368,8 @@ def test_kernel_audit_documents_backend_claim_boundaries():
     assert "fifth follow-up comment on 2026-07-09T12:41Z" in kernel_audit
     assert "After reviewer asked for model-level verification scripts" in kernel_audit
     assert "WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4" in kernel_audit
+    assert "sixth follow-up comment on 2026-07-09T12:50Z" in kernel_audit
+    assert "f42d2dc19897adde62ec3ebb33e4ce748255dd54" in kernel_audit
     assert "2026-07-08T18:12Z at OrbitQuant commit `956842a`" in kernel_audit
     assert "still stopped at the same\n  Kernel Hub publish permission error" in (
         kernel_audit
@@ -431,6 +433,8 @@ def test_kernel_hub_approval_request_contains_required_review_fields():
     assert "On 2026-07-09T12:42Z" in request
     assert "asked for a way to try optimizing one target\nmodel" in request
     assert "scripts/verify_hf_kernel_model_artifact.py" in request
+    assert "On 2026-07-09T12:50Z" in request
+    assert "MPS and CUDA `LOCAL_KERNELS`\nexample commands" in request
     assert "6abedb769b32c8d70f2763278e106346319d628d85ed7469549faa5020ab1a89" in (
         request
     )

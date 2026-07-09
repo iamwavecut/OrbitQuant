@@ -124,6 +124,9 @@ for the current artifact format and runtime modes.
   `scripts/verify_hf_kernel_model_artifact.py` was added to verify the default
   `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact at one restored packed
   transformer projection without running full generation.
+  A sixth follow-up comment on 2026-07-09T12:50Z points reviewers to commit
+  `f42d2dc19897adde62ec3ebb33e4ce748255dd54` and includes MPS/CUDA
+  `LOCAL_KERNELS` commands for running that verifier.
   Re-running `nix --option sandbox relaxed run .#build-and-upload -L` on
   2026-07-08T18:12Z at OrbitQuant commit `956842a` rebuilt the three Metal
   variants, passed ABI/get-kernel build checks, and still stopped at the same

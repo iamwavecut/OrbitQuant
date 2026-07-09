@@ -102,6 +102,11 @@ OrbitQuant artifact layer through `runtime_mode="native_packed_matmul"` and
 compares it with `dequant_bf16` without loading the full Diffusers pipeline or
 running image/video generation.
 
+On 2026-07-09T12:50Z, `WaveCut` replied with the verification script commit
+`f42d2dc19897adde62ec3ebb33e4ce748255dd54`, MPS and CUDA `LOCAL_KERNELS`
+example commands, and the expected behavior when no loadable native kernel is
+available.
+
 ## Title
 
 Request Kernel Hub publish access for `WaveCut/orbitquant-packed-matmul`

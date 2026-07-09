@@ -69,6 +69,9 @@ URL, or signed-off audit note.
   `WaveCut/FLUX.2-klein-4B-OrbitQuant-W4A4` artifact at one restored packed
   transformer projection using `runtime_mode="native_packed_matmul"`, with
   `dequant_bf16` comparison and storage accounting, without full generation.
+  A follow-up comment was posted on 2026-07-09T12:50Z with commit
+  `f42d2dc19897adde62ec3ebb33e4ce748255dd54` and MPS/CUDA `LOCAL_KERNELS`
+  example commands for the verifier.
   The request includes local MPS smoke benchmark numbers from the matching
   `torch212-metal-aarch64-darwin` variant: W4 512x1024x1024 float16 at
   `0.00764581459807232` seconds/iteration over 20 iterations, and W4
