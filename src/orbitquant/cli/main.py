@@ -918,6 +918,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     compare_native_parser.add_argument("--suite", required=True)
     compare_native_parser.add_argument("--artifact", required=True)
+    compare_native_parser.add_argument(
+        "--source-model",
+        help="source model id or local directory used for loading the BF16 pipeline",
+    )
     compare_native_parser.add_argument("--prompt")
     compare_native_parser.add_argument("--prompt-id")
     compare_native_parser.add_argument("--prompt-index", type=int)
@@ -1599,6 +1603,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{artifact_validation['activation_bits']}"
         )
         model_id = artifact_validation["source_model_id"]
+        source_model = model_id if args.source_model is None else args.source_model
         output_dir = Path(args.output)
 
         prompt = args.prompt
@@ -1629,6 +1634,7 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "suite": suite.__dict__,
                         "model_id": model_id,
+                        "source_model": source_model,
                         "artifact": str(artifact_path),
                         "component": args.component,
                         "output": str(output_dir),
@@ -1658,7 +1664,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         original_pipeline = load_pipeline_for_suite(
             suite,
-            model_id=model_id,
+            model_id=source_model,
             torch_dtype=_torch_dtype(args.dtype),
         )
         _place_pipeline_for_generation(
@@ -1700,7 +1706,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         quantized_pipeline = load_pipeline_for_suite(
             suite,
-            model_id=model_id,
+            model_id=source_model,
             torch_dtype=_torch_dtype(args.dtype),
         )
         load_quantized_pipeline_component(
@@ -1770,6 +1776,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = {
             "suite": suite.name,
             "model_id": model_id,
+            "source_model": source_model,
             "artifact": str(artifact_path),
             "component": args.component,
             "prompt": prompt,

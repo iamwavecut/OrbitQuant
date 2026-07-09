@@ -818,6 +818,8 @@ def test_cli_compare_native_dry_run_prints_artifact_and_native_settings(capsys, 
                 "flux2-native",
                 "--artifact",
                 str(tmp_path),
+                "--source-model",
+                str(tmp_path / "source-model"),
                 "--prompt",
                 "A native prompt",
                 "--output",
@@ -840,6 +842,7 @@ def test_cli_compare_native_dry_run_prints_artifact_and_native_settings(capsys, 
 
     output = json.loads(capsys.readouterr().out)
     assert output["model_id"] == "example/artifact-model"
+    assert output["source_model"] == str(tmp_path / "source-model")
     assert output["bit_setting"] == "W4A4"
     assert output["runtime_mode"] == "triton_packed_matmul"
     assert output["activation_kernel_backend"] == "cpu"
@@ -931,6 +934,8 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
     assert comparison_path.is_file()
     assert summary["original"]["output_path"].endswith("flux2-native_seed4_original.png")
     assert summary["orbitquant"]["output_path"].endswith("flux2-native_seed4_W4A4.png")
+    assert summary["model_id"] == "example/artifact-model"
+    assert summary["source_model"] == "example/artifact-model"
     assert summary["runtime_mode"] == "auto_fused"
     assert summary["enable_model_cpu_offload"] is False
     assert summary["available_backends"]["cpu"] is True
