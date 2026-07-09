@@ -21,6 +21,7 @@ PACKED_MATMUL_BLOCK_N="${ORBITQUANT_PACKED_MATMUL_BLOCK_N:-64}"
 PACKED_MATMUL_BLOCK_K="${ORBITQUANT_PACKED_MATMUL_BLOCK_K:-64}"
 PACKED_MATMUL_NUM_WARPS="${ORBITQUANT_PACKED_MATMUL_NUM_WARPS:-8}"
 RUN_NATIVE_KERNEL_PACKAGE_CI="${ORBITQUANT_RUN_NATIVE_KERNEL_PACKAGE_CI:-1}"
+ALLOW_NATIVE_KERNEL_BUILD="${ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD:-0}"
 NATIVE_KERNEL_REPO_ID="WaveCut/orbitquant-packed-matmul"
 NATIVE_KERNEL_SOURCE_DIR="$ROOT_DIR/native-kernels/orbitquant-packed-matmul"
 
@@ -230,6 +231,14 @@ PY
     NATIVE_PACKED_MATMUL_READY=1
   else
     stage "native-kernel-package-prebuilt-load-unavailable status=$prebuilt_native_kernel_status"
+    if [[ "$ALLOW_NATIVE_KERNEL_BUILD" != "1" ]]; then
+      printf '%s\n' \
+        "native kernel package CI could not load a compatible prebuilt native packed-matmul kernel." \
+        "The script will not start a kernel-builder/Nix source build unless ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1 is set, because uncached CUDA builds can compile the CUDA/NCCL stack on paid GPU hosts." \
+        "Use a loadable Hugging Face Kernel Hub artifact, set LOCAL_KERNELS to a compatible built CUDA variant, or rerun with ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1 only on a host where the build cache/toolchain is intentional." \
+        >&2
+      exit 1
+    fi
     if ! command -v nix >/dev/null 2>&1; then
       printf '%s\n' \
         "native kernel package CI requires either a loadable prebuilt native packed-matmul kernel or nix for kernel-builder." \

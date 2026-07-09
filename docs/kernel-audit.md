@@ -23,13 +23,16 @@ for the current artifact format and runtime modes.
   gate for GPU hosts. It first tries to load a prebuilt
   `native_packed_matmul` package through Hugging Face `kernels`,
   `LOCAL_KERNELS`, or an importable package. If no compatible prebuilt package
-  is available, it builds the exact
+  is available, it fails before starting a source build unless
+  `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. With that explicit opt-in,
+  it builds the exact
   `native-kernels/orbitquant-packed-matmul` kernel-builder redistributable
   variant matching the runtime Torch/CUDA/platform tuple, runs the native
   package tests, and benchmarks `native_packed_matmul` explicitly, matching the
-  `auto_fused` runtime priority. If neither a compatible prebuilt package nor a
-  matching kernel-builder variant is available, the gate fails explicitly
-  instead of loading an incompatible build.
+  `auto_fused` runtime priority. This keeps paid GPU hosts from silently
+  entering uncached CUDA/NCCL source builds. If neither a compatible prebuilt
+  package nor a matching kernel-builder variant is available, the gate fails
+  explicitly instead of loading an incompatible build.
 - `scripts/runpod_ssh_health.sh` is the preflight for RunPod basic SSH hosts.
   It checks actual SSH authentication and remote shell execution with
   `ssh -F /dev/null -tt`, ignoring local SSH config and ControlMaster state.
@@ -133,6 +136,11 @@ for the current artifact format and runtime modes.
   `runtime_mode="dequant_bf16"` benchmark. `optimized_stage` was
   `codebook_lookup_rescale,packed_weight_dequant`; native packed matmul load
   and benchmark stages were explicitly skipped.
+- On 2026-07-09, a prebuilt-only native loader check still found no loadable
+  CUDA/Metal Kernel Hub artifact: `repo_info(..., repo_type="kernel")`
+  returned 404 while the source snapshot model repo resolved to commit
+  `6821e4cd5ff1894994d7137c1d861660cfeed1c8`. The native loader therefore
+  still requires `LOCAL_KERNELS`, an importable package, or Kernel Hub approval.
 
 ## Packaging Boundary
 

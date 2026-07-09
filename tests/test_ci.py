@@ -64,6 +64,9 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     )
     assert "kernels>=0.16" in cuda_script
     assert "triton>=3.5" in cuda_script
+    assert "ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD" in cuda_script
+    assert "uncached CUDA builds can compile the CUDA/NCCL stack" in cuda_script
+    assert "will not start a kernel-builder/Nix source build" in cuda_script
     assert "LOCAL_KERNELS=\"$NATIVE_KERNEL_REPO_ID=$native_kernel_variant_dir\"" in cuda_script
     assert (
         'nix --extra-experimental-features "nix-command flakes" '
@@ -91,6 +94,12 @@ def test_kernel_check_scripts_are_executable_and_stage_logged():
     )
     assert cuda_script.index("kernel-bench-start") < cuda_script.index(
         "native-kernel-package-ci-start"
+    )
+    assert cuda_script.index("ALLOW_NATIVE_KERNEL_BUILD") < cuda_script.index(
+        "command -v nix"
+    )
+    assert cuda_script.index("ALLOW_NATIVE_KERNEL_BUILD") < cuda_script.index(
+        "native-kernel-package-build-start"
     )
     assert cuda_script.index("native-kernel-package-ci-done") < cuda_script.index(
         "native-packed-matmul-bench-start"

@@ -73,7 +73,13 @@ URL, or signed-off audit note.
   than the runtime CUDA minor version. The existing Torch 2.9.1+cu128 RunPod
   can still be used for Triton/eval work, but native CUDA package closure needs
   a runtime with an exported compatible variant, such as Torch 2.11+cu128, or
-  an approved Kernel Hub upload with a compatible build.
+  an approved Kernel Hub upload with a compatible build. The CUDA gate is now
+  prebuilt-first and build-safe: after a failed native prebuilt load,
+  `scripts/run_cuda_kernel_checks.sh` will not start a kernel-builder/Nix
+  source build unless `ORBITQUANT_ALLOW_NATIVE_KERNEL_BUILD=1` is set. A
+  2026-07-09 prebuilt-only loader check still returned 404 for the Kernel Hub
+  repo while the source snapshot model repo resolved to commit
+  `6821e4cd5ff1894994d7137c1d861660cfeed1c8`.
 - [x] Final paper conformance audit is complete against arXiv 2607.02461, with
   documented deviations, implementation notes, and evidence that accepted
   deviations are intentional. The required audit checklist is
