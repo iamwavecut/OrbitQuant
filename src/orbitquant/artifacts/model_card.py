@@ -408,6 +408,22 @@ def _comparison_prompt_section(
     return lines
 
 
+def _observed_quality_section(
+    benchmark_summary: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(benchmark_summary, dict):
+        return []
+    observed_quality = benchmark_summary.get("observed_quality")
+    if not isinstance(observed_quality, str) or not observed_quality.strip():
+        return []
+    return [
+        "## Observed Quality",
+        "",
+        f"**Warning:** {observed_quality.strip()}",
+        "",
+    ]
+
+
 def render_model_card(
     manifest: OrbitQuantManifest,
     *,
@@ -424,6 +440,7 @@ def render_model_card(
     comparison_prompt_lines = _comparison_prompt_section(
         data["source_model_id"], benchmark_summary
     )
+    observed_quality_lines = _observed_quality_section(benchmark_summary)
     adaln_group_size = int(data.get("adaln_group_size", 64))
     adaln_default_note = (
         "- AdaLN group-size note: paper default."
@@ -531,6 +548,7 @@ def render_model_card(
             "- Calibration data: none",
             "- Text encoders and VAE: left in source precision by default",
             "",
+            *observed_quality_lines,
             *comparison_lines,
             "## Source",
             "",

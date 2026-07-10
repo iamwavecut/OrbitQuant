@@ -120,6 +120,31 @@ def test_model_card_renders_native_validation_evidence_without_raw_records():
     assert "original.metrics.jsonl" not in card
 
 
+def test_model_card_renders_observed_quality_warning_from_benchmark_summary():
+    manifest = _manifest_for_model("Tongyi-MAI/Z-Image-Turbo", bits=(2, 3))
+    observed_quality = (
+        "The OrbitQuant W2A3 outputs show severe visual collapse across all ten "
+        "native comparison prompts. Use W3A3 or W4A4 for this model."
+    )
+
+    card = render_model_card(
+        manifest,
+        benchmark_summary={"observed_quality": observed_quality},
+    )
+
+    assert "## Observed Quality" in card
+    assert f"**Warning:** {observed_quality}" in card
+
+
+def test_model_card_omits_observed_quality_without_a_nonempty_string():
+    manifest = _manifest_for_model("Tongyi-MAI/Z-Image-Turbo", bits=(2, 3))
+
+    for benchmark_summary in (None, {}, {"observed_quality": "  "}):
+        card = render_model_card(manifest, benchmark_summary=benchmark_summary)
+
+        assert "## Observed Quality" not in card
+
+
 def test_model_card_renders_imported_geneval_release_metrics():
     manifest = _manifest_for_model("black-forest-labs/FLUX.1-schnell")
     benchmark_summary = {
