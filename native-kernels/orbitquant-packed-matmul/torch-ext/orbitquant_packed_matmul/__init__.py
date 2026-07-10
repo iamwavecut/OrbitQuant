@@ -32,13 +32,15 @@ def matmul_packed_weight(
     x_2d = x.contiguous().reshape(-1, in_features)
     out = torch.empty((x_2d.shape[0], out_features), device=x.device, dtype=x.dtype)
     packed = packed_weight_indices.to(device=x.device, dtype=torch.uint8).contiguous()
-    norms = row_norms.to(device=x.device, dtype=torch.float32).contiguous()
+    auxiliary_dtype = torch.bfloat16 if x.device.type == "cuda" else torch.float32
+    norms = row_norms.to(device=x.device, dtype=auxiliary_dtype).contiguous()
     centroid_values = centroids.to(device=x.device, dtype=torch.float32).contiguous()
     if bias is None:
         bias_values = torch.empty((1,), device=x.device, dtype=torch.float32)
         has_bias = False
     else:
-        bias_values = bias.to(device=x.device, dtype=torch.float32).contiguous()
+        bias_dtype = x.dtype if x.device.type == "cuda" else torch.float32
+        bias_values = bias.to(device=x.device, dtype=bias_dtype).contiguous()
         has_bias = True
 
     ops.matmul_packed_weight(

@@ -60,7 +60,7 @@ def main() -> None:
         dtype=torch.uint8,
     )
     packed = _pack(indices, args.bits).to(args.device)
-    row_norms = torch.ones(args.out_features, device=args.device)
+    row_norms = torch.ones(args.out_features, device=args.device, dtype=torch.bfloat16)
     centroids = torch.linspace(-1.0, 1.0, 2**args.bits, device=args.device)
     bias = (
         torch.randn(args.out_features, device=args.device, dtype=dtype)

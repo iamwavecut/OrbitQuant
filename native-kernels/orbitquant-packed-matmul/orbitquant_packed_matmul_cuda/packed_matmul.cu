@@ -62,7 +62,7 @@ template <int Bits, typename mma_t>
 __device__ __forceinline__ void decode_mma64_weight_segment(
     mma_t *__restrict__ destination,
     uint8_t const *__restrict__ packed_weight_indices,
-    float const *__restrict__ row_norms,
+    c10::BFloat16 const *__restrict__ row_norms,
     float const *__restrict__ centroids,
     int64_t global_col,
     int64_t global_k,
@@ -81,7 +81,7 @@ __device__ __forceinline__ void decode_mma64_weight_segment(
     for (int word = 0; word < Bits; ++word) {
       packed_words[word] = words[word];
     }
-    norm = row_norms[global_col];
+    norm = static_cast<float>(row_norms[global_col]);
   }
 
 #pragma unroll
@@ -104,9 +104,9 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
     storage_t *__restrict__ out,
     storage_t const *__restrict__ x,
     uint8_t const *__restrict__ packed_weight_indices,
-    float const *__restrict__ row_norms,
+    c10::BFloat16 const *__restrict__ row_norms,
     float const *__restrict__ centroids,
-    float const *__restrict__ bias,
+    storage_t const *__restrict__ bias,
     bool has_bias,
     int64_t rows,
     int64_t out_features,
@@ -222,7 +222,7 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
       if (global_row < rows && global_col < out_features) {
         float value = warp_accumulator[offset];
         if (has_bias) {
-          value += bias[global_col];
+          value += static_cast<float>(bias[global_col]);
         }
         out[global_row * out_features + global_col] =
             static_cast<storage_t>(value);
@@ -236,9 +236,9 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
     c10::BFloat16 *__restrict__ out,
     c10::BFloat16 const *__restrict__ x,
     uint8_t const *__restrict__ packed_weight_indices,
-    float const *__restrict__ row_norms,
+    c10::BFloat16 const *__restrict__ row_norms,
     float const *__restrict__ centroids,
-    float const *__restrict__ bias,
+    c10::BFloat16 const *__restrict__ bias,
     bool has_bias,
     int64_t rows,
     int64_t out_features,
@@ -289,7 +289,7 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
           const int64_t value_offset = global_col * in_features + global_k;
           const uint32_t index = unpack_lowbit_index_const<Bits>(
               packed_weight_indices, value_offset);
-          value = row_norms[global_col] * centroids[index];
+          value = static_cast<float>(row_norms[global_col]) * centroids[index];
         }
         warp_w_tile[offset] = __float2bfloat16(value);
       }
@@ -318,7 +318,7 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
       if (global_row < rows && global_col < out_features) {
         float value = warp_acc_tile[offset];
         if (has_bias) {
-          value += bias[global_col];
+          value += static_cast<float>(bias[global_col]);
         }
         out[global_row * out_features + global_col] = static_cast<c10::BFloat16>(value);
       }
@@ -331,9 +331,9 @@ __global__ void orbitquant_packed_matmul_wmma_half_kernel(
     c10::Half *__restrict__ out,
     c10::Half const *__restrict__ x,
     uint8_t const *__restrict__ packed_weight_indices,
-    float const *__restrict__ row_norms,
+    c10::BFloat16 const *__restrict__ row_norms,
     float const *__restrict__ centroids,
-    float const *__restrict__ bias,
+    c10::Half const *__restrict__ bias,
     bool has_bias,
     int64_t rows,
     int64_t out_features,
@@ -384,7 +384,7 @@ __global__ void orbitquant_packed_matmul_wmma_half_kernel(
           const int64_t value_offset = global_col * in_features + global_k;
           const uint32_t index = unpack_lowbit_index_const<Bits>(
               packed_weight_indices, value_offset);
-          value = row_norms[global_col] * centroids[index];
+          value = static_cast<float>(row_norms[global_col]) * centroids[index];
         }
         warp_w_tile[offset] = __float2half(value);
       }
@@ -412,10 +412,69 @@ __global__ void orbitquant_packed_matmul_wmma_half_kernel(
       if (global_row < rows && global_col < out_features) {
         float value = warp_acc_tile[offset];
         if (has_bias) {
-          value += bias[global_col];
+          value += static_cast<float>(bias[global_col]);
         }
         out[global_row * out_features + global_col] = static_cast<c10::Half>(value);
       }
+    }
+  }
+}
+
+template <typename scalar_t>
+__global__ void orbitquant_packed_matmul_small_rows_kernel(
+    scalar_t *__restrict__ out,
+    scalar_t const *__restrict__ x,
+    uint8_t const *__restrict__ packed_weight_indices,
+    c10::BFloat16 const *__restrict__ row_norms,
+    float const *__restrict__ centroids,
+    scalar_t const *__restrict__ bias,
+    bool has_bias,
+    int64_t rows,
+    int64_t out_features,
+    int64_t in_features,
+    int64_t bits) {
+  constexpr int channels_per_warp = 4;
+  const int lane = threadIdx.x;
+  const int64_t row = blockIdx.y;
+  const int64_t col_start = int64_t(blockIdx.x) * channels_per_warp;
+  const uint32_t mask = (1u << bits) - 1u;
+  float accumulators[channels_per_warp] = {};
+  float norms[channels_per_warp];
+
+#pragma unroll
+  for (int col_offset = 0; col_offset < channels_per_warp; ++col_offset) {
+    const int64_t col = col_start + col_offset;
+    norms[col_offset] =
+        col < out_features ? static_cast<float>(row_norms[col]) : 0.0f;
+  }
+
+  for (int64_t k = lane; k < in_features; k += warpSize) {
+    const float x_value = static_cast<float>(x[row * in_features + k]);
+#pragma unroll
+    for (int col_offset = 0; col_offset < channels_per_warp; ++col_offset) {
+      const int64_t col = col_start + col_offset;
+      if (col < out_features) {
+        const int64_t value_offset = col * in_features + k;
+        const uint32_t index =
+            unpack_lowbit_index(packed_weight_indices, value_offset, bits, mask);
+        accumulators[col_offset] += x_value * norms[col_offset] * centroids[index];
+      }
+    }
+  }
+
+#pragma unroll
+  for (int col_offset = 0; col_offset < channels_per_warp; ++col_offset) {
+#pragma unroll
+    for (int offset = warpSize / 2; offset > 0; offset >>= 1) {
+      accumulators[col_offset] +=
+          __shfl_down_sync(0xffffffffu, accumulators[col_offset], offset);
+    }
+    const int64_t col = col_start + col_offset;
+    if (lane == 0 && col < out_features) {
+      const float value =
+          accumulators[col_offset] +
+          (has_bias ? static_cast<float>(bias[col]) : 0.0f);
+      out[row * out_features + col] = static_cast<scalar_t>(value);
     }
   }
 }
@@ -425,9 +484,9 @@ __global__ void orbitquant_packed_matmul_tiled_kernel(
     scalar_t *__restrict__ out,
     scalar_t const *__restrict__ x,
     uint8_t const *__restrict__ packed_weight_indices,
-    float const *__restrict__ row_norms,
+    c10::BFloat16 const *__restrict__ row_norms,
     float const *__restrict__ centroids,
-    float const *__restrict__ bias,
+    scalar_t const *__restrict__ bias,
     bool has_bias,
     int64_t rows,
     int64_t out_features,
@@ -447,7 +506,8 @@ __global__ void orbitquant_packed_matmul_tiled_kernel(
 
   const uint32_t mask = (1u << bits) - 1u;
   const bool output_valid = row < rows && col < out_features;
-  float acc = output_valid && has_bias ? bias[col] : 0.0f;
+  float acc =
+      output_valid && has_bias ? static_cast<float>(bias[col]) : 0.0f;
 
   for (int64_t k_start = 0; k_start < in_features; k_start += block_k) {
     const int64_t x_tile_values = blockDim.y * block_k;
@@ -474,7 +534,7 @@ __global__ void orbitquant_packed_matmul_tiled_kernel(
         const int64_t value_offset = global_col * in_features + global_k;
         const uint32_t index =
             unpack_lowbit_index(packed_weight_indices, value_offset, bits, mask);
-        value = row_norms[global_col] * centroids[index];
+        value = static_cast<float>(row_norms[global_col]) * centroids[index];
       }
       w_tile[offset] = value;
     }
@@ -518,7 +578,9 @@ void matmul_packed_weight(
   TORCH_CHECK(row_norms.is_contiguous(), "row norms must be contiguous");
   TORCH_CHECK(centroids.is_contiguous(), "centroids must be contiguous");
   TORCH_CHECK(packed_weight_indices.scalar_type() == torch::kUInt8, "packed weights must be uint8");
-  TORCH_CHECK(row_norms.scalar_type() == torch::kFloat, "row_norms must be float32");
+  TORCH_CHECK(
+      row_norms.scalar_type() == torch::kBFloat16,
+      "CUDA row_norms must be bfloat16");
   TORCH_CHECK(centroids.scalar_type() == torch::kFloat, "centroids must be float32");
   TORCH_CHECK(x.dim() == 2, "x must be rank 2");
   TORCH_CHECK(out.dim() == 2, "out must be rank 2");
@@ -535,7 +597,7 @@ void matmul_packed_weight(
   if (has_bias) {
     TORCH_CHECK(bias.device().is_cuda(), "bias must be a CUDA tensor");
     TORCH_CHECK(bias.is_contiguous(), "bias must be contiguous");
-    TORCH_CHECK(bias.scalar_type() == torch::kFloat, "bias must be float32");
+    TORCH_CHECK(bias.scalar_type() == x.scalar_type(), "CUDA bias dtype must match x");
     TORCH_CHECK(bias.numel() == out_features, "bias must match out_features");
   }
   if (x.numel() == 0 || out_features == 0) {
@@ -543,8 +605,9 @@ void matmul_packed_weight(
   }
 
   const int threads_n = static_cast<int>(std::min<int64_t>(std::max<int64_t>(block_n, 1), 64));
-  const int threads_m =
-      static_cast<int>(std::min<int64_t>(std::max<int64_t>(block_m, 1), 1024 / threads_n));
+  const int threads_m = static_cast<int>(std::min<int64_t>(
+      x.size(0),
+      std::min<int64_t>(std::max<int64_t>(block_m, 1), 1024 / threads_n)));
   const int tile_k = static_cast<int>(std::min<int64_t>(std::max<int64_t>(block_k, 1), 128));
   const dim3 block(threads_n, threads_m);
   const dim3 grid(
@@ -555,7 +618,34 @@ void matmul_packed_weight(
   const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-  if (x.scalar_type() == at::kBFloat16) {
+  if (x.size(0) <= 8) {
+    constexpr int channels_per_warp = 4;
+    const dim3 small_rows_block(32);
+    const dim3 small_rows_grid(
+        (out_features + channels_per_warp - 1) / channels_per_warp,
+        x.size(0));
+    AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::kHalf, at::kBFloat16, x.scalar_type(),
+        "orbitquant_packed_matmul_cuda_small_rows", [&] {
+          orbitquant_packed_matmul_small_rows_kernel<scalar_t>
+              <<<small_rows_grid, small_rows_block, 0, stream>>>(
+                  out.data_ptr<scalar_t>(),
+                  x.data_ptr<scalar_t>(),
+                  packed_weight_indices.data_ptr<uint8_t>(),
+                  row_norms.data_ptr<c10::BFloat16>(),
+                  centroids.data_ptr<float>(),
+                  has_bias ? bias.data_ptr<scalar_t>() : nullptr,
+                  has_bias,
+                  x.size(0),
+                  out_features,
+                  in_features,
+                  bits);
+        });
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return;
+  }
+
+  if (x.scalar_type() == at::kBFloat16 && x.size(0) >= 9) {
     if (in_features % 64 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
       constexpr int mma_tile_m = 64;
@@ -571,9 +661,9 @@ void matmul_packed_weight(
       reinterpret_cast<c10::BFloat16 *>(out.data_ptr()),                         \
       reinterpret_cast<c10::BFloat16 const *>(x.data_ptr()),                     \
       packed_weight_indices.data_ptr<uint8_t>(),                                 \
-      row_norms.data_ptr<float>(),                                               \
+      row_norms.data_ptr<c10::BFloat16>(),                                       \
       centroids.data_ptr<float>(),                                               \
-      has_bias ? bias.data_ptr<float>() : nullptr,                               \
+      has_bias ? bias.data_ptr<c10::BFloat16>() : nullptr,                       \
       has_bias,                                                                  \
       x.size(0),                                                                 \
       out_features,                                                              \
@@ -609,9 +699,9 @@ void matmul_packed_weight(
       reinterpret_cast<c10::BFloat16 *>(out.data_ptr()),                                \
       reinterpret_cast<c10::BFloat16 const *>(x.data_ptr()),                            \
       packed_weight_indices.data_ptr<uint8_t>(),                                        \
-      row_norms.data_ptr<float>(),                                                      \
+      row_norms.data_ptr<c10::BFloat16>(),                                              \
       centroids.data_ptr<float>(),                                                      \
-      has_bias ? bias.data_ptr<float>() : nullptr,                                      \
+      has_bias ? bias.data_ptr<c10::BFloat16>() : nullptr,                              \
       has_bias,                                                                         \
       x.size(0),                                                                        \
       out_features,                                                                     \
@@ -647,7 +737,7 @@ void matmul_packed_weight(
     return;
   }
 
-  if (x.scalar_type() == at::kHalf) {
+  if (x.scalar_type() == at::kHalf && x.size(0) >= 9) {
     if (in_features % 64 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
       constexpr int mma_tile_m = 64;
@@ -662,9 +752,9 @@ void matmul_packed_weight(
           reinterpret_cast<c10::Half *>(out.data_ptr()),                         \
           reinterpret_cast<c10::Half const *>(x.data_ptr()),                     \
           packed_weight_indices.data_ptr<uint8_t>(),                             \
-          row_norms.data_ptr<float>(),                                           \
+          row_norms.data_ptr<c10::BFloat16>(),                                   \
           centroids.data_ptr<float>(),                                           \
-          has_bias ? bias.data_ptr<float>() : nullptr,                           \
+          has_bias ? bias.data_ptr<c10::Half>() : nullptr,                       \
           has_bias,                                                              \
           x.size(0),                                                             \
           out_features,                                                          \
@@ -700,9 +790,9 @@ void matmul_packed_weight(
       reinterpret_cast<c10::Half *>(out.data_ptr()),                                    \
       reinterpret_cast<c10::Half const *>(x.data_ptr()),                                \
       packed_weight_indices.data_ptr<uint8_t>(),                                        \
-      row_norms.data_ptr<float>(),                                                      \
+      row_norms.data_ptr<c10::BFloat16>(),                                              \
       centroids.data_ptr<float>(),                                                      \
-      has_bias ? bias.data_ptr<float>() : nullptr,                                      \
+      has_bias ? bias.data_ptr<c10::Half>() : nullptr,                                  \
       has_bias,                                                                         \
       x.size(0),                                                                        \
       out_features,                                                                     \
@@ -744,9 +834,9 @@ void matmul_packed_weight(
             out.data_ptr<scalar_t>(),
             x.data_ptr<scalar_t>(),
             packed_weight_indices.data_ptr<uint8_t>(),
-            row_norms.data_ptr<float>(),
+            row_norms.data_ptr<c10::BFloat16>(),
             centroids.data_ptr<float>(),
-            has_bias ? bias.data_ptr<float>() : nullptr,
+            has_bias ? bias.data_ptr<scalar_t>() : nullptr,
             has_bias,
             x.size(0),
             out_features,

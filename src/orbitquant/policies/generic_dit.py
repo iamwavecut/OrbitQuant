@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 
 import torch
 
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.linear_adapters import is_linear_module
 
 
 @dataclass(frozen=True)
@@ -34,18 +36,42 @@ _HARD_SKIP_TOKENS = (
     "safety_checker",
 )
 
-_BOUNDARY_SKIP_TOKENS = ("proj_out", "norm_out", "final", "final_layer", "unpatchify")
+_BOUNDARY_SKIP_TOKENS = (
+    "proj_out",
+    "norm_out",
+    "final",
+    "final_layer",
+    "unpatchify",
+    "lm_head",
+    "classifier",
+    "classification_head",
+    "qa_outputs",
+    "score",
+    "pooler",
+    "visual_projection",
+    "text_projection",
+    "output_projection",
+    "output_head",
+)
 
 _BLOCK_TOKENS = (
     "transformer_blocks",
     "single_transformer_blocks",
     "blocks",
+    "block",
     "layers",
+    "layer",
+    "h",
     "attn",
     "attention",
+    "self_attn",
+    "cross_attn",
     "ff",
+    "ffn",
     "feed_forward",
     "mlp",
+    "experts",
+    "expert",
 )
 
 _MODULATION_TOKENS = ("adaln", "modulation")
@@ -60,11 +86,14 @@ class PolicyRules:
     hard_skip_tokens: tuple[str, ...] = _HARD_SKIP_TOKENS
     boundary_skip_tokens: tuple[str, ...] = _BOUNDARY_SKIP_TOKENS
     projection_tokens: tuple[str, ...] = ()
+    numeric_scope: bool = False
+    quantize_all_supported: bool = False
 
 
 _POLICY_RULES: dict[str, PolicyRules] = {
-    "auto": PolicyRules(),
-    "generic_dit": PolicyRules(),
+    "auto": PolicyRules(quantize_all_supported=True),
+    "universal": PolicyRules(quantize_all_supported=True),
+    "generic_dit": PolicyRules(numeric_scope=True),
     "flux": PolicyRules(
         block_tokens=("transformer_blocks", "single_transformer_blocks"),
         modulation_tokens=("adaln", "modulation", "norm1_context", "norm1", ".norm.linear"),
@@ -141,6 +170,16 @@ def _contains_any(value: str, tokens: tuple[str, ...]) -> bool:
     return any(token in value for token in tokens)
 
 
+def _matches_pattern(value: str, pattern: str) -> bool:
+    if any(token in pattern for token in "*?["):
+        return fnmatchcase(value, pattern)
+    return pattern in value
+
+
+def _matches_any_pattern(value: str, patterns: tuple[str, ...]) -> bool:
+    return any(_matches_pattern(value, pattern) for pattern in patterns)
+
+
 def _path_components(value: str) -> tuple[str, ...]:
     return tuple(part for part in value.split(".") if part)
 
@@ -178,7 +217,7 @@ def resolve_target_policy(model: torch.nn.Module, config: OrbitQuantConfig) -> s
         return "wan"
     if "flux" in class_name:
         return "flux"
-    return "generic_dit"
+    return "universal"
 
 
 def _policy_rules(model: torch.nn.Module, config: OrbitQuantConfig) -> PolicyRules:
@@ -199,7 +238,13 @@ def _is_scoped_modulation(lowered: str, rules: PolicyRules) -> bool:
 
 
 def _is_transformer_projection(lowered: str, rules: PolicyRules) -> bool:
-    if not _contains_path_component(lowered, rules.block_tokens):
+    if rules.quantize_all_supported:
+        return True
+    components = _path_components(lowered)
+    in_scope = _contains_path_component(lowered, rules.block_tokens) or (
+        rules.numeric_scope and any(component.isdigit() for component in components)
+    )
+    if not in_scope:
         return False
     return not rules.projection_tokens or _contains_path_component(
         lowered, rules.projection_tokens
@@ -210,11 +255,13 @@ def classify_linear_modules(
     model: torch.nn.Module, config: OrbitQuantConfig
 ) -> dict[str, PolicyDecision]:
     decisions: dict[str, PolicyDecision] = {}
+    explicit_targets = tuple(config.modules_to_convert)
+    explicit_adaln = tuple(config.modules_to_use_adaln)
     explicit_skips = tuple(config.modules_to_not_convert)
     rules = _policy_rules(model, config)
 
     for name, module in model.named_modules():
-        if not isinstance(module, torch.nn.Linear):
+        if not is_linear_module(module):
             continue
         lowered = name.lower()
         dtype_override = _dtype_override_for_module(name, config)
@@ -225,14 +272,26 @@ def classify_linear_modules(
                 "explicit modules_dtype_dict override",
                 dtype=dtype_override,
             )
-        elif explicit_skips and any(token in name for token in explicit_skips):
+        elif explicit_skips and _matches_any_pattern(name, explicit_skips):
             decisions[name] = PolicyDecision(name, "bf16_skip", "explicit modules_to_not_convert")
         elif _contains_any(lowered, rules.hard_skip_tokens):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "embedding, timestep, or non-denoiser module"
             )
-        elif _contains_any(lowered, rules.boundary_skip_tokens) and not _is_transformer_projection(
-            lowered, rules
+        elif explicit_adaln and _matches_any_pattern(name, explicit_adaln):
+            decisions[name] = PolicyDecision(
+                name, "adaln_int4_rtn", "explicit modules_to_use_adaln"
+            )
+        elif explicit_targets and _matches_any_pattern(name, explicit_targets):
+            decisions[name] = PolicyDecision(
+                name, "orbitquant", "explicit modules_to_convert"
+            )
+        elif explicit_targets:
+            decisions[name] = PolicyDecision(
+                name, "bf16_skip", "outside explicit modules_to_convert allowlist"
+            )
+        elif _contains_any(lowered, rules.boundary_skip_tokens) and (
+            rules.quantize_all_supported or not _is_transformer_projection(lowered, rules)
         ):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "non-transformer or boundary module"

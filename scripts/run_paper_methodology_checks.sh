@@ -59,7 +59,9 @@ METHODOLOGY_TESTS=(
   "tests/test_target_policies.py"
   "tests/test_kernels.py"
   "tests/test_paper_methodology.py"
-  "tests/test_release_gates.py"
+  "tests/test_documentation.py"
+  "tests/test_linear_adapters.py"
+  "tests/test_universal_transformers.py"
 )
 
 cd "$ROOT_DIR"

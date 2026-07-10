@@ -1026,7 +1026,7 @@ def matmul_packed_weight_with_triton(
     x: torch.Tensor,
     packed_weight_indices: torch.Tensor,
     row_norms: torch.Tensor,
-    codebook: LloydMaxCodebook,
+    codebook: LloydMaxCodebook | torch.Tensor,
     *,
     bits: int,
     out_features: int,
@@ -1057,16 +1057,18 @@ def matmul_packed_weight_with_triton(
         return output.reshape(*original_shape[:-1], out_features)
 
     packed = packed_weight_indices.to(device=x.device, dtype=torch.uint8).contiguous()
-    norms = row_norms.to(device=x.device, dtype=torch.float32).contiguous()
-    centroids = codebook.centroids.to(device=x.device, dtype=torch.float32).contiguous()
+    norms = row_norms.to(device=x.device).contiguous()
+    centroid_values = codebook if isinstance(codebook, torch.Tensor) else codebook.centroids
+    centroids = centroid_values.to(device=x.device, dtype=torch.float32).contiguous()
     if bias is None:
         bias_tensor = output
         has_bias = False
     else:
-        bias_tensor = bias.to(device=x.device, dtype=torch.float32).contiguous()
+        bias_tensor = bias.to(device=x.device).contiguous()
         has_bias = True
 
-    grid = (triton.cdiv(rows, block_m), triton.cdiv(out_features, block_n))
+    effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
+    grid = (triton.cdiv(rows, effective_block_m), triton.cdiv(out_features, block_n))
     if bits == 4 and in_features % 2 == 0 and block_k >= 2:
         block_k_bytes = max(1, block_k // 2)
         _matmul_packed_weight_w4_kernel[grid](
@@ -1080,7 +1082,7 @@ def matmul_packed_weight_with_triton(
             out_features=out_features,
             in_features=in_features,
             has_bias=has_bias,
-            block_m=block_m,
+            block_m=effective_block_m,
             block_n=block_n,
             block_k_bytes=block_k_bytes,
             num_warps=num_warps,
@@ -1098,7 +1100,7 @@ def matmul_packed_weight_with_triton(
             in_features=in_features,
             bits=bits,
             has_bias=has_bias,
-            block_m=block_m,
+            block_m=effective_block_m,
             block_n=block_n,
             block_k=block_k,
             num_warps=num_warps,

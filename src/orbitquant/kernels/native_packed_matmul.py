@@ -89,7 +89,7 @@ def matmul_packed_weight_with_native_kernel(
     x: torch.Tensor,
     packed_weight_indices: torch.Tensor,
     row_norms: torch.Tensor,
-    codebook: LloydMaxCodebook,
+    codebook: LloydMaxCodebook | torch.Tensor,
     *,
     bits: int,
     out_features: int,
@@ -108,11 +108,12 @@ def matmul_packed_weight_with_native_kernel(
         raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
 
     kernel = _load_native_packed_matmul_kernel()
+    centroids = codebook if isinstance(codebook, torch.Tensor) else codebook.centroids
     return kernel.matmul_packed_weight(
         x,
         packed_weight_indices,
         row_norms,
-        codebook.centroids,
+        centroids,
         bits=bits,
         out_features=out_features,
         in_features=in_features,

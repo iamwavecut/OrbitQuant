@@ -11,6 +11,64 @@ struct PackedMatmulParams {
   int has_bias;
 };
 
+constant uint packed_small_cols = 4;
+
+template <typename scalar_t>
+inline void packed_matmul_small_rows_value(
+    device scalar_t *out,
+    device const scalar_t *x,
+    device const uchar *packed_weight_indices,
+    device const float *row_norms,
+    device const float *centroids,
+    device const float *bias,
+    constant PackedMatmulParams &params,
+    uint2 group_id,
+    ushort lane) {
+  const long row = long(group_id.y);
+  const long col_start = long(group_id.x) * packed_small_cols;
+  const uint bits = uint(params.bits);
+  const uint mask = (1u << bits) - 1u;
+  float accumulators[packed_small_cols] = {0.0f, 0.0f, 0.0f, 0.0f};
+  float norms[packed_small_cols];
+
+#pragma clang loop unroll(full)
+  for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
+    const long col = col_start + long(col_offset);
+    norms[col_offset] = col < params.out_features ? row_norms[col] : 0.0f;
+  }
+
+  for (long k = long(lane); k < params.in_features; k += 32) {
+    const float x_value = float(x[row * params.in_features + k]);
+#pragma clang loop unroll(full)
+    for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
+      const long col = col_start + long(col_offset);
+      if (col >= params.out_features) {
+        continue;
+      }
+      const long value_offset = col * params.in_features + k;
+      const long bit_start = value_offset * params.bits;
+      const long byte_index = bit_start >> 3;
+      const uint bit_offset = uint(bit_start & 7);
+      uint raw = packed_weight_indices[byte_index];
+      if (bit_offset + bits > 8) {
+        raw |= uint(packed_weight_indices[byte_index + 1]) << 8;
+      }
+      const uint index = (raw >> bit_offset) & mask;
+      accumulators[col_offset] += x_value * norms[col_offset] * centroids[index];
+    }
+  }
+
+#pragma clang loop unroll(full)
+  for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
+    const float value = simd_sum(accumulators[col_offset]);
+    const long col = col_start + long(col_offset);
+    if (lane == 0 && col < params.out_features) {
+      out[row * params.out_features + col] =
+          scalar_t(value + (params.has_bias != 0 ? bias[col] : 0.0f));
+    }
+  }
+}
+
 template <typename scalar_t>
 inline void packed_matmul_tiled_value(
     device scalar_t *out,
@@ -230,11 +288,19 @@ inline void packed_matmul_padded_mma_value(
 
   for (long k_start = 0; k_start < params.in_features; k_start += packed_mma_tile) {
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    *reinterpret_cast<threadgroup PackedMMAReadVector *>(
-        x_tile + load_row * packed_mma_padded_k + load_k) =
-        *reinterpret_cast<device const PackedMMAReadVector *>(
-            x + (row_start + long(load_row)) * params.in_features +
-            k_start + long(load_k));
+    threadgroup scalar_t *x_destination =
+        x_tile + load_row * packed_mma_padded_k + load_k;
+    if (row_start + long(load_row) < params.rows) {
+      *reinterpret_cast<threadgroup PackedMMAReadVector *>(x_destination) =
+          *reinterpret_cast<device const PackedMMAReadVector *>(
+              x + (row_start + long(load_row)) * params.in_features +
+              k_start + long(load_k));
+    } else {
+#pragma clang loop unroll(full)
+      for (ushort offset = 0; offset < 8; ++offset) {
+        x_destination[offset] = scalar_t(0.0f);
+      }
+    }
     decode_packed_mma_weight_segment<scalar_t, Bits>(
         weight_tile + load_row * packed_mma_padded_k + load_k,
         packed_weight_indices,
@@ -295,8 +361,10 @@ inline void packed_matmul_padded_mma_value(
       if (params.has_bias != 0) {
         values += float2(bias[global_col], bias[global_col + 1]);
       }
-      out[global_row * params.out_features + global_col] = scalar_t(values[0]);
-      out[global_row * params.out_features + global_col + 1] = scalar_t(values[1]);
+      if (global_row < params.rows) {
+        out[global_row * params.out_features + global_col] = scalar_t(values[0]);
+        out[global_row * params.out_features + global_col + 1] = scalar_t(values[1]);
+      }
     }
   }
 }
@@ -446,3 +514,25 @@ kernel void packed_matmul_forward_bfloat16_scalar(
       local_tid,
       threads_per_group);
 }
+
+#define ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(NAME, TYPE)                    \
+  kernel void NAME(                                                       \
+      device TYPE *out [[buffer(0)]],                                     \
+      device const TYPE *x [[buffer(1)]],                                 \
+      device const uchar *packed_weight_indices [[buffer(2)]],            \
+      device const float *row_norms [[buffer(3)]],                         \
+      device const float *centroids [[buffer(4)]],                         \
+      device const float *bias [[buffer(5)]],                              \
+      constant PackedMatmulParams &params [[buffer(6)]],                   \
+      uint2 group_id [[threadgroup_position_in_grid]],                     \
+      ushort lane [[thread_index_in_simdgroup]]) {                         \
+    packed_matmul_small_rows_value(                                       \
+        out, x, packed_weight_indices, row_norms, centroids, bias, params, \
+        group_id, lane);                                                   \
+  }
+
+ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(packed_matmul_forward_float_small_rows, float)
+ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(packed_matmul_forward_half_small_rows, half)
+ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(packed_matmul_forward_bfloat16_small_rows, bfloat)
+
+#undef ORBITQUANT_PACKED_SMALL_ROWS_KERNEL

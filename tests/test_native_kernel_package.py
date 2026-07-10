@@ -68,12 +68,12 @@ def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
 
 
 def test_kernel_builder_package_has_no_setuptools_extension_path() -> None:
+    assert not (KERNEL_ROOT / "setup.py").exists()
     combined = "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")
         for path in _kernel_source_files()
     )
     banned = [
-        "setup.py",
         "CUDAExtension",
         "BuildExtension",
         "cpp_extension",
@@ -125,9 +125,10 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert re.search(r"byte_index\s*=\s*bit_start\s*>>\s*3", cuda_source)
     assert re.search(r"bit_offset\s*=\s*bit_start\s*&\s*7", cuda_source)
     assert "packed_weight_indices.scalar_type() == torch::kUInt8" in cuda_source
-    assert "row_norms.scalar_type() == torch::kFloat" in cuda_source
+    assert "row_norms.scalar_type() == torch::kBFloat16" in cuda_source
     assert "centroids.scalar_type() == torch::kFloat" in cuda_source
-    assert "bias.scalar_type() == torch::kFloat" in cuda_source
+    assert "bias.scalar_type() == x.scalar_type()" in cuda_source
+    assert 'auxiliary_dtype = torch.bfloat16 if x.device.type == "cuda"' in public_api
     assert "packed_matmul_forward_float" in metal_source
     assert "packed_matmul_forward_half" in metal_source
     assert "packed_matmul_forward_bfloat16" in metal_source

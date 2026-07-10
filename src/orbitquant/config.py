@@ -26,7 +26,15 @@ _SUPPORTED_RUNTIME_MODES = {
     "native_packed_matmul",
 }
 _SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
-_SUPPORTED_TARGET_POLICIES = {"auto", "generic_dit", "flux", "flux2", "z_image", "wan"}
+_SUPPORTED_TARGET_POLICIES = {
+    "auto",
+    "universal",
+    "generic_dit",
+    "flux",
+    "flux2",
+    "z_image",
+    "wan",
+}
 _SUPPORTED_MODULE_DTYPES = {"bfloat16", "bf16", "float16", "fp16", "float32", "fp32"}
 _SUPPORTED_CODEBOOK_DTYPES = {"float32", "fp32"}
 _SUPPORTED_ROW_NORM_DTYPES = {"bfloat16", "bf16"}
@@ -66,6 +74,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     target_policy: str = "auto"
     adaln_policy: str = "int4_rtn"
     adaln_group_size: int = 64
+    modules_to_convert: list[str] = field(default_factory=list)
+    modules_to_use_adaln: list[str] = field(default_factory=list)
     modules_to_not_convert: list[str] = field(default_factory=list)
     modules_dtype_dict: dict[str, list[str]] = field(default_factory=dict)
     artifact_format_version: int = 1

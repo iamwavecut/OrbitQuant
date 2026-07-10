@@ -10,6 +10,11 @@ from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import available_backends
 from orbitquant.layers import OrbitQuantLinear
+from orbitquant.linear_adapters import (
+    is_linear_module,
+    is_unregistered_linear_candidate,
+    linear_module_spec,
+)
 from orbitquant.policies import PolicyDecision, classify_linear_modules, resolve_target_policy
 
 _TORCH_DTYPE_BY_NAME = {
@@ -62,10 +67,23 @@ def inspect_linear_module_policy(
         "adaln_int4_rtn": [],
         "bf16_skip": [],
     }
+    unsupported_linear_modules: list[dict[str, Any]] = []
+
+    for name, module in model.named_modules():
+        if not is_unregistered_linear_candidate(module):
+            continue
+        unsupported_linear_modules.append(
+            {
+                "name": name,
+                "module_type": type(module).__name__,
+                "weight_shape": list(module.weight.shape),
+            }
+        )
 
     for name, decision in decisions.items():
         module = model.get_submodule(name)
-        if not isinstance(module, torch.nn.Linear):
+        spec = linear_module_spec(module)
+        if spec is None:
             continue
         by_action.setdefault(decision.action, []).append(name)
         modules.append(
@@ -74,9 +92,12 @@ def inspect_linear_module_policy(
                 "action": decision.action,
                 "reason": decision.reason,
                 "dtype": decision.dtype,
-                "in_features": int(module.in_features),
-                "out_features": int(module.out_features),
-                "bias": module.bias is not None,
+                "module_type": type(module).__name__,
+                "adapter": spec.adapter_name,
+                "weight_layout": spec.weight_layout,
+                "in_features": spec.in_features,
+                "out_features": spec.out_features,
+                "bias": getattr(module, "bias", None) is not None,
                 "weight_dtype": str(module.weight.dtype).removeprefix("torch."),
                 "weight_device": str(module.weight.device),
             }
@@ -85,6 +106,14 @@ def inspect_linear_module_policy(
     return {
         "target_policy": target_policy,
         "linear_module_count": len(modules),
+        "supported_linear_module_count": len(modules),
+        "unsupported_linear_module_count": len(unsupported_linear_modules),
+        "unsupported_linear_modules": unsupported_linear_modules,
+        "unclassified_modules": [
+            name
+            for name, decision in decisions.items()
+            if decision.reason == "outside known transformer block policy"
+        ],
         "action_counts": {action: len(names) for action, names in by_action.items()},
         "quantized_modules": by_action.get("orbitquant", []),
         "adaln_modules": by_action.get("adaln_int4_rtn", []),
@@ -177,7 +206,7 @@ def _record_adaln_buffers(summary: QuantizationSummary, module: RTNInt4Linear) -
         _count_tensor_device(summary, module.bias)
 
 
-def _record_source_linear_device(summary: QuantizationSummary, module: torch.nn.Linear) -> None:
+def _record_source_linear_device(summary: QuantizationSummary, module: torch.nn.Module) -> None:
     key = str(module.weight.device)
     summary.source_linear_device_counts[key] = summary.source_linear_device_counts.get(key, 0) + 1
 
@@ -222,7 +251,7 @@ def quantize_linear_modules(
 
     for name in decisions:
         module = model.get_submodule(name)
-        if isinstance(module, torch.nn.Linear):
+        if is_linear_module(module):
             _record_source_linear_device(summary, module)
 
     if target_device is not None and staging_mode == "component":
@@ -232,7 +261,7 @@ def quantize_linear_modules(
 
     for name, decision in decisions.items():
         module = model.get_submodule(name)
-        if not isinstance(module, torch.nn.Linear):
+        if not is_linear_module(module):
             continue
         if decision.action == "orbitquant":
             if target_device is not None and staging_mode == "streaming":
@@ -280,7 +309,7 @@ def prepare_prequantized_linear_modules(
 
     for name, decision in decisions.items():
         module = model.get_submodule(name)
-        if not isinstance(module, torch.nn.Linear):
+        if not is_linear_module(module):
             continue
         if decision.action == "orbitquant":
             replacement = OrbitQuantLinear.empty_from_linear(
@@ -300,6 +329,32 @@ def prepare_prequantized_linear_modules(
             _apply_dtype_override(module, decision)
             summary.skipped_modules.append(name)
 
+    return summary
+
+
+def quantize_model(
+    model: torch.nn.Module,
+    config: OrbitQuantConfig | None = None,
+    *,
+    quantization_device: str | torch.device | None = "auto",
+    staging_mode: str = "streaming",
+    synchronize_per_module: bool = False,
+) -> QuantizationSummary:
+    """Quantize supported transformer projections and attach serializable metadata."""
+
+    resolved_config = OrbitQuantConfig() if config is None else config
+    summary = quantize_linear_modules(
+        model,
+        resolved_config,
+        quantization_device=quantization_device,
+        staging_mode=staging_mode,
+        synchronize_per_module=synchronize_per_module,
+    )
+    model.quantization_config = resolved_config
+    model.orbitquant_summary = summary
+    model_config = getattr(model, "config", None)
+    if model_config is not None:
+        model_config.quantization_config = resolved_config.to_dict()
     return summary
 
 

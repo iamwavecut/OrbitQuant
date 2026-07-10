@@ -12,10 +12,9 @@ Paper source:
 - arXiv abstract: https://arxiv.org/abs/2607.02461
 - arXiv HTML, version 1: https://arxiv.org/html/2607.02461v1
 
-This document compares the paper methodology against the current implementation
-in this repository. It is not a development log. It is a release gate: claims
-about paper reproduction, metrics, and kernel acceleration must be limited to
-the items proven here or in later dated audit updates.
+This document compares the paper methodology against the implementation in this
+repository. Claims about paper reproduction, metrics, and kernel acceleration
+are limited to the evidence recorded here.
 
 ## Scope
 
@@ -62,17 +61,21 @@ Status legend:
 | Runtime activations compute per-token norm `s`, normalize by `s + ε`, apply RPBH, nearest-centroid quantize, and rescale by the raw token norm `s`, with `ε = 1e-10` by default. | Pass | `src/orbitquant/config.py`, `src/orbitquant/functional.py`, `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_config.py`, `tests/test_orbit_linear.py`, `tests/test_kernels.py` | This follows Algorithm 1 exactly. Arbitrary leading dimensions are preserved, zero tokens remain zero after rescaling, and CPU, Triton/CUDA, and Metal/MPS paths use the same denominator. Manifests record the actual epsilon. |
 | The only input-dependent runtime scalar is the per-token norm. | Pass | `src/orbitquant/functional.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Codebook, rotation, centroids, boundaries, signs, and permutation are fixed after construction; persistent layer state is limited to packed weight indices, row norms, and optional bias. |
 | AdaLN modulation projections use INT4 weight-only RTN with group size 64 and BF16 activations. | Pass | `src/orbitquant/adaln.py`, `src/orbitquant/config.py`, `src/orbitquant/artifacts/manifest.py`, `tests/test_adaln_rtn.py` | AdaLN wrappers do not call OrbitQuant activation rotation. Default `adaln_group_size` is 64, and artifacts record the actual group size so non-default artifacts are labeled. |
-| Transformer-block linear projections are quantized through OrbitQuant. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Current Diffusers transformer configs are covered for FLUX.1, FLUX.2, Z-Image, and Wan. Artifact manifests still need per-artifact cross-checks before final publication. |
+| Transformer-block linear projections are quantized through OrbitQuant. | Pass | `src/orbitquant/policies/generic_dit.py`, `src/orbitquant/linear_adapters.py`, `tests/test_target_policies.py`, `tests/test_universal_transformers.py` | Paper targets retain exact model policies. Unknown architectures use the universal policy over every registered linear-compatible module, subject to explicit boundary skips and user allowlists. |
 | Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
 | Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Native artifact-readiness evidence is separate from release-grade metric tables. Full metric runs are required before metric-table or paper-reproduction claims. |
-| FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py`, `docs/release-gates.md` | It is treated as an additional target using paper-style native settings. |
+| FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py` | It is treated as an additional target using paper-style native settings. |
 | Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Default `auto_fused` requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. CUDA and MPS avoid full weight materialization; throughput varies by model and is reported only from measured benchmarks. |
-| Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `docs/release-gates.md` | Missing metrics block only paper metric/reproduction claims. |
+| Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `src/orbitquant/eval/` | Missing metrics block only paper metric/reproduction claims. |
 
 ## Model Policy Evidence
 
-Current policy coverage is pattern-based and intentionally scoped to Diffusers
-transformer components. Inventory summaries are derived from config-based
+Paper-target policy coverage remains pattern-based and scoped to Diffusers
+transformer components. The separate `universal` policy is structural: it
+quantizes every registered linear-compatible module except embeddings,
+timestep modules, task/output heads, and explicit skips. Built-in adapters cover
+`torch.nn.Linear` and Hugging Face `Conv1D`; custom modules must register their
+weight layout and feature attributes. Inventory summaries are derived from config-based
 `orbitquant inspect-policy --suite ... --load-mode config --dtype bfloat16`
 outputs. Raw inventory JSON is audit evidence, not package or model artifact
 content.
@@ -84,6 +87,12 @@ content.
 | Z-Image-Turbo | `noise_refiner`, `context_refiner`, and `layers` attention projections and FFN `w1`, `w2`, `w3`. | Refiner and main-layer `adaLN_modulation`. | `all_x_embedder`, `t_embedder`, `cap_embedder`, final layer and final AdaLN modulation. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `ZImageTransformer2DModel`. |
 | Wan 2.1 | `blocks.*.attn1`, `blocks.*.attn2`, and `blocks.*.ffn` projections. | None expected for Wan 2.1-1.3B. | `condition_embedder`, time/text embedders, final `proj_out`, text encoder, VAE. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `WanTransformer3DModel`. |
 
+The universal integration suite additionally covers BERT, GPT-2 `Conv1D`,
+Llama, T5 encoder-decoder, and ViT module inventories. It verifies quantize,
+forward, `save_pretrained()`, and packed `from_pretrained()` restoration. This
+is architecture compatibility evidence, not a quality claim for a particular
+bit setting.
+
 Inventory summary:
 
 | Suite | Component class | Linear modules | OrbitQuant | AdaLN INT4 | BF16 skip |
@@ -93,16 +102,10 @@ Inventory summary:
 | `z-image-native` | `ZImageTransformer2DModel` | 276 | 238 | 32 | 6 |
 | `wan-native` | `WanTransformer3DModel` | 306 | 300 | 0 | 6 |
 
-Required before final publication:
-
-- Verify the manifest `quantized_modules`, `adaln_modules`, and
-  `skipped_modules` lists for each published artifact against the corresponding
-  inventory summary with `orbitquant validate-artifact --policy-inventory`.
-- Treat access failures for gated models as model-access blockers only, not as
-  method blockers.
-- The lightweight paper gate pins exact module-list hashes in addition to
-  aggregate counts. A count-preserving swap from a paper projection to an
-  unrelated module must fail the gate.
+Artifact validation compares manifest `quantized_modules`, `adaln_modules`, and
+`skipped_modules` against the policy inventory. The paper gate pins exact
+module-list hashes in addition to aggregate counts, so a count-preserving swap
+from a paper projection to an unrelated module fails the gate.
 
 ## Native Setting Provenance
 
@@ -123,12 +126,12 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 | Backend | Status | Evidence | Claim boundary |
 | --- | --- | --- | --- |
 | CPU | Pass as reference | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/functional.py` | Correctness baseline only; no optimized CPU kernel claim. |
-| CUDA/Triton | Partial optimized path | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Covers activation norm/RPBH/lookup/rescale, packed weight dequant, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and packed matmul. Default `auto_fused` selects native packed matmul first, then Triton packed matmul when available. |
-| MPS/Metal | Partial optimized path | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | A fused Metal shader performs activation norm, RPBH/FWHT, codebook lookup, and rescale. `auto_fused` requires the native Metal packed matmul package and avoids full weight materialization. Offline weight and AdaLN quantization remain reference paths on MPS. |
+| CUDA/Triton | Pass for packed fallback | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | Covers activation norm/RPBH/lookup/rescale, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and packed matmul. Default `auto_fused` selects native packed matmul first, then Triton packed matmul when available. |
+| MPS/Metal | Pass for native packed inference | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | A fused Metal shader performs activation norm, RPBH/FWHT, codebook lookup, and rescale. The native package performs packed matmul for generic leading dimensions, including short decode rows and partial matrix tiles, without full weight materialization. Offline weight and AdaLN quantization remain reference paths on MPS. |
 | ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
 | XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
 
-## Pending Evidence For Acceleration Claims
+## Acceleration Claim Boundary
 
 - `runtime_mode="auto_fused"` is the default optimized policy. It avoids silent
   CUDA/MPS fallback to full dequantized BF16 weight materialization. Explicit
@@ -154,6 +157,13 @@ from compact summaries are rejected by the HF artifact audit.
 Full metric runs are required only before saying that an artifact reproduces
 the paper's GenEval or VBench numbers.
 
+Automatic coverage outside the paper models does not imply that W4A4 or another
+profile preserves task quality. Real GPT-2 and DeiT checks confirm that loading,
+rotation folding, quantization, execution, and serialization work, while their
+low-bit outputs are substantially more sensitive than the validated diffusion
+targets. OrbitQuant therefore requires per-model quality validation and does
+not silently substitute a different quantization method.
+
 ## Deviations And Limitations
 
 | Item | Status | Rationale |
@@ -167,9 +177,6 @@ the paper's GenEval or VBench numbers.
 | Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
 
-## Next Audit Actions
-
-1. Keep GenEval/VBench claims disabled until the corresponding external metric
-   runs are complete.
-2. Re-run the manifest, policy-inventory, checksum, and native-smoke audit after
-   changing any published checkpoint.
+GenEval/VBench scores are not claimed without their corresponding external
+metric runs. Any changed checkpoint must pass manifest, policy-inventory,
+checksum, and native-output validation before publication.

@@ -28,7 +28,8 @@ Inputs:
 
 - `x`: contiguous or reshapeable tensor with shape `[..., in_features]`.
 - `packed_weight_indices`: `uint8` low-bit packed row-major codebook indices.
-- `row_norms`: `float32` row norms with shape `[out_features]`.
+- `row_norms`: row norms with shape `[out_features]`; CUDA consumes the
+  artifact's `bfloat16` values directly, while Metal uses `float32` internally.
 - `centroids`: `float32` Lloyd-Max centroids with shape `[2**bits]`.
 - `bias`: optional projection bias.
 
@@ -48,6 +49,21 @@ The build produces ABI3 Hugging Face Kernels artifacts under `build/` for the
 supported backend variants on the current platform. On macOS, `sandbox relaxed`
 or enabled Nix sandboxing is required by `kernel-builder`. The commands build
 local files only; they do not upload to Kernel Hub.
+
+For a faster CUDA-only development build on a machine with a matching Torch and
+CUDA toolchain:
+
+```bash
+cargo install --git https://github.com/huggingface/kernels hf-kernel-builder
+kernel-builder check-config .
+kernel-builder create-pyproject -f .
+TORCH_CUDA_ARCH_LIST="8.9" CUDACXX=/usr/local/cuda/bin/nvcc \
+  python setup.py build_kernel
+```
+
+This generated project is for local testing and must not be committed or
+distributed without a successful `kernel-builder check-abi`. Use the Nix build
+for redistributable variants.
 
 For direct local imports, add the matching `build/torch*-<backend>-<platform>`
 directory to `PYTHONPATH`; the `torch*` variant must match the runtime PyTorch

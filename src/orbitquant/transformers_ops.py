@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -33,9 +32,12 @@ class OrbitQuantWeightQuantize(ConversionOps):
             raise ValueError("OrbitQuant weight conversion requires full_layer_name and model")
 
         orbit_suffix = ".packed_weight_indices"
+        debug_suffix = ".debug_weight"
         rtn_suffix = ".packed_weight"
         if full_layer_name.endswith(orbit_suffix):
             module_name = full_layer_name[: -len(orbit_suffix)]
+        elif full_layer_name.endswith(debug_suffix):
+            module_name = full_layer_name[: -len(debug_suffix)]
         elif full_layer_name.endswith(rtn_suffix):
             module_name = full_layer_name[: -len(rtn_suffix)]
         else:
@@ -46,12 +48,15 @@ class OrbitQuantWeightQuantize(ConversionOps):
         _, values = next(iter(input_dict.items()))
         weight = values[0] if isinstance(values, list) else values
         weight = self.hf_quantizer.move_tensor_for_quantization(weight)
-        proxy = SimpleNamespace(
-            in_features=module.in_features,
-            out_features=module.out_features,
-            weight=weight,
-            bias=None,
+        if module.source_weight_layout == "in_out":
+            weight = weight.transpose(0, 1).contiguous()
+        proxy = torch.nn.Linear(
+            module.in_features,
+            module.out_features,
+            bias=False,
+            device="meta",
         )
+        proxy.weight = torch.nn.Parameter(weight, requires_grad=False)
 
         results: dict[str, torch.Tensor] = {}
         if isinstance(module, OrbitQuantLinear):

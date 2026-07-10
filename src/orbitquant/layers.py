@@ -7,6 +7,7 @@ from torch.nn import functional as F
 from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import quantize_activations_kernel, select_backend
+from orbitquant.linear_adapters import canonical_linear_weight, linear_module_spec
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
 
@@ -139,6 +140,7 @@ class OrbitQuantLinear(nn.Module):
         out_features: int,
         config: OrbitQuantConfig,
         module_name: str,
+        source_weight_layout: str,
         bias: torch.Tensor | None,
         packed_weight_indices: torch.Tensor | None,
         row_norms: torch.Tensor | None,
@@ -156,6 +158,7 @@ class OrbitQuantLinear(nn.Module):
         self.packed_matmul_block_k = config.packed_matmul_block_k
         self.packed_matmul_num_warps = config.packed_matmul_num_warps
         self.module_name = module_name
+        self.source_weight_layout = source_weight_layout
         self.activation_eps = config.activation_eps
         self.rotation = get_rpbh_rotation(
             dim=in_features, seed=config.rotation_seed, block_size=config.block_size
@@ -192,6 +195,11 @@ class OrbitQuantLinear(nn.Module):
             _clone_constant(self.activation_codebook.boundaries, device=constant_device),
             persistent=False,
         )
+        self.register_buffer(
+            "_weight_codebook_centroids",
+            _clone_constant(self.weight_codebook.centroids, device=constant_device),
+            persistent=False,
+        )
 
         if bias is None:
             self.register_parameter("bias", None)
@@ -219,25 +227,30 @@ class OrbitQuantLinear(nn.Module):
     @classmethod
     def from_linear(
         cls,
-        layer: nn.Linear,
+        layer: nn.Module,
         *,
         config: OrbitQuantConfig,
         module_name: str,
     ) -> OrbitQuantLinear:
-        source_weight = layer.weight.detach()
-        bias = None if layer.bias is None else layer.bias.detach()
+        spec = linear_module_spec(layer)
+        if spec is None:
+            raise TypeError(f"no OrbitQuant linear adapter registered for {type(layer).__name__}")
+        source_weight = canonical_linear_weight(layer).detach()
+        source_bias = getattr(layer, "bias", None)
+        bias = None if source_bias is None else source_bias.detach()
         rotation = get_rpbh_rotation(
-            dim=layer.in_features, seed=config.rotation_seed, block_size=config.block_size
+            dim=spec.in_features, seed=config.rotation_seed, block_size=config.block_size
         )
 
         if config.runtime_mode == "debug_no_quant":
             weight = source_weight.to(torch.float32)
             rotated_weight = rotation.apply_to_weight(weight)
             return cls(
-                in_features=layer.in_features,
-                out_features=layer.out_features,
+                in_features=spec.in_features,
+                out_features=spec.out_features,
                 config=config,
                 module_name=module_name,
+                source_weight_layout=spec.weight_layout,
                 bias=bias,
                 packed_weight_indices=None,
                 row_norms=None,
@@ -253,7 +266,7 @@ class OrbitQuantLinear(nn.Module):
             quantization_weight = source_weight.to(torch.float32)
             row_norms = quantization_weight.norm(dim=-1)
         codebook = get_codebook(
-            layer.in_features, config.weight_bits, config.codebook_version
+            spec.in_features, config.weight_bits, config.codebook_version
         )
         packed = _quantize_weight_pack(
             quantization_weight,
@@ -265,10 +278,11 @@ class OrbitQuantLinear(nn.Module):
         )
 
         return cls(
-            in_features=layer.in_features,
-            out_features=layer.out_features,
+            in_features=spec.in_features,
+            out_features=spec.out_features,
             config=config,
             module_name=module_name,
+            source_weight_layout=spec.weight_layout,
             bias=bias,
             packed_weight_indices=packed,
             row_norms=row_norms.to(torch.bfloat16),
@@ -278,38 +292,45 @@ class OrbitQuantLinear(nn.Module):
     @classmethod
     def empty_from_linear(
         cls,
-        layer: nn.Linear,
+        layer: nn.Module,
         *,
         config: OrbitQuantConfig,
         module_name: str,
     ) -> OrbitQuantLinear:
+        spec = linear_module_spec(layer)
+        if spec is None:
+            raise TypeError(f"no OrbitQuant linear adapter registered for {type(layer).__name__}")
+        source_bias = getattr(layer, "bias", None)
         bias = None
-        if layer.bias is not None:
-            bias = torch.zeros(layer.out_features, dtype=layer.bias.dtype, device=layer.bias.device)
+        if source_bias is not None:
+            bias = torch.zeros(
+                spec.out_features, dtype=source_bias.dtype, device=source_bias.device
+            )
         debug_weight = None
         packed_weight_indices = None
         row_norms = None
         if config.runtime_mode == "debug_no_quant":
             debug_weight = torch.empty(
-                layer.out_features,
-                layer.in_features,
+                spec.out_features,
+                spec.in_features,
                 dtype=layer.weight.dtype,
                 device=layer.weight.device,
             )
         else:
             packed_weight_indices = torch.empty(
-                _packed_length(layer.out_features * layer.in_features, config.weight_bits),
+                _packed_length(spec.out_features * spec.in_features, config.weight_bits),
                 dtype=torch.uint8,
                 device=layer.weight.device,
             )
             row_norms = torch.empty(
-                layer.out_features, dtype=torch.bfloat16, device=layer.weight.device
+                spec.out_features, dtype=torch.bfloat16, device=layer.weight.device
             )
         return cls(
-            in_features=layer.in_features,
-            out_features=layer.out_features,
+            in_features=spec.in_features,
+            out_features=spec.out_features,
             config=config,
             module_name=module_name,
+            source_weight_layout=spec.weight_layout,
             bias=bias,
             packed_weight_indices=packed_weight_indices,
             row_norms=row_norms,
@@ -548,7 +569,9 @@ class OrbitQuantLinear(nn.Module):
                 rotated_x,
                 self.packed_weight_indices,
                 self.row_norms,
-                self.weight_codebook,
+                self._constant_buffer(
+                    "_weight_codebook_centroids", device=x.device, dtype=torch.float32
+                ),
                 bits=self.weight_bits,
                 out_features=self.out_features,
                 in_features=self.in_features,
@@ -569,7 +592,9 @@ class OrbitQuantLinear(nn.Module):
                 rotated_x,
                 self.packed_weight_indices,
                 self.row_norms,
-                self.weight_codebook,
+                self._constant_buffer(
+                    "_weight_codebook_centroids", device=x.device, dtype=torch.float32
+                ),
                 bits=self.weight_bits,
                 out_features=self.out_features,
                 in_features=self.in_features,

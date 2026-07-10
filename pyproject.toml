@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orbitquant"
-version = "0.1.6"
-description = "Clean-room OrbitQuant implementation for diffusion transformers"
+version = "0.2.0"
+description = "Calibration-free OrbitQuant for transformer linear projections"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

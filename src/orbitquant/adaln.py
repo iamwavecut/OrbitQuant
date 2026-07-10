@@ -5,6 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.linear_adapters import canonical_linear_weight, linear_module_spec
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 
 
@@ -58,6 +59,7 @@ class RTNInt4Linear(nn.Module):
         out_features: int,
         group_size: int,
         module_name: str,
+        source_weight_layout: str,
         packed_weight: torch.Tensor,
         scales: torch.Tensor,
         bias: torch.Tensor | None,
@@ -67,6 +69,7 @@ class RTNInt4Linear(nn.Module):
         self.out_features = out_features
         self.group_size = group_size
         self.module_name = module_name
+        self.source_weight_layout = source_weight_layout
         self.num_groups = (in_features + group_size - 1) // group_size
         self.register_buffer("packed_weight", packed_weight)
         self.register_buffer("scales", scales)
@@ -83,17 +86,22 @@ class RTNInt4Linear(nn.Module):
 
     @classmethod
     def from_linear(
-        cls, layer: nn.Linear, *, config: OrbitQuantConfig, module_name: str
+        cls, layer: nn.Module, *, config: OrbitQuantConfig, module_name: str
     ) -> RTNInt4Linear:
+        spec = linear_module_spec(layer)
+        if spec is None:
+            raise TypeError(f"no OrbitQuant linear adapter registered for {type(layer).__name__}")
         group_size = config.adaln_group_size
-        weight = layer.weight.detach().to(torch.float32)
+        weight = canonical_linear_weight(layer).detach().to(torch.float32)
         packed, scales = _quantize_adaln_weight(weight, group_size=group_size)
-        bias = None if layer.bias is None else layer.bias.detach()
+        source_bias = getattr(layer, "bias", None)
+        bias = None if source_bias is None else source_bias.detach()
         return cls(
-            in_features=layer.in_features,
-            out_features=layer.out_features,
+            in_features=spec.in_features,
+            out_features=spec.out_features,
             group_size=group_size,
             module_name=module_name,
+            source_weight_layout=spec.weight_layout,
             packed_weight=packed,
             scales=scales.to(torch.bfloat16),
             bias=bias,
@@ -101,26 +109,33 @@ class RTNInt4Linear(nn.Module):
 
     @classmethod
     def empty_from_linear(
-        cls, layer: nn.Linear, *, config: OrbitQuantConfig, module_name: str
+        cls, layer: nn.Module, *, config: OrbitQuantConfig, module_name: str
     ) -> RTNInt4Linear:
+        spec = linear_module_spec(layer)
+        if spec is None:
+            raise TypeError(f"no OrbitQuant linear adapter registered for {type(layer).__name__}")
         group_size = config.adaln_group_size
-        num_groups = (layer.in_features + group_size - 1) // group_size
+        num_groups = (spec.in_features + group_size - 1) // group_size
         packed = torch.empty(
-            _packed_length(layer.out_features * num_groups * group_size, 4),
+            _packed_length(spec.out_features * num_groups * group_size, 4),
             dtype=torch.uint8,
             device=layer.weight.device,
         )
         scales = torch.empty(
-            layer.out_features, num_groups, dtype=torch.bfloat16, device=layer.weight.device
+            spec.out_features, num_groups, dtype=torch.bfloat16, device=layer.weight.device
         )
+        source_bias = getattr(layer, "bias", None)
         bias = None
-        if layer.bias is not None:
-            bias = torch.zeros(layer.out_features, dtype=layer.bias.dtype, device=layer.bias.device)
+        if source_bias is not None:
+            bias = torch.zeros(
+                spec.out_features, dtype=source_bias.dtype, device=source_bias.device
+            )
         return cls(
-            in_features=layer.in_features,
-            out_features=layer.out_features,
+            in_features=spec.in_features,
+            out_features=spec.out_features,
             group_size=group_size,
             module_name=module_name,
+            source_weight_layout=spec.weight_layout,
             packed_weight=packed,
             scales=scales,
             bias=bias,

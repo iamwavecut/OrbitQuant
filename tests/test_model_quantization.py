@@ -57,7 +57,7 @@ def test_inspect_linear_module_policy_reports_inventory_without_mutating_model()
 
     inventory = inspect_linear_module_policy(model, config)
 
-    assert inventory["target_policy"] == "generic_dit"
+    assert inventory["target_policy"] == "universal"
     assert inventory["linear_module_count"] == 3
     assert inventory["action_counts"] == {
         "orbitquant": 1,
@@ -72,6 +72,9 @@ def test_inspect_linear_module_policy_reports_inventory_without_mutating_model()
         "action": "orbitquant",
         "reason": "transformer block linear",
         "dtype": None,
+        "module_type": "Linear",
+        "adapter": "Linear",
+        "weight_layout": "out_in",
         "in_features": 16,
         "out_features": 16,
         "bias": True,

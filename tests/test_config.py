@@ -1,5 +1,6 @@
 import json
 
+from orbitquant import recipe
 from orbitquant.config import OrbitQuantConfig
 
 
@@ -20,6 +21,25 @@ def test_orbit_quant_config_round_trips_to_dict():
     assert restored.activation_kernel_backend == "cpu"
     assert restored.modules_to_not_convert == ["text_encoder"]
     assert restored.quant_method == "orbitquant"
+
+
+def test_named_recipe_builds_universal_config_and_accepts_overrides():
+    config = recipe("W3A3", runtime_mode="dequant_bf16")
+
+    assert config.weight_bits == 3
+    assert config.activation_bits == 3
+    assert config.target_policy == "universal"
+    assert config.runtime_mode == "dequant_bf16"
+
+
+def test_named_recipe_rejects_unknown_profile():
+    try:
+        recipe("w5a5")
+    except ValueError as exc:
+        assert "w2a3" in str(exc)
+        assert "w4a6" in str(exc)
+    else:
+        raise AssertionError("unknown recipe was accepted")
 
 
 def test_orbit_quant_config_supports_hf_json_helpers():

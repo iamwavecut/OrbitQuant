@@ -47,6 +47,11 @@ def _cuda_device() -> str:
     return "cuda"
 
 
+def _row_norms(device: str, out_features: int) -> torch.Tensor:
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    return torch.linspace(0.5, 1.5, out_features, device=device, dtype=dtype)
+
+
 @pytest.mark.kernels_ci
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])
 @pytest.mark.parametrize("in_features", [16, 19])
@@ -66,7 +71,7 @@ def test_matmul_packed_weight_matches_dequantized_reference(
         % (2**bits)
     )
     packed = _pack(indices, bits).to(device)
-    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    row_norms = _row_norms(device, out_features)
     centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
     bias = torch.randn(out_features, device=device, dtype=dtype) if with_bias else None
 
@@ -94,6 +99,44 @@ def test_matmul_packed_weight_matches_dequantized_reference(
 
 
 @pytest.mark.kernels_ci
+@pytest.mark.parametrize("rows", [1, 3, 8, 9, 15])
+@pytest.mark.parametrize(
+    ("in_features", "out_features"),
+    [(32, 32), (37, 29)],
+)
+def test_matmul_packed_weight_short_sequence_matches_reference(
+    rows: int,
+    in_features: int,
+    out_features: int,
+) -> None:
+    device = _device()
+    dtype = torch.float16 if device == "mps" else torch.bfloat16
+    bits = 4
+    x = torch.randn(rows, in_features, device=device, dtype=dtype)
+    indices = torch.randint(0, 2**bits, (out_features, in_features), dtype=torch.uint8)
+    packed = _pack(indices, bits).to(device)
+    row_norms = _row_norms(device, out_features)
+    centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
+    bias = torch.randn(out_features, device=device, dtype=dtype)
+
+    expected_weight = row_norms.cpu()[:, None] * centroids.cpu()[indices.long()]
+    expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, bias.float().cpu())
+    actual = matmul_packed_weight(
+        x,
+        packed,
+        row_norms,
+        centroids,
+        bits=bits,
+        out_features=out_features,
+        in_features=in_features,
+        bias=bias,
+    )
+
+    assert actual.shape == (rows, out_features)
+    assert torch.allclose(actual.float().cpu(), expected, atol=3e-2, rtol=3e-2)
+
+
+@pytest.mark.kernels_ci
 def test_matmul_packed_weight_explicit_mps_path_matches_dequantized_reference() -> None:
     device = _mps_device()
     bits = 4
@@ -108,7 +151,7 @@ def test_matmul_packed_weight_explicit_mps_path_matches_dequantized_reference() 
         % (2**bits)
     )
     packed = _pack(indices, bits).to(device)
-    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    row_norms = _row_norms(device, out_features)
     centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
     bias = torch.randn(out_features, device=device, dtype=torch.float16)
 
@@ -149,7 +192,7 @@ def test_matmul_packed_weight_explicit_mps_bfloat16_path_matches_dequantized_ref
         % (2**bits)
     )
     packed = _pack(indices, bits).to(device)
-    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    row_norms = _row_norms(device, out_features)
     centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
     bias = torch.randn(out_features, device=device, dtype=torch.bfloat16)
 
@@ -192,7 +235,7 @@ def test_matmul_packed_weight_mps_aligned_mma_path_matches_dequantized_reference
         % (2**bits)
     )
     packed = _pack(indices, bits).to(device)
-    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    row_norms = _row_norms(device, out_features)
     centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
     bias = torch.randn(out_features, device=device, dtype=dtype)
 
@@ -233,7 +276,7 @@ def test_matmul_packed_weight_cuda_mma64_path_matches_dequantized_reference(
         % (2**bits)
     )
     packed = _pack(indices, bits).to(device)
-    row_norms = torch.linspace(0.5, 1.5, out_features, device=device)
+    row_norms = _row_norms(device, out_features)
     centroids = torch.linspace(-1.0, 1.0, 2**bits, device=device)
     bias = torch.randn(out_features, device=device, dtype=dtype)
 

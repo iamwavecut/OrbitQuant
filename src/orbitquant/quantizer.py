@@ -158,6 +158,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_streaming_quantization = False
         self._transformers_orbit_module_names: list[str] = []
         self._transformers_adaln_module_names: list[str] = []
+        self._transformers_base_model_prefix = ""
         self.quantization_device = quantization_device
 
     def _quantization_device_from_kwargs(self, kwargs: dict[str, Any]) -> torch.device | None:
@@ -297,17 +298,28 @@ class OrbitQuantizer(*_hf_base_classes()):
 
         from orbitquant.transformers_ops import OrbitQuantWeightQuantize
 
+        def source_patterns(name: str) -> list[str]:
+            patterns = [f"{name}.weight"]
+            prefix = self._transformers_base_model_prefix
+            if prefix and name.startswith(f"{prefix}."):
+                patterns.append(f"{name.removeprefix(f'{prefix}.')}.weight")
+            return patterns
+
         conversions = [
             WeightConverter(
-                source_patterns=f"{name}.weight",
-                target_patterns=f"{name}.packed_weight_indices",
+                source_patterns=source_patterns(name),
+                target_patterns=(
+                    f"{name}.debug_weight"
+                    if self.quantization_config.runtime_mode == "debug_no_quant"
+                    else f"{name}.packed_weight_indices"
+                ),
                 operations=[OrbitQuantWeightQuantize(self)],
             )
             for name in self._transformers_orbit_module_names
         ]
         conversions.extend(
             WeightConverter(
-                source_patterns=f"{name}.weight",
+                source_patterns=source_patterns(name),
                 target_patterns=f"{name}.packed_weight",
                 operations=[OrbitQuantWeightQuantize(self)],
             )
@@ -331,6 +343,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_streaming_quantization = self._transformers_postload_quantization
         self._transformers_orbit_module_names = []
         self._transformers_adaln_module_names = []
+        self._transformers_base_model_prefix = str(getattr(model, "base_model_prefix", "") or "")
         if self._transformers_streaming_quantization:
             decisions = classify_linear_modules(model, self.quantization_config)
             self._transformers_orbit_module_names = [
@@ -357,6 +370,7 @@ class OrbitQuantizer(*_hf_base_classes()):
             self._transformers_streaming_quantization = False
             self._transformers_orbit_module_names = []
             self._transformers_adaln_module_names = []
+            self._transformers_base_model_prefix = ""
         return model
 
     def _dequantize(self, model: Any) -> Any:
