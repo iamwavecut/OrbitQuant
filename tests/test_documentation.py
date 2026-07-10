@@ -23,7 +23,14 @@ def test_readme_documents_the_universal_public_contract():
 def test_documentation_is_product_focused_instead_of_a_release_chronicle():
     docs = sorted(path.name for path in Path("docs").glob("*.md"))
 
-    assert docs == ["kernel-audit.md", "paper-methodology-audit.md"]
+    assert docs == [
+        "flux2-klein-9b-sdnq-vs-orbitquant.md",
+        "kernel-audit.md",
+        "paper-methodology-audit.md",
+    ]
+    comparison = _read("docs/flux2-klein-9b-sdnq-vs-orbitquant.md")
+    assert "## Protocol" in comparison
+    assert "## Visual Assessment" in comparison
     assert "## Runtime Contract" in _read("docs/kernel-audit.md")
     assert "## Requirement Matrix" in _read("docs/paper-methodology-audit.md")
 
