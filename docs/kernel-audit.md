@@ -107,6 +107,27 @@ The native CUDA package was also built and tested on an NVIDIA RTX 4090
 All 34 applicable package tests passed for W2/W3/W4/W6, FP16/BF16, bias and
 no-bias paths, partial output tiles, short rows, and tensor-core rows.
 
+The same local package build passed its 34 CUDA tests on an NVIDIA A40
+(`sm_86`) with Torch 2.9.1+cu128 and CUDA 12.8. A full FLUX.2 Klein 9B W4A4
+pipeline exercised 396 packed linears across the transformer and Qwen3 text
+encoder. Native 1024x1024 generation at four steps used
+`native_packed_matmul` for every packed linear and the Triton activation path;
+no full weight matrix was materialized.
+
+Representative A40 W4A4 layer timings from that pipeline are:
+
+| Projection | Rows | Shape | RPBH + activation quantization | Native packed matmul | Full layer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Double-stream Q | 4096 | 4096 -> 4096 | 0.698 ms | 2.607 ms | 3.279 ms |
+| Single-stream fused input | 4608 | 4096 -> 36864 | 0.770 ms | 25.962 ms | 26.677 ms |
+| Single-stream output | 4608 | 16384 -> 4096 | 4.257 ms | 11.244 ms | 15.514 ms |
+
+The corresponding full-pipeline hot-generation mean was 7.418 seconds with a
+17.66 GB NVML peak. On the same A40 and prompt pack, BF16 measured 3.911
+seconds and 40.83 GB, while SDNQ UINT4 measured 3.546 seconds and 17.55 GB.
+These results establish the memory reduction and the remaining throughput gap;
+they do not support a model-level speedup claim for OrbitQuant on A40.
+
 Measured W4 BF16 operator latency for `in_features=768` and
 `out_features=2304`:
 

@@ -827,6 +827,47 @@ def test_orbit_linear_explicit_dequant_bf16_still_uses_reference_path(monkeypatc
     assert calls == {"dequant": 1, "linear": 1}
 
 
+def test_orbit_linear_rebuilds_derived_constants_after_to_empty():
+    torch.manual_seed(19)
+    source = torch.nn.Linear(16, 7, bias=True, dtype=torch.float32)
+    x = torch.randn(2, 5, 16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="cpu",
+    )
+    reference = OrbitQuantLinear.from_linear(
+        source, config=config, module_name="block.ff.linear"
+    )
+    state = {name: tensor.clone() for name, tensor in reference.state_dict().items()}
+    restored = copy.deepcopy(reference)
+    restored.to_empty(device="cpu")
+    restored.load_state_dict(state)
+
+    assert not restored._derived_constants_valid
+    actual = restored(x)
+
+    assert restored._derived_constants_valid
+    assert torch.equal(restored._rotation_permutation, restored.rotation.permutation)
+    assert torch.equal(restored._rotation_signs, restored.rotation.signs)
+    assert torch.equal(
+        restored._activation_codebook_centroids,
+        restored.activation_codebook.centroids,
+    )
+    assert torch.equal(
+        restored._activation_codebook_boundaries,
+        restored.activation_codebook.boundaries,
+    )
+    assert torch.equal(
+        restored._weight_codebook_centroids,
+        restored.weight_codebook.centroids,
+    )
+    assert torch.allclose(actual, reference(x))
+
+
 def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch):
     if not torch.backends.mps.is_available():
         pytest.skip("MPS backend is not available")

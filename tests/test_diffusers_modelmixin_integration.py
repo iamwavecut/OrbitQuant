@@ -5,6 +5,7 @@ import torch
 
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
+from orbitquant.modeling import quantize_model
 from orbitquant.quantizer import register_hf_quantizers
 
 diffusers = pytest.importorskip("diffusers")
@@ -101,3 +102,20 @@ def test_diffusers_modelmixin_save_pretrained_round_trips_pre_quantized_model(
     assert isinstance(restored.proj_out, torch.nn.Linear)
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(restored(x)).all()
+
+
+def test_diffusers_manual_quantize_model_persists_quantization_config(tmp_path):
+    model = TinyDiffusersTransformer()
+    config = OrbitQuantConfig(
+        block_size=8,
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="cpu",
+    )
+
+    quantize_model(model, config, quantization_device="cpu")
+    model.save_pretrained(tmp_path)
+    saved_config = json.loads((tmp_path / "config.json").read_text())
+    restored = TinyDiffusersTransformer.from_pretrained(tmp_path)
+
+    assert saved_config["quantization_config"] == config.to_dict()
+    assert isinstance(restored.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)

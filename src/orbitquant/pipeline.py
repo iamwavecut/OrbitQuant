@@ -12,7 +12,7 @@ from orbitquant.artifacts import (
     save_orbitquant_artifact,
 )
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.modeling import QuantizationSummary, quantize_linear_modules
+from orbitquant.modeling import QuantizationSummary, quantize_model
 from orbitquant.quantizer import register_hf_quantizers
 
 
@@ -124,7 +124,7 @@ def quantize_pipeline(
     synchronize_per_module: bool = False,
 ) -> QuantizationSummary:
     target = _get_pipeline_component(pipeline, component)
-    return quantize_linear_modules(
+    return quantize_model(
         target,
         config,
         quantization_device=quantization_device,

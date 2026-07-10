@@ -813,6 +813,42 @@ def test_triton_cuda_activation_kernel_matches_paper_sized_rpbh_block():
     assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-5)
 
 
+def test_triton_cuda_activation_kernel_matches_large_rpbh_block():
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(3)
+    x = torch.randn(3, 4096, device="cuda", dtype=torch.bfloat16)
+    rotation = RPBHRotation(dim=4096, seed=0, block_size="paper")
+    codebook = get_codebook(dim=4096, bits=4)
+    expected = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
+    actual = quantize_activations_kernel(
+        x, rotation=rotation, codebook=codebook, eps=1e-12, backend="triton_cuda"
+    )
+
+    assert rotation.block_size == 4096
+    assert actual.dtype == torch.bfloat16
+    assert torch.allclose(actual.float(), expected.float(), atol=1e-2, rtol=1e-2)
+
+
+def test_triton_cuda_activation_kernel_matches_very_large_rpbh_block():
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(4)
+    x = torch.randn(2, 16384, device="cuda", dtype=torch.bfloat16)
+    rotation = RPBHRotation(dim=16384, seed=0, block_size="paper")
+    codebook = get_codebook(dim=16384, bits=4)
+    expected = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
+    actual = quantize_activations_kernel(
+        x, rotation=rotation, codebook=codebook, eps=1e-12, backend="triton_cuda"
+    )
+
+    assert rotation.block_size == 16384
+    assert actual.dtype == torch.bfloat16
+    assert torch.allclose(actual.float(), expected.float(), atol=1e-2, rtol=1e-2)
+
+
 def test_cuda_quantize_linear_modules_keeps_packed_buffers_on_gpu_until_serialization():
     if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
         pytest.skip("CUDA/Triton backend is not available")

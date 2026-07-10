@@ -353,7 +353,9 @@ def quantize_model(
     model.quantization_config = resolved_config
     model.orbitquant_summary = summary
     model_config = getattr(model, "config", None)
-    if model_config is not None:
+    if hasattr(model, "register_to_config"):
+        model.register_to_config(quantization_config=resolved_config.to_dict())
+    elif model_config is not None:
         model_config.quantization_config = resolved_config.to_dict()
     return summary
 

@@ -237,6 +237,50 @@ def _fused_rpbh_quantize_activation_kernel(
 
 
 @triton.jit
+def _fused_rpbh_fwht_1024_chunk_kernel(
+    input_ptr,
+    norms_ptr,
+    permutation_ptr,
+    signs_ptr,
+    work_ptr,
+    rows: tl.constexpr,
+    dim: tl.constexpr,
+    num_blocks: tl.constexpr,
+    orbit_block_size: tl.constexpr,
+    chunks_per_orbit_block: tl.constexpr,
+    eps: tl.constexpr,
+):
+    program = tl.program_id(0)
+    chunk = program % chunks_per_orbit_block
+    row_block = program // chunks_per_orbit_block
+    row = row_block // num_blocks
+    orbit_block = row_block % num_blocks
+    local_cols = tl.arange(0, 1024)
+    cols = orbit_block * orbit_block_size + chunk * 1024 + local_cols
+    mask = (row < rows) & (cols < dim)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
+    norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
+    values = tl.load(
+        input_ptr + row * dim + source_cols,
+        mask=mask,
+        other=0.0,
+    ).to(tl.float32)
+    values = values * signs / (norm + eps)
+    values = _fwht_local_stage(values, 1024, 1)
+    values = _fwht_local_stage(values, 1024, 2)
+    values = _fwht_local_stage(values, 1024, 4)
+    values = _fwht_local_stage(values, 1024, 8)
+    values = _fwht_local_stage(values, 1024, 16)
+    values = _fwht_local_stage(values, 1024, 32)
+    values = _fwht_local_stage(values, 1024, 64)
+    values = _fwht_local_stage(values, 1024, 128)
+    values = _fwht_local_stage(values, 1024, 256)
+    values = _fwht_local_stage(values, 1024, 512)
+    tl.store(work_ptr + row * dim + cols, values, mask=mask)
+
+
+@triton.jit
 def _codebook_rescale_kernel(
     rotated_ptr,
     norms_ptr,
@@ -868,24 +912,86 @@ def quantize_activations_with_triton(
 
     orbit_block_size = int(rotation.block_size)
     num_blocks = int(rotation.num_blocks)
-    fwht_stages = orbit_block_size.bit_length() - 1
-    _fused_rpbh_quantize_activation_kernel[(rows * num_blocks,)](
+    if orbit_block_size <= 1024:
+        fwht_stages = orbit_block_size.bit_length() - 1
+        _fused_rpbh_quantize_activation_kernel[(rows * num_blocks,)](
+            input_contiguous,
+            norms,
+            permutation,
+            signs,
+            centroids,
+            boundaries,
+            output,
+            rows=rows,
+            dim=dim,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            fwht_stages=fwht_stages,
+            levels=centroids.numel(),
+            eps=float(eps),
+            inv_sqrt_block=float(rotation.normalization),
+            num_warps=8 if orbit_block_size >= 512 else 4,
+        )
+        return output.reshape(original_shape)
+
+    element_block_size = 256
+    work = torch.empty(total, device=x.device, dtype=torch.float32)
+    chunks_per_orbit_block = orbit_block_size // 1024
+    _fused_rpbh_fwht_1024_chunk_kernel[
+        (rows * num_blocks * chunks_per_orbit_block,)
+    ](
         input_contiguous,
         norms,
         permutation,
         signs,
-        centroids,
-        boundaries,
-        output,
+        work,
         rows=rows,
         dim=dim,
         num_blocks=num_blocks,
         orbit_block_size=orbit_block_size,
-        fwht_stages=fwht_stages,
-        levels=centroids.numel(),
+        chunks_per_orbit_block=chunks_per_orbit_block,
         eps=float(eps),
+        num_warps=8,
+    )
+
+    stage_width = 1024
+    while stage_width * 2 < orbit_block_size:
+        total_quads = rows * num_blocks * (orbit_block_size // 4)
+        _fwht_two_stage_kernel[(triton.cdiv(total_quads, element_block_size),)](
+            work,
+            total_quads=total_quads,
+            in_features=dim,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+        stage_width *= 4
+    if stage_width < orbit_block_size:
+        total_pairs = rows * num_blocks * (orbit_block_size // 2)
+        _fwht_stage_kernel[(triton.cdiv(total_pairs, element_block_size),)](
+            work,
+            total_pairs=total_pairs,
+            in_features=dim,
+            num_blocks=num_blocks,
+            orbit_block_size=orbit_block_size,
+            stage_width=stage_width,
+            block_size=element_block_size,
+        )
+
+    _quantize_activation_work_rescale_kernel[
+        (triton.cdiv(total, element_block_size),)
+    ](
+        work,
+        norms,
+        centroids,
+        boundaries,
+        output,
+        total=total,
+        dim=dim,
+        levels=centroids.numel(),
         inv_sqrt_block=float(rotation.normalization),
-        num_warps=8 if orbit_block_size >= 512 else 4,
+        block_size=element_block_size,
     )
     return output.reshape(original_shape)
 

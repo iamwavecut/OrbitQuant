@@ -223,6 +223,7 @@ class OrbitQuantLinear(nn.Module):
         self.last_effective_runtime_mode: str | None = None
         self.last_activation_kernel_backend: str | None = None
         self.last_forward_device_type: str | None = None
+        self._derived_constants_valid = True
 
     @classmethod
     def from_linear(
@@ -340,6 +341,38 @@ class OrbitQuantLinear(nn.Module):
     def clear_dequantized_cache(self) -> None:
         self._dequantized_weight_cache = None
         self._dequantized_weight_cache_key = None
+
+    def _apply(self, fn, recurse: bool = True):
+        result = super()._apply(fn, recurse=recurse)
+        self._derived_constants_valid = False
+        self.clear_dequantized_cache()
+        return result
+
+    def _ensure_derived_constants(self, device: torch.device) -> None:
+        if self._derived_constants_valid and self._rotation_permutation.device == device:
+            return
+        constants = (
+            ("_rotation_permutation", self.rotation.permutation, torch.int64),
+            ("_rotation_signs", self.rotation.signs, torch.int8),
+            (
+                "_activation_codebook_centroids",
+                self.activation_codebook.centroids,
+                torch.float32,
+            ),
+            (
+                "_activation_codebook_boundaries",
+                self.activation_codebook.boundaries,
+                torch.float32,
+            ),
+            (
+                "_weight_codebook_centroids",
+                self.weight_codebook.centroids,
+                torch.float32,
+            ),
+        )
+        for name, source, dtype in constants:
+            setattr(self, name, source.to(device=device, dtype=dtype).clone())
+        self._derived_constants_valid = True
 
     def _constant_buffer(
         self,
@@ -518,6 +551,7 @@ class OrbitQuantLinear(nn.Module):
         return dequantized
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_derived_constants(x.device)
         runtime_mode = (
             self._resolve_auto_fused_runtime(x)
             if self.runtime_mode == "auto_fused"
