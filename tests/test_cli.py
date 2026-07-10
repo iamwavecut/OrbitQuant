@@ -14,6 +14,7 @@ from orbitquant.artifacts.checksums import write_sha256sums_from_manifest
 from orbitquant.cli.main import main
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.eval import get_native_suite
+from orbitquant.eval.prompts import default_prompt_payload, select_prompt_record
 from orbitquant.modeling import quantize_linear_modules
 
 
@@ -1566,10 +1567,10 @@ def test_cli_generate_dry_run_selects_prompt_from_artifact_pack(capsys, tmp_path
 
     output = json.loads(capsys.readouterr().out)
     assert output["prompt_record"]["id"] == "english-text-rendering"
-    assert (
-        output["pipeline_kwargs"]["prompt"]
-        == 'A clean street sign with the exact text "ORBIT QUANT"'
-    )
+    expected_prompt = select_prompt_record(
+        default_prompt_payload("flux2"), prompt_id="english-text-rendering"
+    )["prompt"]
+    assert output["pipeline_kwargs"]["prompt"] == expected_prompt
 
 
 def test_cli_generate_with_artifact_loads_component_and_records_metrics(
@@ -2614,10 +2615,9 @@ def test_cli_generate_pack_resume_existing_skips_completed_outputs(
             {
                 "suite": "flux2-native",
                 "model_id": "example/artifact-model",
-                "prompt": (
-                    "A red ceramic mug on a wooden desk, soft daylight, "
-                    "shallow depth of field"
-                ),
+                "prompt": select_prompt_record(
+                    default_prompt_payload("flux2"), prompt_id="simple-object"
+                )["prompt"],
                 "seed": 3,
                 "height": 1024,
                 "width": 1024,

@@ -10,7 +10,7 @@ from orbitquant.eval.prompts import (
 def test_default_prompt_payload_uses_image_visual_pack_for_image_policies():
     payload = default_prompt_payload("flux2")
 
-    assert payload["prompt_pack"] == "image_visual_v1"
+    assert payload["prompt_pack"] == "image_visual_v2"
     assert payload["media_type"] == "image"
     assert len(payload["prompts"]) >= 10
     assert {item["id"] for item in payload["prompts"]} >= {
@@ -25,6 +25,12 @@ def test_default_prompt_payload_uses_image_visual_pack_for_image_policies():
         "style-heavy",
         "occlusion-reflection",
     }
+    assert all(item.get("title") for item in payload["prompts"])
+    assert min(len(item["prompt"]) for item in payload["prompts"]) >= 350
+    prompts = "\n".join(item["prompt"] for item in payload["prompts"])
+    assert "КВАНТОВАЯ ОРБИТА" in prompts
+    assert "量子の軌道" in prompts
+    assert "量子轨道" in prompts
 
 
 def test_default_prompt_payload_uses_video_visual_pack_for_wan_policy():

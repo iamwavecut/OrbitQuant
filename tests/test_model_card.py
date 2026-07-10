@@ -192,7 +192,7 @@ def test_model_card_renders_imported_vbench_release_metrics():
 def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    assert 'pip install "orbitquant[hf]"' in card
+    assert 'pip install "orbitquant[hf,kernels]>=0.2.0"' in card
     assert "git+https://github.com/iamwavecut/OrbitQuant.git" not in card
     for forbidden in (
         "reports/",
@@ -204,6 +204,41 @@ def test_model_card_contains_install_command_not_workflow_log_language():
         "REMOTE_STAGE",
     ):
         assert forbidden not in card
+
+
+def test_model_card_lists_all_ten_complex_comparison_prompts_only_with_complete_proof():
+    manifest = _manifest_for_model("black-forest-labs/FLUX.1-schnell")
+    prompt_ids = [
+        "simple-object",
+        "two-object-composition",
+        "counting",
+        "color-binding",
+        "spatial-relationship",
+        "long-prompt",
+        "english-text-rendering",
+        "cyrillic-text-rendering",
+        "style-heavy",
+        "occlusion-reflection",
+    ]
+    benchmark_summary = {
+        "native_smoke": {
+            "paired_prompt_seed_count": 10,
+            "paired_prompt_seed_keys": [
+                ["flux1-schnell-native", "0", prompt_id] for prompt_id in prompt_ids
+            ],
+        }
+    }
+
+    card = render_model_card(manifest, benchmark_summary=benchmark_summary)
+
+    assert "## Comparison Prompt Set" in card
+    assert "`image_visual_v2`" in card
+    assert "01 Fine-detail astrolabe" in card
+    assert "10 Chinese typography, reflection, occlusion" in card
+    assert "КВАНТОВАЯ ОРБИТА; МОСКВА 2049; КВАНТОВАНИЕ" in card
+    assert "量子の軌道; 東京の未来" in card
+    assert "量子轨道; 未来之城" in card
+    assert "<summary>Exact comparison prompts</summary>" in card
 
 
 def test_model_card_embeds_only_promoted_comparison_matrix_assets():

@@ -143,7 +143,9 @@ Native artifact readiness is separate from full GenEval or VBench scoring.
 Those runs prove metric-table claims. The required artifact-readiness evidence
 is:
 
-- Native-resolution BF16-vs-OrbitQuant comparison matrix.
+- Ten-prompt native-resolution BF16-vs-OrbitQuant comparison matrix for image
+  artifacts, including dense composition, fine detail, artistic style, and
+  Latin, Russian, Japanese, and Chinese typography stress cases.
 - Same prompt and seed for BF16 and OrbitQuant.
 - Native settings from `src/orbitquant/eval/native_settings.py`.
 - Finite, nonblank output checks.

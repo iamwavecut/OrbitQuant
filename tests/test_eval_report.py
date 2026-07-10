@@ -86,6 +86,10 @@ def test_generate_native_eval_report_writes_markdown_and_tables(tmp_path):
     assert (report_dir / "tables" / "assets.csv").is_file()
     assert (report_dir / "tables" / "missing_required_metrics.csv").is_file()
     assert (report_dir / "assets" / "image_generation_comparison_matrix.webp").is_file()
+    with Image.open(
+        report_dir / "assets" / "image_generation_comparison_matrix.webp"
+    ) as matrix:
+        assert matrix.size == (2332, 1140)
 
     report = result.report_path.read_text()
     image_table = (report_dir / "tables" / "image_geneval.csv").read_text()

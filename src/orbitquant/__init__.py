@@ -18,7 +18,7 @@ from orbitquant.pipeline import (
 from orbitquant.quantizer import register_hf_quantizers
 from orbitquant.recipes import recipe
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 register_hf_quantizers()
 

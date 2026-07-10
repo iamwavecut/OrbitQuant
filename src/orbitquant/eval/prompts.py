@@ -8,62 +8,126 @@ from typing import Any
 IMAGE_VISUAL_PROMPTS = [
     {
         "id": "simple-object",
-        "category": "simple_object",
-        "prompt": "A red ceramic mug on a wooden desk, soft daylight, shallow depth of field",
+        "title": "01 Fine-detail astrolabe",
+        "category": "fine_detail",
+        "prompt": (
+            "A museum-grade macro photograph of a single ornate brass astronomical clock, "
+            "covered with interlocking gears, engraved constellations, enamel moon phases, "
+            "hair-thin hands, tiny screws, worn gilt edges, and dust caught in the mechanisms; "
+            "dramatic Rembrandt lighting, black velvet background, extreme material detail, "
+            "large-format photography, every cog mechanically coherent"
+        ),
     },
     {
         "id": "two-object-composition",
-        "category": "two_object_composition",
-        "prompt": "Two robots playing chess in a quiet library, one silver and one matte black",
+        "title": "02 Layered character composition",
+        "category": "layered_character_composition",
+        "prompt": (
+            "A lacquered white android and an elderly watchmaker facing each other across a "
+            "crowded Art Nouveau workshop, jointly repairing a mechanical hummingbird; the "
+            "android is on the left, the watchmaker on the right, the bird centered between "
+            "them, hundreds of tools and clock parts in the midground, rain and a tram visible "
+            "through the window, coherent mirror reflections, cinematic tungsten and cyan light, "
+            "intricate faces and hands, editorial realism"
+        ),
     },
     {
         "id": "counting",
-        "category": "counting",
-        "prompt": "Five glass marbles arranged in a straight line on white paper",
+        "title": "03 Exact counting and choreography",
+        "category": "counting_and_choreography",
+        "prompt": (
+            "Exactly seven masked dancers performing on seven separate illuminated platforms "
+            "inside a vast flooded opera house, no extra dancers; alternating crimson and ivory "
+            "costumes from left to right, each dancer in a distinct pose, balconies reflected in "
+            "the water, floating candles, volumetric stage haze, baroque theatrical photography, "
+            "sharp foreground and readable background architecture"
+        ),
     },
     {
         "id": "color-binding",
-        "category": "color_binding",
-        "prompt": "A blue cube beside a yellow sphere and a green pyramid on a gray table",
+        "title": "04 Dense color and object binding",
+        "category": "dense_color_binding",
+        "prompt": (
+            "An elaborate surreal fashion tableau with three models: the left model wears a "
+            "cobalt-blue coat and holds a yellow glass sphere, the center model wears a saffron "
+            "dress and holds a green ceramic pyramid, the right model wears an emerald suit and "
+            "holds a red velvet cube; rococo greenhouse, rare orchids, patterned tile floor, "
+            "prismatic sunlight, magazine-cover precision, preserve every color-object pairing"
+        ),
     },
     {
         "id": "spatial-relationship",
-        "category": "spatial_relationship",
-        "prompt": "A blue cube to the left of a yellow sphere, both centered in the frame",
+        "title": "05 Nested spatial relationships",
+        "category": "nested_spatial_relationships",
+        "prompt": (
+            "A meticulous cutaway diorama of a vertical city: a glass greenhouse sits directly "
+            "above a silver subway car, a red fox stands inside the greenhouse beneath a hanging "
+            "moon lamp, a violinist waits below the subway platform, and a yellow airship passes "
+            "behind the entire structure; isometric perspective, architectural-section drawing "
+            "mixed with photoreal materials, dozens of tiny rooms, stairs and people, clean depth"
+        ),
     },
     {
         "id": "long-prompt",
-        "category": "long_prompt",
+        "title": "06 Cinematic night-market panorama",
+        "category": "cinematic_panorama",
         "prompt": (
-            "A precise editorial photo of a compact robotics workbench with labeled tools, "
-            "a small oscilloscope, coiled cables, a half-assembled drone, and a warm desk lamp; "
-            "the scene should remain readable without clutter"
+            "A sweeping cinematic panorama of a rain-soaked floating night market at blue hour: "
+            "in the foreground a chef plates translucent dumplings under a red silk canopy; in "
+            "the midground children chase paper lanterns across narrow bridges while merchants "
+            "unload exotic fruit from wooden boats; in the background a terraced megacity rises "
+            "through mist beneath a storm, with hundreds of warm windows, wet reflections, steam, "
+            "umbrellas, ropes and signage; deep focus, anamorphic highlights, realistic faces, "
+            "coherent perspective, painterly color grading with documentary-level detail"
         ),
     },
     {
         "id": "english-text-rendering",
-        "category": "text_rendering",
-        "prompt": 'A clean street sign with the exact text "ORBIT QUANT"',
+        "title": "07 Editorial Latin typography",
+        "category": "latin_typography",
+        "prompt": (
+            "A sophisticated Swiss International Style exhibition poster photographed behind "
+            "slightly reflective museum glass, with the exact large headline \"ORBIT QUANT\" and "
+            "the exact smaller subtitle \"DATA WITHOUT CALIBRATION\"; strict modular grid, red, "
+            "black and white screenprint, tiny registration marks, embossed paper fibers, sharp "
+            "letterforms, dramatic gallery shadows, no other text"
+        ),
     },
     {
         "id": "cyrillic-text-rendering",
-        "category": "text_rendering",
-        "prompt": 'A handwritten note in Cyrillic that says "КВАНТОВАНИЕ"',
+        "title": "08 Russian Constructivist typography",
+        "category": "russian_typography",
+        "prompt": (
+            "A richly detailed Russian Constructivist science-fiction poster with the exact "
+            "Cyrillic headline \"КВАНТОВАЯ ОРБИТА\", the exact subtitle \"МОСКВА 2049\", and a "
+            "small exact stamp \"КВАНТОВАНИЕ\"; diagonal red and black geometry, cream paper, "
+            "cosmonaut portrait, orbital diagrams, halftone grain, folded corners, layered ink, "
+            "museum archival photograph, all letters crisp and correctly ordered"
+        ),
     },
     {
         "id": "style-heavy",
-        "category": "style",
+        "title": "09 Japanese typography and mixed style",
+        "category": "japanese_typography",
         "prompt": (
-            "A crowded train platform at sunset, documentary photo style, high dynamic range, "
-            "natural grain, realistic faces, detailed architecture"
+            "An elaborate Japanese art magazine cover combining Edo woodblock printing with a "
+            "futuristic Tokyo skyline, with the exact vertical title \"量子の軌道\" and the exact "
+            "subtitle \"東京の未来\"; giant indigo waves curl around glass towers, red-crowned "
+            "cranes cross a gold moon, tiny pedestrians and trains fill the lower streets, visible "
+            "washi fibers, layered spot colors, precise Japanese glyphs, balanced editorial layout"
         ),
     },
     {
         "id": "occlusion-reflection",
-        "category": "occlusion_reflection",
+        "title": "10 Chinese typography, reflection, occlusion",
+        "category": "chinese_typography_reflection_occlusion",
         "prompt": (
-            "A reflective chrome teapot partly hidden behind orange flowers, with the room "
-            "visible as a coherent reflection on the metal"
+            "A luxurious Chinese retro-futurist department-store window at night with the exact "
+            "gold title \"量子轨道\" and the exact red subtitle \"未来之城\"; a curved chrome "
+            "robot "
+            "is partly occluded by peonies and blue-and-white porcelain, the calligraphy and neon "
+            "street must appear coherently reflected across its body, multiple glass layers, silk "
+            "textures, passing bicycles, cinematic rain, fine product-photography detail"
         ),
     },
 ]
@@ -152,7 +216,7 @@ def default_prompt_payload(target_policy: str) -> dict[str, Any]:
             "prompts": deepcopy(VIDEO_VISUAL_PROMPTS),
         }
     return {
-        "prompt_pack": "image_visual_v1",
+        "prompt_pack": "image_visual_v2",
         "media_type": "image",
         "target_policy": target_policy,
         "prompts": deepcopy(IMAGE_VISUAL_PROMPTS),

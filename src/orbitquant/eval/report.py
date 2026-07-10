@@ -308,6 +308,8 @@ def _write_comparison_matrix(
     items: list[dict[str, Any]],
     *,
     title: str,
+    tile_size: tuple[int, int] = (208, 214),
+    lossless: bool = False,
 ) -> Path | None:
     if not items:
         return None
@@ -320,12 +322,11 @@ def _write_comparison_matrix(
         return None
 
     by_cell = {(item["row_key"], item["col_key"]): item for item in items}
-    row_label_width = 210
-    col_width = 220
+    row_label_width = 260 if tile_size[0] >= 512 else 210
+    col_width = tile_size[0] + 12
     title_height = 34
     header_height = 66
-    row_height = 230
-    tile_size = (col_width - 12, row_height - 16)
+    row_height = tile_size[1] + 16
     width = row_label_width + col_width * len(col_keys)
     height = title_height + header_height + row_height * len(row_keys)
     sheet = Image.new("RGB", (width, height), "white")
@@ -364,7 +365,7 @@ def _write_comparison_matrix(
             x = row_label_width + col_index * col_width + 6
             tile = _thumbnail(item["path"], size=tile_size)
             sheet.paste(tile, (x, y + 8))
-    sheet.save(path)
+    sheet.save(path, lossless=lossless, method=6)
     return path
 
 
@@ -408,6 +409,8 @@ def _write_report_comparison_matrices(
             output_path,
             items,
             title=f"OrbitQuant {media} generation comparison matrix",
+            tile_size=(1024, 1024) if media == "image" else (208, 214),
+            lossless=media == "image",
         )
         if result is not None:
             created[media] = result

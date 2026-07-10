@@ -143,7 +143,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     codebook_tensors = load_file(tmp_path / "orbitquant_codebooks.safetensors")
     rotation_tensors = load_file(tmp_path / "orbitquant_rotations.safetensors")
     assert any(name.endswith("packed_weight_indices") for name in tensors)
-    assert prompts["prompt_pack"] == "image_visual_v1"
+    assert prompts["prompt_pack"] == "image_visual_v2"
     assert prompts["media_type"] == "image"
     assert len(prompts["prompts"]) >= 10
     assert {item["id"] for item in prompts["prompts"]} >= {
@@ -159,6 +159,8 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
         "occlusion-reflection",
     }
     assert any("КВАНТОВАНИЕ" in item["prompt"] for item in prompts["prompts"])
+    assert any("量子の軌道" in item["prompt"] for item in prompts["prompts"])
+    assert any("量子轨道" in item["prompt"] for item in prompts["prompts"])
     assert benchmark_summary["status"] == "not_run"
     assert benchmark_summary["source_model_id"] == "example/model"
     assert benchmark_summary["codebook_version"] == 2

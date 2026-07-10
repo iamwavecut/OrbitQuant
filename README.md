@@ -188,8 +188,9 @@ save_quantized_pipeline_component(
 ```
 
 Published FLUX, Z-Image, and Wan repositories are compact Diffusers component
-artifacts. Their model cards contain the matching pipeline code and native
-generation settings.
+artifacts. Image model cards contain the matching pipeline code, native
+generation settings, and a ten-prompt full-resolution BF16-vs-OrbitQuant
+comparison matrix.
 
 Load a published component artifact together with its recorded source pipeline:
 

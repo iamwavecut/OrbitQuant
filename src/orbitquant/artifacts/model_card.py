@@ -4,6 +4,7 @@ from typing import Any
 
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.eval.native_settings import NativeSuite, list_native_suites
+from orbitquant.eval.prompts import default_prompt_payload
 
 _GENEVAL_METRICS = (
     "geneval_overall",
@@ -65,7 +66,7 @@ def _install_snippet() -> str:
     return "\n".join(
         [
             "```bash",
-            "pip install \"orbitquant[hf]\"",
+            "pip install \"orbitquant[hf,kernels]>=0.2.0\"",
             "```",
         ]
     )
@@ -343,6 +344,70 @@ def _native_validation_proof_section(
     return lines
 
 
+def _comparison_prompt_section(
+    source_model_id: str,
+    benchmark_summary: dict[str, Any] | None,
+) -> list[str]:
+    suite = _native_suite_for_source_model(source_model_id)
+    if suite is None or suite.frames is not None or not isinstance(benchmark_summary, dict):
+        return []
+    proof = benchmark_summary.get("native_smoke")
+    if not isinstance(proof, dict):
+        return []
+    prompt_payload = default_prompt_payload(
+        {
+            "flux2-native": "flux2",
+            "flux1-schnell-native": "flux",
+            "z-image-native": "z_image",
+        }[suite.name]
+    )
+    prompts = prompt_payload["prompts"]
+    if proof.get("paired_prompt_seed_count") != len(prompts):
+        return []
+    paired_keys = proof.get("paired_prompt_seed_keys")
+    if not isinstance(paired_keys, list):
+        return []
+    paired_prompt_ids = {
+        str(item[2])
+        for item in paired_keys
+        if isinstance(item, list) and len(item) == 3
+    }
+    if paired_prompt_ids != {str(prompt["id"]) for prompt in prompts}:
+        return []
+
+    required_text = {
+        "english-text-rendering": "ORBIT QUANT; DATA WITHOUT CALIBRATION",
+        "cyrillic-text-rendering": "КВАНТОВАЯ ОРБИТА; МОСКВА 2049; КВАНТОВАНИЕ",
+        "style-heavy": "量子の軌道; 東京の未来",
+        "occlusion-reflection": "量子轨道; 未来之城",
+    }
+    lines = [
+        "## Comparison Prompt Set",
+        "",
+        f"The matrix uses all ten prompts from `{prompt_payload['prompt_pack']}` at "
+        f"`{suite.width}x{suite.height}`. BF16 and OrbitQuant use the same seed for "
+        "each row.",
+        "",
+        "| # | Stress case | Exact required text |",
+        "| ---: | --- | --- |",
+    ]
+    for index, prompt in enumerate(prompts, start=1):
+        text = required_text.get(str(prompt["id"]), "-")
+        lines.append(f"| {index} | {prompt['title']} | {text} |")
+    lines.extend(
+        [
+            "",
+            "<details>",
+            "<summary>Exact comparison prompts</summary>",
+            "",
+        ]
+    )
+    for index, prompt in enumerate(prompts, start=1):
+        lines.append(f"{index}. **{prompt['title']}**: {prompt['prompt']}")
+    lines.extend(["", "</details>", ""])
+    return lines
+
+
 def render_model_card(
     manifest: OrbitQuantManifest,
     *,
@@ -356,6 +421,9 @@ def render_model_card(
         data["source_model_id"], benchmark_summary
     )
     native_validation_proof_lines = _native_validation_proof_section(benchmark_summary)
+    comparison_prompt_lines = _comparison_prompt_section(
+        data["source_model_id"], benchmark_summary
+    )
     adaln_group_size = int(data.get("adaln_group_size", 64))
     adaln_default_note = (
         "- AdaLN group-size note: paper default."
@@ -425,14 +493,19 @@ def render_model_card(
             _usage_snippet(data["source_model_id"], bits),
             "",
             "`runtime_mode=\"auto_fused\"` is the default optimized runtime. On "
-            "CUDA it tries the native packed low-bit matmul kernel first, then "
-            "Triton packed matmul. On MPS it requires the native Metal packed "
-            "matmul kernel. Use `runtime_mode=\"dequant_bf16\"` only as an "
-            "explicit compatibility/debug reference path.",
+            "CUDA, the `kernels` extra provides the Triton packed fallback; a "
+            "locally built native CUDA package is preferred automatically when "
+            "installed. On MPS, build and install the native Metal package from "
+            "the OrbitQuant source tree. See the [OrbitQuant runtime instructions]"
+            "(https://github.com/iamwavecut/OrbitQuant/blob/main/docs/"
+            "kernel-audit.md#local-native-package). Use "
+            "`runtime_mode=\"dequant_bf16\"` only as an explicit compatibility/"
+            "debug reference path.",
             "",
             *native_settings_lines,
             *validation_status_lines,
             *native_validation_proof_lines,
+            *comparison_prompt_lines,
             "## Quantization",
             "",
             f"- Method: `{data['quant_method']}`",
