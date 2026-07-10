@@ -1,133 +1,113 @@
-# OrbitQuant 0.1.0 Publication Checklist
+# OrbitQuant Publication Checklist
 
-This checklist records the public repository, GitHub release, and PyPI package
-publication step. PyPI `orbitquant==0.1.0` is published through Trusted
-Publishing, the GitHub repository is public, and GitHub Release `v0.1.0` is
-published.
+Use this checklist to publish a tagged Python release from `main`.
 
 ## Preconditions
 
 - `main` is clean and matches `origin/main`.
-- The release notes in `docs/release-0.1.0.md` match the package version.
-- The release gates in `docs/release-gates.md` are current.
-- The build artifacts are freshly produced from the release commit.
+- `pyproject.toml`, `src/orbitquant/__init__.py`, `uv.lock`, release notes, and
+  the PyPI workflow input use the same version.
+- [release-gates.md](release-gates.md) is satisfied.
 - PyPI Trusted Publishing is configured for
-  `iamwavecut/OrbitQuant/.github/workflows/publish-pypi.yml` with environment
+  `iamwavecut/OrbitQuant/.github/workflows/publish-pypi.yml` and environment
   `pypi`.
 
-## Preflight
+Set the release version once:
 
 ```bash
-git status --short --branch
+export VERSION="0.1.6"
+export TAG="v${VERSION}"
+```
+
+## Verify Source
+
+```bash
 git fetch origin main --tags
+test -z "$(git status --porcelain)"
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 test "$(python - <<'PY'
 import tomllib
-print(tomllib.loads(open("pyproject.toml", "rb").read().decode())["project"]["version"])
+with open('pyproject.toml', 'rb') as file:
+    print(tomllib.load(file)['project']['version'])
 PY
-)" = "0.1.0"
-test "$(git rev-list -n 1 v0.1.0)" = "ce5c232a8bf9b450c7d94eeae07445317c98b1d0"
-gh repo view iamwavecut/OrbitQuant --json nameWithOwner,visibility,isPrivate,defaultBranchRef
-python - <<'PY'
-import json
-import urllib.request
-
-with urllib.request.urlopen("https://pypi.org/pypi/orbitquant/json", timeout=20) as response:
-    payload = json.load(response)
-
-assert payload["info"]["version"] == "0.1.0"
-filenames = {file["filename"] for file in payload["releases"]["0.1.0"]}
-assert "orbitquant-0.1.0.tar.gz" in filenames
-assert "orbitquant-0.1.0-py3-none-any.whl" in filenames
-PY
+)" = "$VERSION"
+uv run pytest -q
+uv run ruff check .
+scripts/run_paper_methodology_checks.sh
+scripts/run_hf_compat_checks.sh --mode all
 ```
 
-## Verification
+## Build
 
 ```bash
 rm -rf dist
-uv run pytest -q
-uv run ruff check .
-uv run --with build python -m build
-uv run --with twine python -m twine check dist/*
-cd /tmp
-uv run --with /Users/Shared/src/github.com/iamwavecut/OrbitQuant/dist/orbitquant-0.1.0-py3-none-any.whl \
-  python - <<'PY'
-import json
-import subprocess
-import sys
+uv build
+uvx twine check dist/*
+```
 
+Install the wheel into a clean environment and verify the public defaults:
+
+```bash
+rm -rf /tmp/orbitquant-release-venv
+uv venv /tmp/orbitquant-release-venv
+uv pip install --python /tmp/orbitquant-release-venv/bin/python dist/*.whl
+/tmp/orbitquant-release-venv/bin/python - <<'PY'
 import orbitquant
 from orbitquant import OrbitQuantConfig
 
 config = OrbitQuantConfig()
-payload = json.loads(config.to_json_string())
-assert orbitquant.__version__ == "0.1.0"
-assert config.runtime_mode == "auto_fused"
-assert payload["runtime_mode"] == "auto_fused"
-assert subprocess.check_output(
-    [sys.executable, "-m", "orbitquant.cli.main", "--version"],
-    text=True,
-).strip() == "0.1.0"
+assert config.runtime_mode == 'auto_fused'
+assert config.codebook_version == 2
+print(orbitquant.__version__)
 PY
-```
-
-## Publish GitHub Release
-
-Repository visibility is already public. The `v0.1.0` tag points to the PyPI
-publication workflow head SHA so the GitHub source tag, PyPI package, and
-attached release assets refer to the same package source:
-
-```bash
-cd /Users/Shared/src/github.com/iamwavecut/OrbitQuant
-git tag -a v0.1.0 ce5c232a8bf9b450c7d94eeae07445317c98b1d0 -m "OrbitQuant 0.1.0"
-git push origin v0.1.0
-gh release create v0.1.0 \
-  /tmp/orbitquant-release-0.1.0/orbitquant-0.1.0.tar.gz \
-  /tmp/orbitquant-release-0.1.0/orbitquant-0.1.0-py3-none-any.whl \
-  --repo iamwavecut/OrbitQuant \
-  --verify-tag \
-  --title "OrbitQuant 0.1.0" \
-  --notes-file docs/release-0.1.0.md
 ```
 
 ## Publish PyPI
 
-PyPI `orbitquant==0.1.0` was published with GitHub Actions Trusted Publishing,
-not a local token:
+Always pass the version explicitly:
 
 ```bash
-cd /Users/Shared/src/github.com/iamwavecut/OrbitQuant
-gh workflow run publish-pypi.yml --repo iamwavecut/OrbitQuant --ref main -f version=0.1.0
-gh run watch 29015072821 --repo iamwavecut/OrbitQuant --exit-status
+gh workflow run publish-pypi.yml --ref main -f version="$VERSION"
+RUN_ID="$(gh run list --workflow publish-pypi.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run watch "$RUN_ID" --exit-status
 ```
 
-## Post-Publication Checks
+Verify the public package from a clean environment with the cache disabled:
 
 ```bash
-gh repo view iamwavecut/OrbitQuant --json visibility,isPrivate,url,defaultBranchRef
-test "$(gh repo view iamwavecut/OrbitQuant --json isPrivate --jq .isPrivate)" = "false"
-gh release view v0.1.0 --repo iamwavecut/OrbitQuant
-python - <<'PY'
-import json
-import urllib.request
+rm -rf /tmp/orbitquant-pypi-venv
+uv venv /tmp/orbitquant-pypi-venv
+UV_NO_CACHE=1 uv pip install \
+  --python /tmp/orbitquant-pypi-venv/bin/python \
+  --index-url https://pypi.org/simple \
+  "orbitquant==$VERSION"
+/tmp/orbitquant-pypi-venv/bin/python -c \
+  "import orbitquant; assert orbitquant.__version__ == '$VERSION'"
+```
 
-with urllib.request.urlopen("https://pypi.org/pypi/orbitquant/json", timeout=20) as response:
-    payload = json.load(response)
+## Publish GitHub Release
 
-assert payload["info"]["version"] == "0.1.0"
-filenames = {file["filename"] for file in payload["releases"]["0.1.0"]}
-assert "orbitquant-0.1.0.tar.gz" in filenames
-assert "orbitquant-0.1.0-py3-none-any.whl" in filenames
-PY
-python -m pip index versions orbitquant
-python -m pip install --upgrade orbitquant
-python - <<'PY'
-import orbitquant
-from orbitquant import OrbitQuantConfig
+Attach the exact files served by PyPI, not a second local build. Verify their
+SHA256 digests against the PyPI JSON response before upload.
 
-assert orbitquant.__version__ == "0.1.0"
-assert OrbitQuantConfig().runtime_mode == "auto_fused"
-print("orbitquant-publication-ok")
-PY
+```bash
+git tag -a "$TAG" -m "OrbitQuant $VERSION" HEAD
+git push origin "$TAG"
+gh release create "$TAG" /tmp/orbitquant-pypi-"$VERSION"/* \
+  --verify-tag \
+  --title "OrbitQuant $VERSION" \
+  --notes-file "docs/release-$VERSION.md"
+gh release view "$TAG"
+```
+
+## Final Audit
+
+```bash
+gh repo view iamwavecut/OrbitQuant --json visibility,url,defaultBranchRef
+uv run orbitquant audit-hf-artifacts \
+  --namespace WaveCut \
+  --policy-inventory-root reports/native/module-inventories \
+  --summary-only \
+  --fail-on-artifact-regression
+test -z "$(git status --porcelain)"
 ```
