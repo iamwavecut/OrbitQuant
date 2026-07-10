@@ -4,7 +4,12 @@ import torch
 
 from ._ops import ops
 
-__all__ = ["matmul_packed_weight"]
+__all__ = [
+    "matmul_packed_w4a4_int8",
+    "matmul_packed_weight",
+    "quantize_activations_int8",
+    "quantize_activations_packed_w4",
+]
 
 
 def matmul_packed_weight(
@@ -59,3 +64,188 @@ def matmul_packed_weight(
         block_k,
     )
     return out.reshape(*original_shape[:-1], out_features)
+
+
+def matmul_packed_w4a4_int8(
+    packed_activations: torch.Tensor,
+    packed_weight_indices: torch.Tensor,
+    token_norms: torch.Tensor,
+    row_norms: torch.Tensor,
+    activation_codes: torch.Tensor,
+    weight_codes: torch.Tensor,
+    *,
+    activation_scale: float,
+    weight_scale: float,
+    out_features: int,
+    in_features: int,
+    bias: torch.Tensor | None = None,
+    output_dtype: torch.dtype = torch.bfloat16,
+    tile_m: int = 128,
+    tile_n: int = 128,
+    async_packed: bool = False,
+    weight_k_major: bool = False,
+) -> torch.Tensor:
+    if not packed_activations.is_cuda:
+        raise RuntimeError("packed W4A4 INT8 matmul requires CUDA tensors")
+    if in_features <= 0 or in_features % 64 != 0:
+        raise ValueError("in_features must be positive and divisible by 64")
+    if packed_activations.shape[-1] != in_features // 2:
+        raise ValueError(
+            f"expected packed activation last dimension {in_features // 2}, "
+            f"got {packed_activations.shape[-1]}"
+        )
+    if output_dtype not in {torch.float16, torch.bfloat16}:
+        raise ValueError("output_dtype must be float16 or bfloat16")
+    if (tile_m, tile_n) not in {(128, 128), (256, 128), (128, 256)}:
+        raise ValueError("tile must be 128x128, 256x128, or 128x256")
+
+    original_shape = packed_activations.shape
+    activations = (
+        packed_activations.to(dtype=torch.uint8).contiguous().reshape(-1, in_features // 2)
+    )
+    weights = packed_weight_indices.to(device=activations.device, dtype=torch.uint8).contiguous()
+    norms = token_norms.to(device=activations.device, dtype=torch.float32).contiguous()
+    weight_norms = row_norms.to(device=activations.device, dtype=torch.bfloat16).contiguous()
+    activation_code_values = activation_codes.to(
+        device=activations.device, dtype=torch.int8
+    ).contiguous()
+    weight_code_values = weight_codes.to(device=activations.device, dtype=torch.int8).contiguous()
+    out = torch.empty(
+        (activations.shape[0], out_features),
+        device=activations.device,
+        dtype=output_dtype,
+    )
+    if bias is None:
+        bias_values = out
+        has_bias = False
+    else:
+        bias_values = bias.to(device=activations.device, dtype=output_dtype).contiguous()
+        has_bias = True
+
+    ops.matmul_packed_w4a4_int8(
+        out,
+        activations,
+        weights,
+        norms,
+        weight_norms,
+        activation_code_values,
+        weight_code_values,
+        bias_values,
+        has_bias,
+        activation_scale,
+        weight_scale,
+        out_features,
+        in_features,
+        tile_m,
+        tile_n,
+        async_packed,
+        weight_k_major,
+    )
+    return out.reshape(*original_shape[:-1], out_features)
+
+
+def quantize_activations_packed_w4(
+    x: torch.Tensor,
+    permutation: torch.Tensor,
+    signs: torch.Tensor,
+    boundaries: torch.Tensor,
+    *,
+    eps: float = 1e-12,
+    inv_sqrt_block: float,
+    threads: int = 256,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not x.is_cuda:
+        raise RuntimeError("native packed W4 activation quantization requires CUDA tensors")
+    if x.dtype not in {torch.float16, torch.bfloat16}:
+        raise ValueError("x must be float16 or bfloat16")
+    dim = x.shape[-1]
+    if dim not in {512, 1024, 2048, 4096, 8192, 16384}:
+        raise ValueError(
+            "native packed W4 activation quantization supports dimensions "
+            "512, 1024, 2048, 4096, 8192, and 16384"
+        )
+    if threads not in {128, 256, 512}:
+        raise ValueError("threads must be 128, 256, or 512")
+    if permutation.numel() != dim or signs.numel() != dim:
+        raise ValueError("permutation and signs must match the input dimension")
+    if boundaries.numel() != 15:
+        raise ValueError("boundaries must contain 15 values")
+
+    original_shape = x.shape
+    values = x.contiguous().reshape(-1, dim)
+    packed = torch.empty((values.shape[0], dim // 2), device=x.device, dtype=torch.uint8)
+    norms = torch.empty(values.shape[0], device=x.device, dtype=torch.float32)
+    permutation_values = permutation.to(device=x.device, dtype=torch.int64).contiguous()
+    sign_values = signs.to(device=x.device, dtype=torch.int8).contiguous()
+    boundary_values = boundaries.to(device=x.device, dtype=torch.float32).contiguous()
+    ops.quantize_activations_packed_w4(
+        packed,
+        norms,
+        values,
+        permutation_values,
+        sign_values,
+        boundary_values,
+        eps,
+        inv_sqrt_block,
+        threads,
+    )
+    return (
+        packed.reshape(*original_shape[:-1], dim // 2),
+        norms.reshape(original_shape[:-1]),
+    )
+
+
+def quantize_activations_int8(
+    x: torch.Tensor,
+    permutation: torch.Tensor,
+    signs: torch.Tensor,
+    boundaries: torch.Tensor,
+    codes: torch.Tensor,
+    *,
+    eps: float = 1e-12,
+    inv_sqrt_block: float,
+    threads: int = 256,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not x.is_cuda:
+        raise RuntimeError("native INT8 activation quantization requires CUDA tensors")
+    if x.dtype not in {torch.float16, torch.bfloat16}:
+        raise ValueError("x must be float16 or bfloat16")
+    dim = x.shape[-1]
+    if dim not in {512, 1024, 2048, 4096, 8192, 12288, 16384}:
+        raise ValueError(
+            "native INT8 activation quantization supports dimensions "
+            "512, 1024, 2048, 4096, 8192, 12288, and 16384"
+        )
+    if threads not in {128, 256, 512}:
+        raise ValueError("threads must be 128, 256, or 512")
+    if permutation.numel() != dim or signs.numel() != dim:
+        raise ValueError("permutation and signs must match the input dimension")
+    if boundaries.numel() != 15:
+        raise ValueError("boundaries must contain 15 values")
+    if codes.numel() != 16:
+        raise ValueError("codes must contain 16 values")
+
+    original_shape = x.shape
+    values = x.contiguous().reshape(-1, dim)
+    quantized = torch.empty(values.shape, device=x.device, dtype=torch.int8)
+    norms = torch.empty(values.shape[0], device=x.device, dtype=torch.float32)
+    permutation_values = permutation.to(device=x.device, dtype=torch.int64).contiguous()
+    sign_values = signs.to(device=x.device, dtype=torch.int8).contiguous()
+    boundary_values = boundaries.to(device=x.device, dtype=torch.float32).contiguous()
+    code_values = codes.to(device=x.device, dtype=torch.int8).contiguous()
+    ops.quantize_activations_int8(
+        quantized,
+        norms,
+        values,
+        permutation_values,
+        sign_values,
+        boundary_values,
+        code_values,
+        eps,
+        inv_sqrt_block,
+        threads,
+    )
+    return (
+        quantized.reshape(*original_shape[:-1], dim),
+        norms.reshape(original_shape[:-1]),
+    )

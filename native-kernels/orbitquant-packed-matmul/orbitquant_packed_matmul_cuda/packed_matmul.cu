@@ -230,6 +230,471 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
   }
 }
 
+__device__ __forceinline__ void copy_async_16(
+    void *__restrict__ destination,
+    void const *__restrict__ source) {
+#if __CUDA_ARCH__ >= 800
+  const uint32_t shared_address =
+      static_cast<uint32_t>(__cvta_generic_to_shared(destination));
+  asm volatile(
+      "cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(shared_address),
+      "l"(source));
+#else
+  *reinterpret_cast<uint4 *>(destination) =
+      *reinterpret_cast<uint4 const *>(source);
+#endif
+}
+
+__device__ __forceinline__ void commit_async_copies() {
+#if __CUDA_ARCH__ >= 800
+  asm volatile("cp.async.commit_group;\n" : :);
+#endif
+}
+
+__device__ __forceinline__ void wait_for_async_copies() {
+#if __CUDA_ARCH__ >= 800
+  asm volatile("cp.async.wait_group 0;\n" : :);
+#endif
+}
+
+__device__ __forceinline__ uint8_t orbitquant_bucketize_w4(
+    float value,
+    float const *__restrict__ boundaries) {
+  int index = value > boundaries[7] ? 8 : 0;
+  index += value > boundaries[index + 3] ? 4 : 0;
+  index += value > boundaries[index + 1] ? 2 : 0;
+  index += value > boundaries[index] ? 1 : 0;
+  return static_cast<uint8_t>(index);
+}
+
+template <typename storage_t, int Dim>
+__global__ void orbitquant_rpbh_quantize_pack_w4_kernel(
+    uint8_t *__restrict__ packed_out,
+    float *__restrict__ norms_out,
+    storage_t const *__restrict__ x,
+    int64_t const *__restrict__ permutation,
+    int8_t const *__restrict__ signs,
+    float const *__restrict__ boundaries,
+    float eps,
+    float inv_sqrt_block,
+    int64_t rows) {
+  extern __shared__ __align__(16) float shared[];
+  float *values = shared;
+  float *reduction = values + Dim;
+  float *boundary_table = reduction + blockDim.x;
+  const int tid = threadIdx.x;
+  const int64_t row = blockIdx.x;
+
+  float squared_sum = 0.0f;
+  for (int col = tid; col < Dim; col += blockDim.x) {
+    const int64_t source_col = permutation[col];
+    const float value =
+        static_cast<float>(x[row * Dim + source_col]) *
+        static_cast<float>(signs[col]);
+    values[col] = value;
+    squared_sum = fmaf(value, value, squared_sum);
+  }
+  reduction[tid] = squared_sum;
+  if (tid < 15) {
+    boundary_table[tid] = boundaries[tid];
+  }
+  __syncthreads();
+
+  for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if (tid < stride) {
+      reduction[tid] += reduction[tid + stride];
+    }
+    __syncthreads();
+  }
+  const float norm = sqrtf(reduction[0]);
+  if (tid == 0) {
+    norms_out[row] = norm;
+  }
+  const float inv_norm = 1.0f / (norm + eps);
+  for (int col = tid; col < Dim; col += blockDim.x) {
+    values[col] *= inv_norm;
+  }
+  __syncthreads();
+
+#pragma unroll
+  for (int butterfly_width = 1; butterfly_width < Dim;
+       butterfly_width <<= 1) {
+    constexpr int butterflies = Dim / 2;
+    for (int butterfly = tid; butterfly < butterflies;
+         butterfly += blockDim.x) {
+      const int group = butterfly / butterfly_width;
+      const int offset = butterfly - group * butterfly_width;
+      const int left = group * (butterfly_width * 2) + offset;
+      const int right = left + butterfly_width;
+      const float lhs = values[left];
+      const float rhs = values[right];
+      values[left] = lhs + rhs;
+      values[right] = lhs - rhs;
+    }
+    __syncthreads();
+  }
+
+  constexpr int packed_dim = Dim / 2;
+  for (int byte_col = tid; byte_col < packed_dim; byte_col += blockDim.x) {
+    const float low_value = values[byte_col * 2] * inv_sqrt_block;
+    const float high_value = values[byte_col * 2 + 1] * inv_sqrt_block;
+    const uint8_t low = orbitquant_bucketize_w4(low_value, boundary_table);
+    const uint8_t high = orbitquant_bucketize_w4(high_value, boundary_table);
+    packed_out[row * packed_dim + byte_col] =
+        static_cast<uint8_t>(low | (high << 4));
+  }
+}
+
+template <typename storage_t, int Dim, int OrbitBlock>
+__global__ void orbitquant_rpbh_quantize_int8_kernel(
+    int8_t *__restrict__ int8_out,
+    float *__restrict__ norms_out,
+    storage_t const *__restrict__ x,
+    int64_t const *__restrict__ permutation,
+    int8_t const *__restrict__ signs,
+    float const *__restrict__ boundaries,
+    int8_t const *__restrict__ codes,
+    float eps,
+    float inv_sqrt_block,
+    int64_t rows) {
+  static_assert(Dim % OrbitBlock == 0);
+  extern __shared__ __align__(16) float shared[];
+  float *values = shared;
+  float *reduction = values + Dim;
+  float *boundary_table = reduction + blockDim.x;
+  int8_t *code_table = reinterpret_cast<int8_t *>(boundary_table + 15);
+  const int tid = threadIdx.x;
+  const int64_t row = blockIdx.x;
+
+  float squared_sum = 0.0f;
+  for (int col = tid; col < Dim; col += blockDim.x) {
+    const int64_t source_col = permutation[col];
+    const float value =
+        static_cast<float>(x[row * Dim + source_col]) *
+        static_cast<float>(signs[col]);
+    values[col] = value;
+    squared_sum = fmaf(value, value, squared_sum);
+  }
+  reduction[tid] = squared_sum;
+  if (tid < 15) {
+    boundary_table[tid] = boundaries[tid];
+  }
+  if (tid < 16) {
+    code_table[tid] = codes[tid];
+  }
+  __syncthreads();
+
+  for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if (tid < stride) {
+      reduction[tid] += reduction[tid + stride];
+    }
+    __syncthreads();
+  }
+  const float norm = sqrtf(reduction[0]);
+  if (tid == 0) {
+    norms_out[row] = norm;
+  }
+  const float inv_norm = 1.0f / (norm + eps);
+  for (int col = tid; col < Dim; col += blockDim.x) {
+    values[col] *= inv_norm;
+  }
+  __syncthreads();
+
+#pragma unroll
+  for (int butterfly_width = 1; butterfly_width < OrbitBlock;
+       butterfly_width <<= 1) {
+    constexpr int butterflies = Dim / 2;
+    constexpr int butterflies_per_block = OrbitBlock / 2;
+    for (int butterfly = tid; butterfly < butterflies;
+         butterfly += blockDim.x) {
+      const int orbit_block = butterfly / butterflies_per_block;
+      const int local_butterfly =
+          butterfly - orbit_block * butterflies_per_block;
+      const int group = local_butterfly / butterfly_width;
+      const int offset = local_butterfly - group * butterfly_width;
+      const int left = orbit_block * OrbitBlock +
+                       group * (butterfly_width * 2) + offset;
+      const int right = left + butterfly_width;
+      const float lhs = values[left];
+      const float rhs = values[right];
+      values[left] = lhs + rhs;
+      values[right] = lhs - rhs;
+    }
+    __syncthreads();
+  }
+
+  for (int col = tid; col < Dim; col += blockDim.x) {
+    const float value = values[col] * inv_sqrt_block;
+    const uint8_t index = orbitquant_bucketize_w4(value, boundary_table);
+    int8_out[row * Dim + col] = code_table[index];
+  }
+}
+
+template <
+    typename storage_t,
+    int TileM,
+    int TileN,
+    bool AsyncPacked,
+    bool KMajorWeight>
+__global__ void orbitquant_packed_w4a4_int8_mma_kernel(
+    storage_t *__restrict__ out,
+    uint8_t const *__restrict__ packed_activations,
+    uint8_t const *__restrict__ packed_weight_indices,
+    float const *__restrict__ token_norms,
+    c10::BFloat16 const *__restrict__ row_norms,
+    int8_t const *__restrict__ activation_codes,
+    int8_t const *__restrict__ weight_codes,
+    storage_t const *__restrict__ bias,
+    bool has_bias,
+    float activation_scale,
+    float weight_scale,
+    int64_t rows,
+    int64_t out_features,
+    int64_t in_features) {
+  constexpr int tile_k = 64;
+  constexpr int packed_tile_k = tile_k / 2;
+  constexpr int padded_k = 80;
+  constexpr int warp_tile = 16;
+  constexpr int warp_rows = TileM / warp_tile;
+  constexpr int col_tiles_per_warp = 8;
+  constexpr int warp_col_groups = TileN / (col_tiles_per_warp * warp_tile);
+  constexpr int warps_per_block = warp_rows * warp_col_groups;
+  static_assert(TileM == 128 || TileM == 256);
+  static_assert(TileN == 128 || TileN == 256);
+  static_assert(warps_per_block == 8 || warps_per_block == 16);
+
+  extern __shared__ __align__(16) uint8_t shared_memory[];
+  int8_t *activation_tile = reinterpret_cast<int8_t *>(shared_memory);
+  int8_t *weight_tile = activation_tile + TileM * padded_k;
+  int32_t *accumulator_tile = reinterpret_cast<int32_t *>(
+      weight_tile + TileN * padded_k);
+  int8_t *code_tables = reinterpret_cast<int8_t *>(
+      accumulator_tile + warps_per_block * warp_tile * warp_tile);
+  uint8_t *packed_activation_stage =
+      reinterpret_cast<uint8_t *>(code_tables + 32);
+  uint8_t *packed_weight_stage =
+      packed_activation_stage + (AsyncPacked ? TileM * packed_tile_k : 0);
+
+  const int warp_id = threadIdx.x / warpSize;
+  const int lane = threadIdx.x & (warpSize - 1);
+  const int warp_row = warp_id % warp_rows;
+  const int warp_col_group = warp_id / warp_rows;
+  const int64_t block_row = int64_t(blockIdx.y) * TileM;
+  const int64_t block_col = int64_t(blockIdx.x) * TileN;
+  const int64_t packed_row_stride = in_features / 2;
+
+  if (threadIdx.x < 16) {
+    code_tables[threadIdx.x] = activation_codes[threadIdx.x];
+    code_tables[16 + threadIdx.x] = weight_codes[threadIdx.x];
+  }
+
+  wmma::fragment<wmma::accumulator, warp_tile, warp_tile, warp_tile, int>
+      accumulators[col_tiles_per_warp];
+#pragma unroll
+  for (int col_tile = 0; col_tile < col_tiles_per_warp; ++col_tile) {
+    wmma::fill_fragment(accumulators[col_tile], 0);
+  }
+  __syncthreads();
+
+  const bool use_async =
+      AsyncPacked && block_row + TileM <= rows &&
+      block_col + TileN <= out_features && out_features % 16 == 0;
+  if constexpr (AsyncPacked) {
+    if (use_async) {
+      constexpr int activation_vectors = TileM * packed_tile_k / 16;
+      for (int vector = threadIdx.x; vector < activation_vectors;
+           vector += blockDim.x) {
+        const int byte_offset = vector * 16;
+        const int local_row = byte_offset / packed_tile_k;
+        const int local_k_byte = byte_offset - local_row * packed_tile_k;
+        copy_async_16(
+            packed_activation_stage + byte_offset,
+            packed_activations +
+                (block_row + local_row) * packed_row_stride + local_k_byte);
+      }
+      constexpr int weight_vectors = packed_tile_k * TileN / 16;
+      for (int vector = threadIdx.x; vector < weight_vectors;
+           vector += blockDim.x) {
+        const int byte_offset = vector * 16;
+        if constexpr (KMajorWeight) {
+          const int local_k_byte = byte_offset / TileN;
+          const int local_col = byte_offset - local_k_byte * TileN;
+          copy_async_16(
+              packed_weight_stage + byte_offset,
+              packed_weight_indices + local_k_byte * out_features + block_col +
+                  local_col);
+        } else {
+          const int local_col = byte_offset / packed_tile_k;
+          const int local_k_byte = byte_offset - local_col * packed_tile_k;
+          copy_async_16(
+              packed_weight_stage + byte_offset,
+              packed_weight_indices +
+                  (block_col + local_col) * packed_row_stride + local_k_byte);
+        }
+      }
+      commit_async_copies();
+      wait_for_async_copies();
+      __syncthreads();
+    }
+  }
+
+  for (int64_t k_start = 0; k_start < in_features; k_start += tile_k) {
+    constexpr int activation_tasks = TileM * packed_tile_k;
+    for (int task = threadIdx.x; task < activation_tasks; task += blockDim.x) {
+      const int local_row = task / packed_tile_k;
+      const int local_k_byte = task - local_row * packed_tile_k;
+      const int64_t global_row = block_row + local_row;
+      uint8_t packed = 0;
+      if (use_async) {
+        packed = packed_activation_stage[task];
+      } else if (global_row < rows) {
+        packed = packed_activations[
+            global_row * packed_row_stride + k_start / 2 + local_k_byte];
+      }
+      const int destination = local_row * padded_k + local_k_byte * 2;
+      activation_tile[destination] = code_tables[packed & 15u];
+      activation_tile[destination + 1] = code_tables[packed >> 4];
+    }
+
+    constexpr int weight_tasks = packed_tile_k * TileN;
+    for (int task = threadIdx.x; task < weight_tasks; task += blockDim.x) {
+      const int local_k_byte = task / TileN;
+      const int local_col = task - local_k_byte * TileN;
+      const int64_t global_col = block_col + local_col;
+      uint8_t packed = 0;
+      if (use_async) {
+        if constexpr (KMajorWeight) {
+          packed = packed_weight_stage[task];
+        } else {
+          packed = packed_weight_stage[local_col * packed_tile_k + local_k_byte];
+        }
+      } else if (global_col < out_features) {
+        if constexpr (KMajorWeight) {
+          packed = packed_weight_indices[
+              (k_start / 2 + local_k_byte) * out_features + global_col];
+        } else {
+          packed = packed_weight_indices[
+              global_col * packed_row_stride + k_start / 2 + local_k_byte];
+        }
+      }
+      const int destination = local_col * padded_k + local_k_byte * 2;
+      weight_tile[destination] = code_tables[16 + (packed & 15u)];
+      weight_tile[destination + 1] = code_tables[16 + (packed >> 4)];
+    }
+    __syncthreads();
+
+    const bool has_next_tile = k_start + tile_k < in_features;
+    if constexpr (AsyncPacked) {
+      if (use_async && has_next_tile) {
+        const int64_t next_k_byte = (k_start + tile_k) / 2;
+        constexpr int activation_vectors = TileM * packed_tile_k / 16;
+        for (int vector = threadIdx.x; vector < activation_vectors;
+             vector += blockDim.x) {
+          const int byte_offset = vector * 16;
+          const int local_row = byte_offset / packed_tile_k;
+          const int local_k_byte = byte_offset - local_row * packed_tile_k;
+          copy_async_16(
+              packed_activation_stage + byte_offset,
+              packed_activations +
+                  (block_row + local_row) * packed_row_stride + next_k_byte +
+                  local_k_byte);
+        }
+        constexpr int weight_vectors = packed_tile_k * TileN / 16;
+        for (int vector = threadIdx.x; vector < weight_vectors;
+             vector += blockDim.x) {
+          const int byte_offset = vector * 16;
+          if constexpr (KMajorWeight) {
+            const int local_k_byte = byte_offset / TileN;
+            const int local_col = byte_offset - local_k_byte * TileN;
+            copy_async_16(
+                packed_weight_stage + byte_offset,
+                packed_weight_indices +
+                    (next_k_byte + local_k_byte) * out_features + block_col +
+                    local_col);
+          } else {
+            const int local_col = byte_offset / packed_tile_k;
+            const int local_k_byte = byte_offset - local_col * packed_tile_k;
+            copy_async_16(
+                packed_weight_stage + byte_offset,
+                packed_weight_indices +
+                    (block_col + local_col) * packed_row_stride + next_k_byte +
+                    local_k_byte);
+          }
+        }
+        commit_async_copies();
+      }
+    }
+
+#pragma unroll
+    for (int local_k = 0; local_k < tile_k; local_k += warp_tile) {
+      wmma::fragment<wmma::matrix_a, warp_tile, warp_tile, warp_tile, signed char,
+                     wmma::row_major>
+          lhs;
+      wmma::load_matrix_sync(
+          lhs,
+          reinterpret_cast<signed char const *>(
+              activation_tile + warp_row * warp_tile * padded_k + local_k),
+          padded_k);
+#pragma unroll
+      for (int col_tile = 0; col_tile < col_tiles_per_warp; ++col_tile) {
+        wmma::fragment<wmma::matrix_b, warp_tile, warp_tile, warp_tile, signed char,
+                       wmma::col_major>
+            rhs;
+        wmma::load_matrix_sync(
+            rhs,
+            reinterpret_cast<signed char const *>(
+                weight_tile +
+                (warp_col_group * col_tiles_per_warp + col_tile) * warp_tile *
+                    padded_k +
+                local_k),
+            padded_k);
+        wmma::mma_sync(
+            accumulators[col_tile], lhs, rhs, accumulators[col_tile]);
+      }
+    }
+    __syncthreads();
+    if constexpr (AsyncPacked) {
+      if (use_async && has_next_tile) {
+        wait_for_async_copies();
+        __syncthreads();
+      }
+    }
+  }
+
+  int32_t *warp_accumulator =
+      accumulator_tile + warp_id * warp_tile * warp_tile;
+  const float surrogate_scale = activation_scale * weight_scale;
+#pragma unroll
+  for (int col_tile = 0; col_tile < col_tiles_per_warp; ++col_tile) {
+    wmma::store_matrix_sync(
+        warp_accumulator,
+        accumulators[col_tile],
+        warp_tile,
+        wmma::mem_row_major);
+    __syncwarp();
+    for (int offset = lane; offset < warp_tile * warp_tile; offset += warpSize) {
+      const int local_row = offset / warp_tile;
+      const int local_col = offset - local_row * warp_tile;
+      const int64_t global_row = block_row + warp_row * warp_tile + local_row;
+      const int64_t global_col =
+          block_col +
+          (warp_col_group * col_tiles_per_warp + col_tile) * warp_tile +
+          local_col;
+      if (global_row < rows && global_col < out_features) {
+        float value = static_cast<float>(warp_accumulator[offset]);
+        value *= token_norms[global_row] *
+            static_cast<float>(row_norms[global_col]) * surrogate_scale;
+        if (has_bias) {
+          value += static_cast<float>(bias[global_col]);
+        }
+        out[global_row * out_features + global_col] =
+            static_cast<storage_t>(value);
+      }
+    }
+    __syncwarp();
+  }
+}
+
 template <int Bits>
 __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
     c10::BFloat16 *__restrict__ out,
@@ -843,5 +1308,435 @@ void matmul_packed_weight(
             bits,
             tile_k);
       });
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void matmul_packed_w4a4_int8(
+    torch::Tensor &out,
+    torch::Tensor const &packed_activations,
+    torch::Tensor const &packed_weight_indices,
+    torch::Tensor const &token_norms,
+    torch::Tensor const &row_norms,
+    torch::Tensor const &activation_codes,
+    torch::Tensor const &weight_codes,
+    torch::Tensor const &bias,
+    bool has_bias,
+    double activation_scale,
+    double weight_scale,
+    int64_t out_features,
+    int64_t in_features,
+    int64_t tile_m,
+    int64_t tile_n,
+    bool async_packed,
+    bool weight_k_major) {
+  TORCH_CHECK(out.device().is_cuda(), "out must be a CUDA tensor");
+  TORCH_CHECK(
+      packed_activations.device().is_cuda(),
+      "packed activations must be a CUDA tensor");
+  TORCH_CHECK(
+      packed_weight_indices.device().is_cuda(),
+      "packed weights must be a CUDA tensor");
+  TORCH_CHECK(token_norms.device().is_cuda(), "token norms must be a CUDA tensor");
+  TORCH_CHECK(row_norms.device().is_cuda(), "row norms must be a CUDA tensor");
+  TORCH_CHECK(
+      activation_codes.device().is_cuda(),
+      "activation surrogate codes must be a CUDA tensor");
+  TORCH_CHECK(
+      weight_codes.device().is_cuda(),
+      "weight surrogate codes must be a CUDA tensor");
+  TORCH_CHECK(out.is_contiguous(), "out must be contiguous");
+  TORCH_CHECK(
+      packed_activations.is_contiguous(), "packed activations must be contiguous");
+  TORCH_CHECK(
+      packed_weight_indices.is_contiguous(), "packed weights must be contiguous");
+  TORCH_CHECK(token_norms.is_contiguous(), "token norms must be contiguous");
+  TORCH_CHECK(row_norms.is_contiguous(), "row norms must be contiguous");
+  TORCH_CHECK(
+      activation_codes.is_contiguous(), "activation surrogate codes must be contiguous");
+  TORCH_CHECK(
+      weight_codes.is_contiguous(), "weight surrogate codes must be contiguous");
+  TORCH_CHECK(
+      packed_activations.scalar_type() == torch::kUInt8,
+      "packed activations must be uint8");
+  TORCH_CHECK(
+      packed_weight_indices.scalar_type() == torch::kUInt8,
+      "packed weights must be uint8");
+  TORCH_CHECK(token_norms.scalar_type() == torch::kFloat, "token norms must be float32");
+  TORCH_CHECK(row_norms.scalar_type() == torch::kBFloat16, "row norms must be bfloat16");
+  TORCH_CHECK(
+      activation_codes.scalar_type() == torch::kChar,
+      "activation surrogate codes must be int8");
+  TORCH_CHECK(
+      weight_codes.scalar_type() == torch::kChar,
+      "weight surrogate codes must be int8");
+  TORCH_CHECK(
+      out.scalar_type() == torch::kBFloat16 || out.scalar_type() == torch::kHalf,
+      "packed W4A4 INT8 output must be bfloat16 or float16");
+  TORCH_CHECK(packed_activations.dim() == 2, "packed activations must be rank 2");
+  TORCH_CHECK(out.dim() == 2, "out must be rank 2");
+  TORCH_CHECK(
+      in_features > 0 && in_features % 64 == 0,
+      "in_features must be positive and divisible by 64");
+  TORCH_CHECK(out_features >= 0, "out_features must be non-negative");
+  TORCH_CHECK(
+      (tile_m == 128 && tile_n == 128) ||
+          (tile_m == 256 && tile_n == 128) ||
+          (tile_m == 128 && tile_n == 256),
+      "packed W4A4 INT8 tile must be 128x128, 256x128, or 128x256");
+  TORCH_CHECK(
+      packed_activations.size(1) == in_features / 2,
+      "packed activations have an unexpected input dimension");
+  const int64_t rows = packed_activations.size(0);
+  TORCH_CHECK(out.size(0) == rows, "out has an unexpected row count");
+  TORCH_CHECK(out.size(1) == out_features, "out has an unexpected output dimension");
+  TORCH_CHECK(token_norms.numel() == rows, "token norms must match rows");
+  TORCH_CHECK(row_norms.numel() == out_features, "row norms must match out_features");
+  TORCH_CHECK(activation_codes.numel() == 16, "activation codes must contain 16 values");
+  TORCH_CHECK(weight_codes.numel() == 16, "weight codes must contain 16 values");
+  TORCH_CHECK(
+      packed_weight_indices.numel() == out_features * (in_features / 2),
+      "K-major packed weights have an unexpected size");
+  if (has_bias) {
+    TORCH_CHECK(bias.device().is_cuda(), "bias must be a CUDA tensor");
+    TORCH_CHECK(bias.is_contiguous(), "bias must be contiguous");
+    TORCH_CHECK(bias.scalar_type() == out.scalar_type(), "bias dtype must match out");
+    TORCH_CHECK(bias.numel() == out_features, "bias must match out_features");
+  }
+  if (rows == 0 || out_features == 0) {
+    return;
+  }
+
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(packed_activations));
+  const cudaDeviceProp *properties = at::cuda::getCurrentDeviceProperties();
+  TORCH_CHECK(
+      properties->major > 7 || (properties->major == 7 && properties->minor >= 5),
+      "packed W4A4 INT8 Tensor Core matmul requires compute capability 7.5+");
+  const int warp_count = static_cast<int>((tile_m / 16) * (tile_n / 128));
+  const dim3 block(warp_count * 32);
+  const dim3 grid(
+      (out_features + tile_n - 1) / tile_n,
+      (rows + tile_m - 1) / tile_m);
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  const int shared_bytes = static_cast<int>(
+      tile_m * 80 + tile_n * 80 + warp_count * 16 * 16 * sizeof(int32_t) + 32 +
+      (async_packed ? (tile_m + tile_n) * 32 : 0));
+  TORCH_CHECK(
+      shared_bytes <= properties->sharedMemPerBlockOptin,
+      "packed W4A4 INT8 tile requires ",
+      shared_bytes,
+      " bytes of shared memory, but the device supports ",
+      properties->sharedMemPerBlockOptin);
+
+#define ORBITQUANT_LAUNCH_PACKED_W4A4_INT8(                                      \
+    STORAGE_TYPE, TILE_M, TILE_N, ASYNC_PACKED, K_MAJOR_WEIGHT)                  \
+  if (shared_bytes > properties->sharedMemPerBlock) {                            \
+    C10_CUDA_CHECK(cudaFuncSetAttribute(                                         \
+        orbitquant_packed_w4a4_int8_mma_kernel<                                  \
+            STORAGE_TYPE, TILE_M, TILE_N, ASYNC_PACKED, K_MAJOR_WEIGHT>,         \
+        cudaFuncAttributeMaxDynamicSharedMemorySize,                             \
+        shared_bytes));                                                          \
+  }                                                                              \
+  orbitquant_packed_w4a4_int8_mma_kernel<                                        \
+      STORAGE_TYPE, TILE_M, TILE_N, ASYNC_PACKED, K_MAJOR_WEIGHT>                \
+      <<<grid, block, shared_bytes, stream>>>(                                    \
+      reinterpret_cast<STORAGE_TYPE *>(out.data_ptr()),                          \
+      packed_activations.data_ptr<uint8_t>(),                                    \
+      packed_weight_indices.data_ptr<uint8_t>(),                                 \
+      token_norms.data_ptr<float>(),                                             \
+      row_norms.data_ptr<c10::BFloat16>(),                                       \
+      activation_codes.data_ptr<int8_t>(),                                       \
+      weight_codes.data_ptr<int8_t>(),                                           \
+      has_bias ? bias.data_ptr<STORAGE_TYPE>() : nullptr,                         \
+      has_bias,                                                                  \
+      static_cast<float>(activation_scale),                                      \
+      static_cast<float>(weight_scale),                                          \
+      rows,                                                                       \
+      out_features,                                                               \
+      in_features)
+#define ORBITQUANT_DISPATCH_PACKED_W4A4_TILE(                                    \
+    STORAGE_TYPE, ASYNC_PACKED, K_MAJOR_WEIGHT)                                  \
+  if (tile_m == 256) {                                                           \
+    ORBITQUANT_LAUNCH_PACKED_W4A4_INT8(                                          \
+        STORAGE_TYPE, 256, 128, ASYNC_PACKED, K_MAJOR_WEIGHT);                   \
+  } else if (tile_n == 256) {                                                    \
+    ORBITQUANT_LAUNCH_PACKED_W4A4_INT8(                                          \
+        STORAGE_TYPE, 128, 256, ASYNC_PACKED, K_MAJOR_WEIGHT);                   \
+  } else {                                                                       \
+    ORBITQUANT_LAUNCH_PACKED_W4A4_INT8(                                          \
+        STORAGE_TYPE, 128, 128, ASYNC_PACKED, K_MAJOR_WEIGHT);                   \
+  }
+#define ORBITQUANT_DISPATCH_PACKED_W4A4_LAYOUT(STORAGE_TYPE, ASYNC_PACKED)       \
+  if (weight_k_major) {                                                          \
+    ORBITQUANT_DISPATCH_PACKED_W4A4_TILE(STORAGE_TYPE, ASYNC_PACKED, true);      \
+  } else {                                                                       \
+    ORBITQUANT_DISPATCH_PACKED_W4A4_TILE(STORAGE_TYPE, ASYNC_PACKED, false);     \
+  }
+  if (out.scalar_type() == torch::kBFloat16) {
+    if (async_packed) {
+      ORBITQUANT_DISPATCH_PACKED_W4A4_LAYOUT(c10::BFloat16, true);
+    } else {
+      ORBITQUANT_DISPATCH_PACKED_W4A4_LAYOUT(c10::BFloat16, false);
+    }
+  } else {
+    if (async_packed) {
+      ORBITQUANT_DISPATCH_PACKED_W4A4_LAYOUT(c10::Half, true);
+    } else {
+      ORBITQUANT_DISPATCH_PACKED_W4A4_LAYOUT(c10::Half, false);
+    }
+  }
+#undef ORBITQUANT_DISPATCH_PACKED_W4A4_LAYOUT
+#undef ORBITQUANT_DISPATCH_PACKED_W4A4_TILE
+#undef ORBITQUANT_LAUNCH_PACKED_W4A4_INT8
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void quantize_activations_packed_w4(
+    torch::Tensor &packed_out,
+    torch::Tensor &norms_out,
+    torch::Tensor const &x,
+    torch::Tensor const &permutation,
+    torch::Tensor const &signs,
+    torch::Tensor const &boundaries,
+    double eps,
+    double inv_sqrt_block,
+    int64_t threads) {
+  TORCH_CHECK(packed_out.device().is_cuda(), "packed_out must be a CUDA tensor");
+  TORCH_CHECK(norms_out.device().is_cuda(), "norms_out must be a CUDA tensor");
+  TORCH_CHECK(x.device().is_cuda(), "x must be a CUDA tensor");
+  TORCH_CHECK(permutation.device().is_cuda(), "permutation must be a CUDA tensor");
+  TORCH_CHECK(signs.device().is_cuda(), "signs must be a CUDA tensor");
+  TORCH_CHECK(boundaries.device().is_cuda(), "boundaries must be a CUDA tensor");
+  TORCH_CHECK(packed_out.is_contiguous(), "packed_out must be contiguous");
+  TORCH_CHECK(norms_out.is_contiguous(), "norms_out must be contiguous");
+  TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
+  TORCH_CHECK(permutation.is_contiguous(), "permutation must be contiguous");
+  TORCH_CHECK(signs.is_contiguous(), "signs must be contiguous");
+  TORCH_CHECK(boundaries.is_contiguous(), "boundaries must be contiguous");
+  TORCH_CHECK(
+      packed_out.scalar_type() == torch::kUInt8,
+      "packed_out must be uint8");
+  TORCH_CHECK(norms_out.scalar_type() == torch::kFloat, "norms_out must be float32");
+  TORCH_CHECK(
+      x.scalar_type() == torch::kBFloat16 || x.scalar_type() == torch::kHalf,
+      "x must be bfloat16 or float16");
+  TORCH_CHECK(
+      permutation.scalar_type() == torch::kLong,
+      "permutation must be int64");
+  TORCH_CHECK(signs.scalar_type() == torch::kChar, "signs must be int8");
+  TORCH_CHECK(boundaries.scalar_type() == torch::kFloat, "boundaries must be float32");
+  TORCH_CHECK(x.dim() == 2, "x must be rank 2");
+  TORCH_CHECK(packed_out.dim() == 2, "packed_out must be rank 2");
+  TORCH_CHECK(norms_out.dim() == 1, "norms_out must be rank 1");
+  const int64_t rows = x.size(0);
+  const int64_t dim = x.size(1);
+  TORCH_CHECK(
+      dim == 512 || dim == 1024 || dim == 2048 || dim == 4096 ||
+          dim == 8192 || dim == 16384,
+      "native packed W4 activation quantization supports dimensions "
+      "512, 1024, 2048, 4096, 8192, and 16384");
+  TORCH_CHECK(
+      threads == 128 || threads == 256 || threads == 512,
+      "native packed W4 activation quantization threads must be 128, 256, or 512");
+  TORCH_CHECK(
+      packed_out.size(0) == rows && packed_out.size(1) == dim / 2,
+      "packed_out has an unexpected shape");
+  TORCH_CHECK(norms_out.numel() == rows, "norms_out must match rows");
+  TORCH_CHECK(permutation.numel() == dim, "permutation must match the input dimension");
+  TORCH_CHECK(signs.numel() == dim, "signs must match the input dimension");
+  TORCH_CHECK(boundaries.numel() == 15, "boundaries must contain 15 values");
+  if (rows == 0) {
+    return;
+  }
+
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
+  const cudaDeviceProp *properties = at::cuda::getCurrentDeviceProperties();
+  const int shared_bytes = static_cast<int>((dim + threads + 15) * sizeof(float));
+  TORCH_CHECK(
+      shared_bytes <= properties->sharedMemPerBlockOptin,
+      "native packed W4 activation quantization requires ",
+      shared_bytes,
+      " bytes of shared memory, but the device supports ",
+      properties->sharedMemPerBlockOptin);
+  const dim3 block(static_cast<unsigned int>(threads));
+  const dim3 grid(static_cast<unsigned int>(rows));
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+#define ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, DIM_VALUE)                 \
+  if (shared_bytes > properties->sharedMemPerBlock) {                           \
+    C10_CUDA_CHECK(cudaFuncSetAttribute(                                        \
+        orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, DIM_VALUE>,       \
+        cudaFuncAttributeMaxDynamicSharedMemorySize,                            \
+        shared_bytes));                                                         \
+  }                                                                             \
+  orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, DIM_VALUE>              \
+      <<<grid, block, shared_bytes, stream>>>(                                   \
+          packed_out.data_ptr<uint8_t>(),                                       \
+          norms_out.data_ptr<float>(),                                          \
+          reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),                 \
+          permutation.data_ptr<int64_t>(),                                      \
+          signs.data_ptr<int8_t>(),                                             \
+          boundaries.data_ptr<float>(),                                         \
+          static_cast<float>(eps),                                              \
+          static_cast<float>(inv_sqrt_block),                                   \
+          rows)
+#define ORBITQUANT_DISPATCH_RPBH_PACK_W4(STORAGE_TYPE)                          \
+  switch (dim) {                                                                \
+    case 512:                                                                   \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 512);                        \
+      break;                                                                    \
+    case 1024:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 1024);                       \
+      break;                                                                    \
+    case 2048:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 2048);                       \
+      break;                                                                    \
+    case 4096:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 4096);                       \
+      break;                                                                    \
+    case 8192:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 8192);                       \
+      break;                                                                    \
+    case 16384:                                                                 \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 16384);                      \
+      break;                                                                    \
+  }
+  if (x.scalar_type() == torch::kBFloat16) {
+    ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16);
+  } else {
+    ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half);
+  }
+#undef ORBITQUANT_DISPATCH_RPBH_PACK_W4
+#undef ORBITQUANT_LAUNCH_RPBH_PACK_W4
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void quantize_activations_int8(
+    torch::Tensor &int8_out,
+    torch::Tensor &norms_out,
+    torch::Tensor const &x,
+    torch::Tensor const &permutation,
+    torch::Tensor const &signs,
+    torch::Tensor const &boundaries,
+    torch::Tensor const &codes,
+    double eps,
+    double inv_sqrt_block,
+    int64_t threads) {
+  TORCH_CHECK(int8_out.device().is_cuda(), "int8_out must be a CUDA tensor");
+  TORCH_CHECK(norms_out.device().is_cuda(), "norms_out must be a CUDA tensor");
+  TORCH_CHECK(x.device().is_cuda(), "x must be a CUDA tensor");
+  TORCH_CHECK(permutation.device().is_cuda(), "permutation must be a CUDA tensor");
+  TORCH_CHECK(signs.device().is_cuda(), "signs must be a CUDA tensor");
+  TORCH_CHECK(boundaries.device().is_cuda(), "boundaries must be a CUDA tensor");
+  TORCH_CHECK(codes.device().is_cuda(), "codes must be a CUDA tensor");
+  TORCH_CHECK(int8_out.is_contiguous(), "int8_out must be contiguous");
+  TORCH_CHECK(norms_out.is_contiguous(), "norms_out must be contiguous");
+  TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
+  TORCH_CHECK(permutation.is_contiguous(), "permutation must be contiguous");
+  TORCH_CHECK(signs.is_contiguous(), "signs must be contiguous");
+  TORCH_CHECK(boundaries.is_contiguous(), "boundaries must be contiguous");
+  TORCH_CHECK(codes.is_contiguous(), "codes must be contiguous");
+  TORCH_CHECK(int8_out.scalar_type() == torch::kChar, "int8_out must be int8");
+  TORCH_CHECK(norms_out.scalar_type() == torch::kFloat, "norms_out must be float32");
+  TORCH_CHECK(
+      x.scalar_type() == torch::kBFloat16 || x.scalar_type() == torch::kHalf,
+      "x must be bfloat16 or float16");
+  TORCH_CHECK(
+      permutation.scalar_type() == torch::kLong,
+      "permutation must be int64");
+  TORCH_CHECK(signs.scalar_type() == torch::kChar, "signs must be int8");
+  TORCH_CHECK(boundaries.scalar_type() == torch::kFloat, "boundaries must be float32");
+  TORCH_CHECK(codes.scalar_type() == torch::kChar, "codes must be int8");
+  TORCH_CHECK(x.dim() == 2, "x must be rank 2");
+  TORCH_CHECK(int8_out.dim() == 2, "int8_out must be rank 2");
+  TORCH_CHECK(norms_out.dim() == 1, "norms_out must be rank 1");
+  const int64_t rows = x.size(0);
+  const int64_t dim = x.size(1);
+  TORCH_CHECK(
+      dim == 512 || dim == 1024 || dim == 2048 || dim == 4096 ||
+          dim == 8192 || dim == 12288 || dim == 16384,
+      "native INT8 activation quantization supports dimensions "
+      "512, 1024, 2048, 4096, 8192, 12288, and 16384");
+  TORCH_CHECK(
+      threads == 128 || threads == 256 || threads == 512,
+      "native INT8 activation quantization threads must be 128, 256, or 512");
+  TORCH_CHECK(
+      int8_out.size(0) == rows && int8_out.size(1) == dim,
+      "int8_out has an unexpected shape");
+  TORCH_CHECK(norms_out.numel() == rows, "norms_out must match rows");
+  TORCH_CHECK(permutation.numel() == dim, "permutation must match the input dimension");
+  TORCH_CHECK(signs.numel() == dim, "signs must match the input dimension");
+  TORCH_CHECK(boundaries.numel() == 15, "boundaries must contain 15 values");
+  TORCH_CHECK(codes.numel() == 16, "codes must contain 16 values");
+  if (rows == 0) {
+    return;
+  }
+
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
+  const cudaDeviceProp *properties = at::cuda::getCurrentDeviceProperties();
+  const int shared_bytes =
+      static_cast<int>((dim + threads + 15) * sizeof(float) + 16);
+  TORCH_CHECK(
+      shared_bytes <= properties->sharedMemPerBlockOptin,
+      "native INT8 activation quantization requires ",
+      shared_bytes,
+      " bytes of shared memory, but the device supports ",
+      properties->sharedMemPerBlockOptin);
+  const dim3 block(static_cast<unsigned int>(threads));
+  const dim3 grid(static_cast<unsigned int>(rows));
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+#define ORBITQUANT_LAUNCH_RPBH_INT8(                                           \
+    STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE)                                \
+  if (shared_bytes > properties->sharedMemPerBlock) {                           \
+    C10_CUDA_CHECK(cudaFuncSetAttribute(                                        \
+        orbitquant_rpbh_quantize_int8_kernel<                                   \
+            STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>,                        \
+        cudaFuncAttributeMaxDynamicSharedMemorySize,                            \
+        shared_bytes));                                                         \
+  }                                                                             \
+  orbitquant_rpbh_quantize_int8_kernel<                                         \
+      STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>                               \
+      <<<grid, block, shared_bytes, stream>>>(                                   \
+          int8_out.data_ptr<int8_t>(),                                          \
+          norms_out.data_ptr<float>(),                                          \
+          reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),                 \
+          permutation.data_ptr<int64_t>(),                                      \
+          signs.data_ptr<int8_t>(),                                             \
+          boundaries.data_ptr<float>(),                                         \
+          codes.data_ptr<int8_t>(),                                             \
+          static_cast<float>(eps),                                              \
+          static_cast<float>(inv_sqrt_block),                                   \
+          rows)
+#define ORBITQUANT_DISPATCH_RPBH_INT8(STORAGE_TYPE)                             \
+  switch (dim) {                                                                \
+    case 512:                                                                   \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 512, 512);                      \
+      break;                                                                    \
+    case 1024:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 1024, 1024);                    \
+      break;                                                                    \
+    case 2048:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 2048, 2048);                    \
+      break;                                                                    \
+    case 4096:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 4096, 4096);                    \
+      break;                                                                    \
+    case 8192:                                                                  \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 8192, 8192);                    \
+      break;                                                                    \
+    case 12288:                                                                 \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 12288, 4096);                   \
+      break;                                                                    \
+    case 16384:                                                                 \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 16384, 16384);                  \
+      break;                                                                    \
+  }
+  if (x.scalar_type() == torch::kBFloat16) {
+    ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16);
+  } else {
+    ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half);
+  }
+#undef ORBITQUANT_DISPATCH_RPBH_INT8
+#undef ORBITQUANT_LAUNCH_RPBH_INT8
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

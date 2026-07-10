@@ -24,6 +24,45 @@ def test_native_packed_matmul_rejects_cpu_before_loading_kernel():
         )
 
 
+def test_native_packed_w4_activation_rejects_cpu_before_loading_kernel():
+    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+        native_module.quantize_activations_packed_w4_with_native_kernel(
+            torch.randn(2, 512),
+            torch.arange(512),
+            torch.ones(512, dtype=torch.int8),
+            torch.linspace(-1.0, 1.0, 15),
+            eps=1e-12,
+            inv_sqrt_block=512**-0.5,
+        )
+
+
+def test_native_packed_w4_activation_availability_checks_operation(monkeypatch):
+    fake_kernel = SimpleNamespace(quantize_activations_packed_w4=lambda *args, **kwargs: None)
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", fake_kernel)
+
+    assert native_module.native_packed_w4_activation_available()
+
+
+def test_native_int8_activation_rejects_cpu_before_loading_kernel():
+    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+        native_module.quantize_activations_int8_with_native_kernel(
+            torch.randn(2, 512),
+            torch.arange(512),
+            torch.ones(512, dtype=torch.int8),
+            torch.linspace(-1.0, 1.0, 15),
+            torch.arange(-8, 8, dtype=torch.int8),
+            eps=1e-12,
+            inv_sqrt_block=512**-0.5,
+        )
+
+
+def test_native_int8_activation_availability_checks_operation(monkeypatch):
+    fake_kernel = SimpleNamespace(quantize_activations_int8=lambda *args, **kwargs: None)
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", fake_kernel)
+
+    assert native_module.native_int8_activation_available()
+
+
 def test_native_packed_matmul_loader_prefers_importable_package_before_hf_kernel(
     monkeypatch,
 ):

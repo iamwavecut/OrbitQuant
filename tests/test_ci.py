@@ -313,8 +313,10 @@ def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant
         package_root / "orbitquant_packed_matmul_cuda/packed_matmul.cu"
     ).read_text(encoding="utf-8")
     assert "#include <c10/cuda/CUDAException.h>" in cuda_source
-    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK();") == 6
+    assert cuda_source.count("C10_CUDA_KERNEL_LAUNCH_CHECK();") == 9
     assert "orbitquant_packed_matmul_small_rows_kernel" in cuda_source
+    assert "orbitquant_rpbh_quantize_pack_w4_kernel" in cuda_source
+    assert "orbitquant_rpbh_quantize_int8_kernel" in cuda_source
 
     package_api = (
         package_root / "torch-ext/orbitquant_packed_matmul/__init__.py"

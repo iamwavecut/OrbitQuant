@@ -1,9 +1,9 @@
 # FLUX.2 Klein 9B: OrbitQuant W4A4 vs SDNQ UINT4
 
 This report compares OrbitQuant and SDNQ on the same FLUX.2 Klein 9B source,
-hardware, prompts and generation settings. It covers checkpoint size, load and
-generation latency, VRAM, energy, paired visual output and the measured OrbitQuant
-kernel path.
+prompts and generation settings. Runtime rows use the same L40S hardware and
+software environment. It covers checkpoint size, load and generation latency,
+VRAM, paired visual output and the measured OrbitQuant kernel path.
 
 ## Checkpoints
 
@@ -25,12 +25,12 @@ adapter extension for this comparison; the OrbitQuant paper leaves text encoders
 
 ## Protocol
 
-- GPU: NVIDIA A40 48 GB (`sm_86`)
+- GPU: NVIDIA L40S 48 GB (`sm_89`)
 - Torch: 2.9.1+cu128
 - CUDA: 12.8
 - Diffusers: 0.39.0
 - Transformers: 5.13.0
-- OrbitQuant: 0.2.2
+- OrbitQuant: 0.3.0
 - SDNQ: 0.1.8
 - Arithmetic: BF16
 - CPU offload: disabled
@@ -41,6 +41,7 @@ adapter extension for this comparison; the OrbitQuant paper leaves text encoders
 - Batch size: 1
 - Ten identical prompts per variant
 - Each variant loaded and ran in a separate process
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
 
 The prompt pack stresses micro-detail, exact counting, nested spatial composition,
 fictional authorial style, abstract material separation, English fine print, Russian,
@@ -62,45 +63,45 @@ matrix is 10.85 GB.
 
 ## Runtime
 
-The native OrbitQuant row used a locally built ABI3 CUDA package from
-`native-kernels/orbitquant-packed-matmul`; Kernel Hub was not involved. All 396 packed
-projections selected `native_packed_matmul`, while activation norm, RPBH, codebook lookup
-and rescale used Triton CUDA.
+The OrbitQuant row used a locally built ABI3 CUDA package from
+`native-kernels/orbitquant-packed-matmul`; Kernel Hub was not involved. All 396
+packed projections selected `native_packed_matmul` and the optimized W4A4 path.
 
-| Variant | Load | Cold image | Hot mean | Hot median | Hot p95 | Encode median |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| BF16 | 8.877 s | 4.597 s | 3.911 s | 3.912 s | 3.931 s | 0.110 s |
-| SDNQ UINT4 | 37.642 s | 25.421 s | 3.546 s | 3.545 s | 3.576 s | 0.151 s |
-| OrbitQuant W4A4, native CUDA | 25.229 s | 9.617 s | 7.418 s | 7.415 s | 7.503 s | 0.239 s |
-| OrbitQuant W4A4, Triton fallback | 19.325 s | 30.721 s | 19.309 s | 19.307 s | 19.365 s | 0.588 s |
-
-| Variant | NVML peak | CUDA allocated peak | Mean GPU util. | Mean power | Peak power | Energy / 10 images |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| BF16 | 40.83 GB | 37.31 GB | 96.87% | 279.08 W | 307.28 W | 3.035 Wh |
-| SDNQ UINT4 | 17.55 GB | 14.86 GB | 97.19% | 274.03 W | 302.01 W | 2.704 Wh |
-| OrbitQuant W4A4, native CUDA | 17.66 GB | 13.96 GB | 99.56% | 289.66 W | 306.37 W | 5.979 Wh |
-| OrbitQuant W4A4, Triton fallback | 17.94 GB | 14.34 GB | 99.82% | 287.03 W | 302.90 W | 15.406 Wh |
-
-Native OrbitQuant used 56.7% less peak NVML memory than BF16 and approximately the same
-peak as SDNQ. It was 1.90x slower than BF16 and 2.09x slower than SDNQ in hot generation
-on this A40. The result supports a memory-efficiency claim, not an end-to-end speedup claim.
-The native package was materially faster than the Triton packed-matmul fallback.
-
-Representative W4A4 layer timings after CUDA kernel tuning:
-
-| Projection | Rows | Shape | Activation path | Native packed matmul | Full layer |
+| Variant | Load | Cold image | Hot mean | Hot median | Hot p95 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Double-stream Q | 4096 | 4096 -> 4096 | 0.698 ms | 2.607 ms | 3.279 ms |
-| Single-stream fused input | 4608 | 4096 -> 36864 | 0.770 ms | 25.962 ms | 26.677 ms |
-| Single-stream output | 4608 | 16384 -> 4096 | 4.257 ms | 11.244 ms | 15.514 ms |
+| SDNQ UINT4 | 5.918 s | 16.956 s | 2.0885 s | 2.0875 s | 2.0966 s |
+| OrbitQuant W4A4 | 2.543 s | 4.193 s | 2.0907 s | 2.0920 s | 2.0988 s |
 
-The wide fused projections remain the primary throughput limitation. Local native-package
-build and verification instructions are in [the kernel audit](kernel-audit.md#local-native-package).
+| Variant | Load NVML peak | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
+| --- | ---: | ---: | ---: | ---: |
+| SDNQ UINT4 | 13.383 GB | 17.564 GB | 14.844 GB | 16.377 GB |
+| OrbitQuant W4A4 | 11.959 GB | 15.731 GB | 13.942 GB | 14.544 GB |
+
+OrbitQuant's hot mean was 0.11% slower than SDNQ, which is practical parity for
+this run. OrbitQuant loaded 57.0% faster, used 0.902 GB less peak CUDA allocated
+memory, and used 1.833 GB less peak CUDA reserved and NVML memory. The packed
+weight payload also remains 11.0% smaller.
+
+The selected CUDA path performs native token norm, RPBH/FWHT and codebook-bin
+selection, emits an INT8 surrogate of the 4-bit activation codebook, decodes
+only a bounded output-channel chunk of the packed W4 weights, calls the
+CUTLASS-backed `torch._int_mm`, and applies norms, scales and bias in a Triton
+epilogue. It does not materialize a full BF16/FP16 weight matrix. The direct
+packed CUDA MMA implementation remains the fallback for unsupported shapes.
+
+The optimized path adds a small runtime approximation beyond the paper
+equation: fixed Lloyd-Max centroids are represented by symmetric INT8 codes and
+one scalar per codebook. Packed indices and the checkpoint are unchanged;
+`runtime_mode="dequant_bf16"` remains the exact-centroid reference. Local build
+and verification instructions are in [the kernel audit](kernel-audit.md#local-native-package).
 
 ## Paired Visual Comparison
 
-The matrix uses full 1024x1024 tiles and WebP quality 95. Every column uses the same prompt,
-seed and pipeline settings.
+The matrix is a separate controlled A40 visual run using full 1024x1024 tiles
+and WebP quality 95. Every column uses the same prompt, seed and pipeline
+settings. The L40S production-default OrbitQuant rerun produced ten finite
+images that matched the previously validated optimized W4A4 outputs byte for
+byte.
 
 ![BF16, SDNQ UINT4 and OrbitQuant W4A4 across ten difficult prompts](assets/flux2-klein-9b-sdnq-vs-orbitquant.webp)
 
@@ -131,12 +132,12 @@ failure modes; it is not a substitute for GenEval or another task-specific objec
 
 ## Result
 
-OrbitQuant produces the smallest of the two complete 4-bit pipelines and reaches SDNQ's
-runtime-memory class while additionally quantizing activations without calibration data. On
-the tested A40, SDNQ remains substantially faster and more energy-efficient, and it performs
-better on the most demanding small English typography example. OrbitQuant's strongest result
-is compact, calibration-free W4A4 inference with preserved complex visual structure; further
-packed-GEMM work is required before making a speed claim.
+OrbitQuant produces the smaller complete 4-bit pipeline, additionally quantizes
+activations without calibration data, and reaches SDNQ hot-generation parity on
+the tested L40S while using materially less runtime memory. The visual matrix
+shows preserved complex structure without collapse; SDNQ remains closer to BF16
+on some typography cases. This is a controlled result for FLUX.2 Klein 9B, not a
+universal speed claim for every model or GPU.
 
 Machine-readable metrics and the exact ten prompts are included with the
 [OrbitQuant checkpoint](https://huggingface.co/WaveCut/FLUX.2-klein-9B-OrbitQuant-W4A4).

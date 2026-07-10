@@ -85,6 +85,21 @@ def load_native_packed_matmul_kernel() -> Any:
     return _load_native_packed_matmul_kernel()
 
 
+def native_packed_w4a4_available() -> bool:
+    kernel = _load_native_packed_matmul_kernel()
+    return callable(getattr(kernel, "matmul_packed_w4a4_int8", None))
+
+
+def native_packed_w4_activation_available() -> bool:
+    kernel = _load_native_packed_matmul_kernel()
+    return callable(getattr(kernel, "quantize_activations_packed_w4", None))
+
+
+def native_int8_activation_available() -> bool:
+    kernel = _load_native_packed_matmul_kernel()
+    return callable(getattr(kernel, "quantize_activations_int8", None))
+
+
 def matmul_packed_weight_with_native_kernel(
     x: torch.Tensor,
     packed_weight_indices: torch.Tensor,
@@ -101,8 +116,7 @@ def matmul_packed_weight_with_native_kernel(
 ) -> torch.Tensor:
     if x.device.type not in {"cuda", "mps"}:
         raise RuntimeError(
-            "native_packed_matmul runtime requires CUDA or MPS input tensors; "
-            f"got {x.device.type}."
+            f"native_packed_matmul runtime requires CUDA or MPS input tensors; got {x.device.type}."
         )
     if x.shape[-1] != in_features:
         raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
@@ -121,4 +135,113 @@ def matmul_packed_weight_with_native_kernel(
         block_m=block_m,
         block_n=block_n,
         block_k=block_k,
+    )
+
+
+def matmul_packed_w4a4_int8_with_native_kernel(
+    packed_activations: torch.Tensor,
+    packed_weight_indices: torch.Tensor,
+    token_norms: torch.Tensor,
+    row_norms: torch.Tensor,
+    activation_codes: torch.Tensor,
+    weight_codes: torch.Tensor,
+    *,
+    activation_scale: float,
+    weight_scale: float,
+    out_features: int,
+    in_features: int,
+    bias: torch.Tensor | None = None,
+    output_dtype: torch.dtype = torch.bfloat16,
+    tile_m: int = 128,
+    tile_n: int = 128,
+    async_packed: bool = True,
+    weight_k_major: bool = False,
+) -> torch.Tensor:
+    if not packed_activations.is_cuda:
+        raise RuntimeError("native packed W4A4 INT8 matmul requires CUDA tensors")
+    kernel = _load_native_packed_matmul_kernel()
+    operation = getattr(kernel, "matmul_packed_w4a4_int8", None)
+    if not callable(operation):
+        raise RuntimeError(
+            "the loaded native packed matmul package does not provide matmul_packed_w4a4_int8"
+        )
+    return operation(
+        packed_activations,
+        packed_weight_indices,
+        token_norms,
+        row_norms,
+        activation_codes,
+        weight_codes,
+        activation_scale=activation_scale,
+        weight_scale=weight_scale,
+        out_features=out_features,
+        in_features=in_features,
+        bias=bias,
+        output_dtype=output_dtype,
+        tile_m=tile_m,
+        tile_n=tile_n,
+        async_packed=async_packed,
+        weight_k_major=weight_k_major,
+    )
+
+
+def quantize_activations_packed_w4_with_native_kernel(
+    x: torch.Tensor,
+    permutation: torch.Tensor,
+    signs: torch.Tensor,
+    boundaries: torch.Tensor,
+    *,
+    eps: float,
+    inv_sqrt_block: float,
+    threads: int = 256,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not x.is_cuda:
+        raise RuntimeError("native packed W4 activation quantization requires CUDA tensors")
+    kernel = _load_native_packed_matmul_kernel()
+    operation = getattr(kernel, "quantize_activations_packed_w4", None)
+    if not callable(operation):
+        raise RuntimeError(
+            "the loaded native packed matmul package does not provide "
+            "quantize_activations_packed_w4"
+        )
+    return operation(
+        x,
+        permutation,
+        signs,
+        boundaries,
+        eps=eps,
+        inv_sqrt_block=inv_sqrt_block,
+        threads=threads,
+    )
+
+
+def quantize_activations_int8_with_native_kernel(
+    x: torch.Tensor,
+    permutation: torch.Tensor,
+    signs: torch.Tensor,
+    boundaries: torch.Tensor,
+    codes: torch.Tensor,
+    *,
+    eps: float,
+    inv_sqrt_block: float,
+    threads: int = 256,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not x.is_cuda:
+        raise RuntimeError("native INT8 activation quantization requires CUDA tensors")
+    kernel = _load_native_packed_matmul_kernel()
+    operation = getattr(kernel, "quantize_activations_int8", None)
+    if not callable(operation):
+        raise RuntimeError(
+            "the loaded native packed matmul package does not provide "
+            "quantize_activations_int8"
+        )
+    return operation(
+        x,
+        permutation,
+        signs,
+        boundaries,
+        codes,
+        eps=eps,
+        inv_sqrt_block=inv_sqrt_block,
+        threads=threads,
     )

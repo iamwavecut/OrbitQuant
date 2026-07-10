@@ -216,7 +216,7 @@ pipe = load_quantized_pipeline_from_artifact(
 
 | Device | Dispatch |
 | --- | --- |
-| CUDA | Native packed CUDA package, then Triton packed matmul |
+| CUDA | Native activation kernel plus packed W4A4 tensor-core path; native or Triton packed fallback |
 | MPS | Native packed Metal package |
 | CPU | PyTorch reference path |
 
@@ -230,12 +230,31 @@ Use the explicit reference path for compatibility or numerical debugging:
 config = orbitquant.recipe("w4a4", runtime_mode="dequant_bf16")
 ```
 
+On CUDA compute capability 8.0 or newer, the W4A4 fast path fuses token norm,
+RPBH/FWHT, and codebook assignment in the native package, decodes only a bounded
+output-channel chunk of packed weights to INT8, and uses the Torch CUTLASS
+tensor-core matmul. It never materializes the full BF16/FP16 weight matrix.
+The existing direct packed CUDA MMA kernel remains the fallback for compatible
+W4A4 shapes when CUTLASS INT8 matmul is unavailable.
+
+The optimized CUDA path maps the fixed Lloyd-Max centroids to a symmetric INT8
+surrogate plus one scalar per codebook. Packed checkpoint indices and artifact
+size are unchanged. Use `dequant_bf16` when exact Lloyd-Max centroid evaluation
+is required.
+
 Build the ABI3 native package locally without Kernel Hub:
 
 ```bash
 cd native-kernels/orbitquant-packed-matmul
 nix --option sandbox relaxed run .#build-and-copy -L
 export PYTHONPATH="$PWD/build/<matching-torch-backend-platform-variant>:$PYTHONPATH"
+```
+
+PyTorch 2.9 CUDA users can reduce allocator reservation during native diffusion
+inference by setting the allocator before Python starts:
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate.py
 ```
 
 The variant must match the Torch minor version, CUDA or Metal backend, C++ ABI,

@@ -165,9 +165,7 @@ def test_orbit_linear_quantized_forward_matches_manual_paper_equation(monkeypatc
     activation_unit = quantized.rotation.apply_to_activations(
         work / (token_norms + config.activation_eps)
     )
-    dequantized_activation = token_norms * quantized.activation_codebook.quantize(
-        activation_unit
-    )
+    dequantized_activation = token_norms * quantized.activation_codebook.quantize(activation_unit)
     expected = torch.nn.functional.linear(
         dequantized_activation,
         dequantized_weight,
@@ -247,18 +245,14 @@ def test_orbit_linear_reuses_cuda_activation_constant_buffers(monkeypatch):
         block_size=8,
         activation_kernel_backend="triton_cuda",
     )
-    quantized = OrbitQuantLinear.from_linear(
-        source, config=config, module_name="block.ff.linear"
-    )
+    quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     seen_constant_ids = []
 
     def fake_kernel(input_tensor, *, constant_tensors, **kwargs):
         assert input_tensor.is_cuda
         assert set(constant_tensors) == {"permutation", "signs", "centroids", "boundaries"}
         assert all(tensor.is_cuda for tensor in constant_tensors.values())
-        seen_constant_ids.append(
-            {name: id(tensor) for name, tensor in constant_tensors.items()}
-        )
+        seen_constant_ids.append({name: id(tensor) for name, tensor in constant_tensors.items()})
         return torch.zeros_like(input_tensor)
 
     monkeypatch.setattr(layers_module, "quantize_activations_kernel", fake_kernel)
@@ -330,9 +324,7 @@ def test_orbit_linear_mps_forward_matches_reference_without_cpu_unpack(monkeypat
         runtime_mode="dequant_bf16",
         activation_kernel_backend="cpu",
     )
-    reference = OrbitQuantLinear.from_linear(
-        source, config=config, module_name="block.ff.linear"
-    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     actual_layer = copy.deepcopy(reference).to("mps")
     actual_layer.activation_kernel_backend = "mps"
 
@@ -839,9 +831,7 @@ def test_orbit_linear_rebuilds_derived_constants_after_to_empty():
         runtime_mode="dequant_bf16",
         activation_kernel_backend="cpu",
     )
-    reference = OrbitQuantLinear.from_linear(
-        source, config=config, module_name="block.ff.linear"
-    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     state = {name: tensor.clone() for name, tensor in reference.state_dict().items()}
     restored = copy.deepcopy(reference)
     restored.to_empty(device="cpu")
@@ -964,6 +954,104 @@ def test_orbit_linear_auto_fused_native_packed_matmul_matches_reference_without_
     assert torch.allclose(actual.float().cpu(), expected.float().cpu(), atol=2e-2, rtol=2e-2)
 
 
+def test_orbit_linear_native_w4a4_runtime_uses_fused_packed_path(monkeypatch):
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    try:
+        if not (
+            native_module.native_packed_w4a4_available()
+            and native_module.native_packed_w4_activation_available()
+        ):
+            pytest.skip("native packed W4A4 matmul and activation ops are not available")
+    except RuntimeError:
+        pytest.skip("native packed matmul kernel package is not importable")
+
+    torch.manual_seed(37)
+    source = torch.nn.Linear(512, 128, bias=True, device="cuda", dtype=torch.bfloat16)
+    x = torch.randn(128, 512, device="cuda", dtype=torch.bfloat16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="triton_cuda",
+    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    packed = copy.deepcopy(reference)
+    packed.runtime_mode = "native_packed_matmul"
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (7, 5))
+
+    def fail_dequantize_weight(*args, **kwargs):
+        raise AssertionError("fused native W4A4 runtime materialized dequantized weights")
+
+    monkeypatch.setattr(packed, "_dequantize_weight", fail_dequantize_weight)
+    expected = reference(x)
+    actual = packed(x)
+    torch.cuda.synchronize()
+
+    relative_rmse = torch.sqrt(
+        (actual.float() - expected.float()).square().mean()
+        / expected.float().square().mean().clamp_min(1e-30)
+    )
+    assert packed.last_native_w4a4_enabled
+    assert packed.last_native_w4_activation_enabled
+    assert packed.last_activation_kernel_backend == "native_cuda_packed_w4"
+    assert actual.shape == expected.shape
+    assert torch.isfinite(actual).all()
+    assert float(relative_rmse) < 0.02
+
+
+def test_orbit_linear_cutlass_tn_runtime_uses_native_int8_activation(monkeypatch):
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    import orbitquant.kernels.native_packed_matmul as native_module
+
+    try:
+        if not (
+            native_module.native_packed_w4a4_available()
+            and native_module.native_int8_activation_available()
+        ):
+            pytest.skip("native W4A4 matmul and INT8 activation ops are not available")
+    except RuntimeError:
+        pytest.skip("native packed matmul kernel package is not importable")
+
+    torch.manual_seed(41)
+    source = torch.nn.Linear(512, 128, bias=True, device="cuda", dtype=torch.bfloat16)
+    x = torch.randn(128, 512, device="cuda", dtype=torch.bfloat16)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="triton_cuda",
+    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
+    packed = copy.deepcopy(reference)
+    packed.runtime_mode = "native_packed_matmul"
+
+    def fail_dequantize_weight(*args, **kwargs):
+        raise AssertionError("CUTLASS TN runtime materialized dequantized weights")
+
+    monkeypatch.setattr(packed, "_dequantize_weight", fail_dequantize_weight)
+    expected = reference(x)
+    actual = packed(x)
+    torch.cuda.synchronize()
+
+    relative_rmse = torch.sqrt(
+        (actual.float() - expected.float()).square().mean()
+        / expected.float().square().mean().clamp_min(1e-30)
+    )
+    assert packed.last_native_w4a4_enabled
+    assert packed.last_native_w4_activation_enabled
+    assert packed.last_native_int8_activation_enabled
+    assert packed.last_activation_kernel_backend == "native_cuda_int8_surrogate"
+    assert actual.shape == expected.shape
+    assert torch.isfinite(actual).all()
+    assert float(relative_rmse) < 0.02
+
+
 @pytest.mark.parametrize("use_bias", [True, False])
 def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias):
     if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
@@ -984,9 +1072,7 @@ def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias
         packed_matmul_block_k=32,
         packed_matmul_num_warps=4,
     )
-    reference = OrbitQuantLinear.from_linear(
-        source, config=config, module_name="block.ff.linear"
-    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     packed = copy.deepcopy(reference)
     packed.runtime_mode = "triton_packed_matmul"
 

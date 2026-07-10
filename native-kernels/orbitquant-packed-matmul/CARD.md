@@ -36,6 +36,21 @@ Inputs:
 `x` may be `float32`, `float16`, or `bfloat16`. The output has shape
 `[..., out_features]` and the same dtype as `x`.
 
+The CUDA package also exports the operations used by OrbitQuant's W4A4 runtime:
+
+- `quantize_activations_int8`: token norm, RPBH/FWHT, nearest-codebook
+  assignment, and INT8-surrogate output in one native launch.
+- `quantize_activations_packed_w4`: the same activation path with packed 4-bit
+  output for the direct packed matmul fallback.
+- `matmul_packed_w4a4_int8`: direct packed A4/W4 CUDA MMA with fused token norm,
+  row norm, surrogate scales, and bias epilogue.
+
+On CUDA compute capability 8.0 or newer, OrbitQuant normally combines
+`quantize_activations_int8` with chunked packed-weight decode and Torch's
+CUTLASS-backed INT8 matmul. The direct packed MMA operation remains available
+when that path is unsupported. Neither path materializes a complete BF16/FP16
+weight matrix.
+
 ## Build And Test
 
 ```bash
@@ -61,6 +76,18 @@ TORCH_CUDA_ARCH_LIST="8.9" CUDACXX=/usr/local/cuda/bin/nvcc \
   python setup.py build_kernel
 ```
 
+For a local Metal build compatible with macOS 15 and newer:
+
+```bash
+cargo install --git https://github.com/huggingface/kernels hf-kernel-builder
+kernel-builder check-config .
+kernel-builder create-pyproject -f .
+MACOSX_DEPLOYMENT_TARGET=15.0 \
+  CMAKE_ARGS="-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0" \
+  python setup.py build_kernel
+kernel-builder check-abi --macos 15.0 --python-abi 3.9 .
+```
+
 This generated project is for local testing and must not be committed or
 distributed without a successful `kernel-builder check-abi`. Use the Nix build
 for redistributable variants.
@@ -72,6 +99,13 @@ version:
 ```bash
 export PYTHONPATH="/path/to/build/torch212-metal-aarch64-darwin:$PYTHONPATH"
 python -c "import orbitquant_packed_matmul; print(orbitquant_packed_matmul)"
+```
+
+For PyTorch 2.9 CUDA inference, set the allocator before starting Python when
+minimum reserved memory is important:
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate.py
 ```
 
 OrbitQuant detects that importable package before trying any Hub loader. For
@@ -118,3 +152,6 @@ It also reports storage accounting for the packed weight path:
 `packed_weight_path_vs_materialized_weight_ratio`. These values describe only
 the weight-side storage used by this operator; they are not end-to-end model
 VRAM measurements.
+
+End-to-end FLUX.2 Klein 9B measurements and the SDNQ comparison are recorded in
+[`docs/flux2-klein-9b-sdnq-vs-orbitquant.md`](../../docs/flux2-klein-9b-sdnq-vs-orbitquant.md).

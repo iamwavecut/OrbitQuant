@@ -65,7 +65,7 @@ Status legend:
 | Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
 | Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Native artifact-readiness evidence is separate from release-grade metric tables. Full metric runs are required before metric-table or paper-reproduction claims. |
 | FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py` | It is treated as an additional target using paper-style native settings. |
-| Runtime acceleration claims match implemented kernels. | Partial | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Default `auto_fused` requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. CUDA and MPS avoid full weight materialization; throughput varies by model and is reported only from measured benchmarks. |
+| Runtime acceleration claims match implemented kernels. | Pass for the measured FLUX.2 Klein 9B W4A4 configuration; partial across other models | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | Default `auto_fused` requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. CUDA and MPS avoid full floating-point weight materialization. The CUDA INT8-surrogate fast path is an explicitly documented runtime approximation; exact Lloyd-Max centroid evaluation remains available through `dequant_bf16`. |
 | Release-grade GenEval/VBench metrics are available for paper target claims. | Blocked for metric claims | `src/orbitquant/hub.py`, `src/orbitquant/eval/` | Missing metrics block only paper metric/reproduction claims. |
 
 ## Model Policy Evidence
@@ -126,7 +126,7 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 | Backend | Status | Evidence | Claim boundary |
 | --- | --- | --- | --- |
 | CPU | Pass as reference | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/functional.py` | Correctness baseline only; no optimized CPU kernel claim. |
-| CUDA/Triton | Pass for packed fallback | `src/orbitquant/kernels/triton_cuda.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | Covers activation norm/RPBH/lookup/rescale, low-bit pack/unpack, offline weight quantization, AdaLN RTN quant/dequant, and packed matmul. Default `auto_fused` selects native packed matmul first, then Triton packed matmul when available. |
+| CUDA/native/Triton | Pass for optimized W4A4 and packed fallback | `native-kernels/orbitquant-packed-matmul`, `src/orbitquant/kernels/native_packed_matmul.py`, `src/orbitquant/kernels/triton_cuda.py`, `tests/test_native_packed_matmul.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | The selected W4A4 path fuses norm/RPBH/FWHT/codebook assignment to INT8 surrogate activations, decodes bounded W4 chunks, uses CUTLASS INT8 matmul, and applies a fused epilogue. Direct packed CUDA MMA and generic Triton packed matmul remain fallbacks. No path selected by `auto_fused` materializes a full BF16/FP16 weight matrix. |
 | MPS/Metal | Pass for native packed inference | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | A fused Metal shader performs activation norm, RPBH/FWHT, codebook lookup, and rescale. The native package performs packed matmul for generic leading dimensions, including short decode rows and partial matrix tiles, without full weight materialization. Offline weight and AdaLN quantization remain reference paths on MPS. |
 | ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
 | XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
@@ -136,6 +136,11 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 - `runtime_mode="auto_fused"` is the default optimized policy. It avoids silent
   CUDA/MPS fallback to full dequantized BF16 weight materialization. Explicit
   `runtime_mode="dequant_bf16"` remains the compatibility/debug reference path.
+- The CUDA W4A4 tensor-core path retains the paper's packed nearest-centroid
+  indices but approximates each fixed Lloyd-Max centroid with a symmetric INT8
+  code and one scalar per codebook. Measured codebook relative RMSE is
+  0.21-0.28% for the FLUX.2 dimensions. This extra approximation is not part of
+  the paper equation and is never presented as the exact reference path.
 
 ## Native Eval And Claim Policy
 
@@ -172,7 +177,8 @@ not silently substitute a different quantization method.
 | --- | --- | --- |
 | Explicit `dequant_bf16` runtime uses dequantized BF16 matmul. | Accepted reference path | It is kept for compatibility and debugging. Do not claim it as low-bit fused inference. |
 | Zero weight rows use an epsilon guard for direction quantization. | Accepted implementation guard | The paper defines weight directions as `w' / ||w'||` for nonzero rows. The implementation divides by `max(||w'||, ε)` only when choosing codebook indices, stores the raw BF16 row norm, and dequantizes zero rows back to exactly zero. |
-| Full-model speedup is not yet a release claim. | Accepted claim boundary | `auto_fused`, `native_packed_matmul`, and `triton_packed_matmul` use packed matmul paths, but model-specific benchmark artifacts are still required before broad acceleration claims. |
+| The optimized CUDA W4A4 path evaluates an INT8 surrogate of each Lloyd-Max codebook. | Documented runtime deviation | Packed nearest-centroid indices, row norms, token norms, and the artifact remain unchanged. The surrogate adds 0.21-0.28% codebook relative RMSE for the measured FLUX.2 dimensions. `dequant_bf16` evaluates the stored Lloyd-Max centroids directly and is the exact methodology reference. |
+| Full-model speedup is configuration-specific. | Accepted claim boundary | FLUX.2 Klein 9B on L40S reached practical SDNQ hot-generation parity with lower memory. That result does not establish universal speedup for other models, shapes, GPUs, or offload policies. |
 | The paper's block-size enumeration omits `h=256`, although its stated largest-power-of-two-divisor rule gives `h=256` for Z-Image `d=3840` and Wan `d=8960` projections. | Paper inconsistency | The implementation follows the formal rule. The selected target dimensions produce `h` in `{256, 512, 1024, 2048, 4096}`. |
 | Published checkpoints use converged Lloyd-Max codebook version 2 and `activation_eps=1e-10`. | Pass | All 14 canonical FLUX.2, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 artifacts were regenerated and validated. Legacy version 1 artifacts remain loadable by the library but are no longer the published release checkpoints. |
 | Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
