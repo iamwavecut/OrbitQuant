@@ -97,11 +97,11 @@ and verification instructions are in [the kernel audit](kernel-audit.md#local-na
 
 ## Paired Visual Comparison
 
-The matrix is a separate controlled A40 visual run using full 1024x1024 tiles
-and WebP quality 95. Every column uses the same prompt, seed and pipeline
-settings. The L40S production-default OrbitQuant rerun produced ten finite
-images that matched the previously validated optimized W4A4 outputs byte for
-byte.
+The matrix uses the complete ten-prompt stress pack with full 1024x1024 tiles
+and WebP quality 95. BF16 is the full-precision reference from the controlled
+visual run; the SDNQ and OrbitQuant columns use the corresponding L40S benchmark
+outputs. Every row uses the same prompt, seed, resolution, step count and
+guidance.
 
 ![BF16, SDNQ UINT4 and OrbitQuant W4A4 across ten difficult prompts](assets/flux2-klein-9b-sdnq-vs-orbitquant.webp)
 
@@ -118,14 +118,15 @@ byte.
 - **Counting:** none of the variants reliably renders exactly nine performers or every exact
   repeated motif. This is a base-model limitation in the tested setting rather than an
   OrbitQuant-only collapse.
-- **English typography:** SDNQ is strongest on the small four-line specification table.
-  OrbitQuant preserves the headline and subtitle but misspells or truncates some fine print.
+- **English typography:** OrbitQuant is strongest on this row: it preserves the headline,
+  subtitle and all four specification lines. SDNQ preserves the headline and three table
+  lines but omits or corrupts some requested text.
 - **Russian typography:** all variants render the large headline, subtitle and archive stamp
   well; small contents text contains errors in every column.
 - **Japanese and Chinese typography:** visual glyph quality is plausible, but exact requested
   strings are not reliably reproduced by any variant.
-- **Trajectory fidelity:** SDNQ often stays visually closer to BF16. OrbitQuant also quantizes
-  activations and therefore produces larger compositional changes at the same seed.
+- **Trajectory fidelity:** both quantizers change the denoising trajectory at the same seed;
+  neither remains consistently closer to BF16 across all ten prompts.
 
 This assessment is subjective and paired. It demonstrates non-collapse and exposes concrete
 failure modes; it is not a substitute for GenEval or another task-specific objective metric.
@@ -135,9 +136,9 @@ failure modes; it is not a substitute for GenEval or another task-specific objec
 OrbitQuant produces the smaller complete 4-bit pipeline, additionally quantizes
 activations without calibration data, and reaches SDNQ hot-generation parity on
 the tested L40S while using materially less runtime memory. The visual matrix
-shows preserved complex structure without collapse; SDNQ remains closer to BF16
-on some typography cases. This is a controlled result for FLUX.2 Klein 9B, not a
-universal speed claim for every model or GPU.
+shows preserved complex structure without collapse, with OrbitQuant producing
+the strongest English fine-print result in this prompt pack. This is a controlled
+result for FLUX.2 Klein 9B, not a universal speed claim for every model or GPU.
 
 Machine-readable metrics and the exact ten prompts are included with the
 [OrbitQuant checkpoint](https://huggingface.co/WaveCut/FLUX.2-klein-9B-OrbitQuant-W4A4).
