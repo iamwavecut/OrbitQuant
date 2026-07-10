@@ -297,6 +297,8 @@ def test_mps_shader_source_declares_fused_activation_and_dequant_kernels():
     source = mps_module._MPS_KERNEL_SOURCE
 
     assert "orbitquant_row_norm_bfloat16" in source
+    assert "orbitquant_row_norm_bfloat16_wide" in source
+    assert "orbitquant_wide_activation_threads = 512" in source
     assert "orbitquant_fused_activation_bfloat16" in source
     assert "threadgroup float values" in source
     assert "threadgroup_barrier" in source

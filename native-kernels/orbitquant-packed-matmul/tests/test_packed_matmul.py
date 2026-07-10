@@ -101,19 +101,20 @@ def test_matmul_packed_weight_matches_dequantized_reference(
 
 
 @pytest.mark.kernels_ci
-@pytest.mark.parametrize("rows", [1, 3, 8, 9, 15])
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+@pytest.mark.parametrize("rows", [1, 2, 3, 8, 9, 15])
 @pytest.mark.parametrize(
     ("in_features", "out_features"),
     [(32, 32), (37, 29)],
 )
 def test_matmul_packed_weight_short_sequence_matches_reference(
+    bits: int,
     rows: int,
     in_features: int,
     out_features: int,
 ) -> None:
     device = _device()
     dtype = torch.float16 if device == "mps" else torch.bfloat16
-    bits = 4
     x = torch.randn(rows, in_features, device=device, dtype=dtype)
     indices = torch.randint(0, 2**bits, (out_features, in_features), dtype=torch.uint8)
     packed = _pack(indices, bits).to(device)

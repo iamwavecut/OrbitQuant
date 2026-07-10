@@ -14,6 +14,7 @@ _MPS_KERNEL_SOURCE = r"""
 using namespace metal;
 
 constant uint orbitquant_activation_threads = 256;
+constant uint orbitquant_wide_activation_threads = 512;
 constant uint orbitquant_max_rpbh_block_size = 4096;
 
 template <typename scalar_t>
@@ -113,7 +114,7 @@ inline void orbitquant_fused_activation_impl(
   }
 }
 
-#define ORBITQUANT_ROW_NORM_KERNEL(NAME, SCALAR_T)                           \
+#define ORBITQUANT_ROW_NORM_KERNEL(NAME, SCALAR_T, THREADS)                  \
 kernel void NAME(                                                            \
     const device SCALAR_T* input [[buffer(0)]],                              \
     device float* norms [[buffer(1)]],                                        \
@@ -122,14 +123,23 @@ kernel void NAME(                                                            \
     uint3 group_id [[threadgroup_position_in_grid]],                          \
     uint thread_index [[thread_index_in_threadgroup]],                        \
     uint3 group_size [[threads_per_threadgroup]]) {                           \
-  threadgroup float scratch[orbitquant_activation_threads];                   \
+  threadgroup float scratch[THREADS];                                         \
   orbitquant_row_norm_impl(                                                   \
       input, norms, rows, dim, scratch, group_id.x, thread_index, group_size.x); \
 }
 
-ORBITQUANT_ROW_NORM_KERNEL(orbitquant_row_norm_float, float)
-ORBITQUANT_ROW_NORM_KERNEL(orbitquant_row_norm_half, half)
-ORBITQUANT_ROW_NORM_KERNEL(orbitquant_row_norm_bfloat16, bfloat)
+ORBITQUANT_ROW_NORM_KERNEL(
+    orbitquant_row_norm_float, float, orbitquant_activation_threads)
+ORBITQUANT_ROW_NORM_KERNEL(
+    orbitquant_row_norm_half, half, orbitquant_activation_threads)
+ORBITQUANT_ROW_NORM_KERNEL(
+    orbitquant_row_norm_bfloat16, bfloat, orbitquant_activation_threads)
+ORBITQUANT_ROW_NORM_KERNEL(
+    orbitquant_row_norm_float_wide, float, orbitquant_wide_activation_threads)
+ORBITQUANT_ROW_NORM_KERNEL(
+    orbitquant_row_norm_half_wide, half, orbitquant_wide_activation_threads)
+ORBITQUANT_ROW_NORM_KERNEL(
+    orbitquant_row_norm_bfloat16_wide, bfloat, orbitquant_wide_activation_threads)
 
 #undef ORBITQUANT_ROW_NORM_KERNEL
 
@@ -229,18 +239,21 @@ def _mps_shader():
     return torch.mps.compile_shader(_MPS_KERNEL_SOURCE)
 
 
-def _activation_kernel_names(dtype: torch.dtype) -> tuple[str, str]:
+def _activation_kernel_names(dtype: torch.dtype) -> tuple[str, str, str]:
     names = {
         torch.float32: (
             "orbitquant_row_norm_float",
+            "orbitquant_row_norm_float_wide",
             "orbitquant_fused_activation_float",
         ),
         torch.float16: (
             "orbitquant_row_norm_half",
+            "orbitquant_row_norm_half_wide",
             "orbitquant_fused_activation_half",
         ),
         torch.bfloat16: (
             "orbitquant_row_norm_bfloat16",
+            "orbitquant_row_norm_bfloat16_wide",
             "orbitquant_fused_activation_bfloat16",
         ),
     }
@@ -296,16 +309,19 @@ def quantize_activations_with_mps(
     boundaries = boundaries.contiguous()
     norms = torch.empty(rows, device=x.device, dtype=torch.float32)
     output = torch.empty_like(flat)
-    norm_name, activation_name = _activation_kernel_names(x.dtype)
+    norm_name, wide_norm_name, activation_name = _activation_kernel_names(x.dtype)
     shader = _mps_shader()
+    activation_threads = (
+        512 if rotation.block_size == 4096 and rotation.num_blocks == 1 else 256
+    )
 
-    getattr(shader, norm_name)(
+    getattr(shader, wide_norm_name if activation_threads == 512 else norm_name)(
         flat,
         norms,
         rows,
         rotation.dim,
-        threads=[rows * 256, 1, 1],
-        group_size=[256, 1, 1],
+        threads=[rows * activation_threads, 1, 1],
+        group_size=[activation_threads, 1, 1],
     )
     groups = rows * rotation.num_blocks
     getattr(shader, activation_name)(
@@ -323,8 +339,8 @@ def quantize_activations_with_mps(
         centroids.numel(),
         rotation.normalization,
         eps,
-        threads=[groups * 256, 1, 1],
-        group_size=[256, 1, 1],
+        threads=[groups * activation_threads, 1, 1],
+        group_size=[activation_threads, 1, 1],
     )
     return output.reshape_as(contiguous)
 

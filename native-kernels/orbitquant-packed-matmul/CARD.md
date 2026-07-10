@@ -153,5 +153,23 @@ It also reports storage accounting for the packed weight path:
 the weight-side storage used by this operator; they are not end-to-end model
 VRAM measurements.
 
+### Metal reference results
+
+Measured on an Apple M2 Max with Torch 2.12.1, FP16 activations, W4 packed
+weights, `in_features=768`, and `out_features=2304`:
+
+| Rows | Packed Metal | Resident FP16 `F.linear` | Materialize + `F.linear` | Packed vs materialize |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.0470 ms | 0.0411 ms | 0.2310 ms | 4.92x |
+| 2 | 0.0439 ms | 0.0422 ms | 0.2371 ms | 5.40x |
+| 3 | 0.0451 ms | 0.0404 ms | 0.2348 ms | 5.20x |
+| 8 | 0.0420 ms | 0.0503 ms | 0.2512 ms | 5.97x |
+| 16 | 0.0459 ms | 0.0581 ms | 0.2512 ms | 5.47x |
+| 31 | 0.0428 ms | 0.0659 ms | 0.2623 ms | 6.12x |
+
+The packed weight payload, row norms, and centroids occupy 25.26% of the
+materialized FP16 weight size for this shape. The resident reference excludes
+weight materialization time and retains the complete FP16 matrix in memory.
+
 End-to-end FLUX.2 Klein 9B measurements and the SDNQ comparison are recorded in
 [`docs/flux2-klein-9b-sdnq-vs-orbitquant.md`](../../docs/flux2-klein-9b-sdnq-vs-orbitquant.md).

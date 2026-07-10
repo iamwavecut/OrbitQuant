@@ -127,10 +127,10 @@ static void dispatch_packed_matmul_kernel(
     int64_t block_k) {
   @autoreleasepool {
     const bool use_padded_mma =
-        x.scalar_type() != torch::kFloat && x.size(0) > 8 &&
+        x.scalar_type() != torch::kFloat && x.size(0) > 1 &&
         out_features % 32 == 0 && in_features % 32 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6);
-    const bool use_small_rows = x.size(0) <= 8;
+    const bool use_small_rows = x.size(0) <= 8 && !use_padded_mma;
     PackedMatmulPipelineCache &cache = packed_matmul_pipeline_cache();
     id<MTLComputePipelineState> pipeline =
         select_packed_matmul_pipeline(

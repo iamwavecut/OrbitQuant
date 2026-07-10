@@ -210,23 +210,38 @@ Measured operator latency on an Apple M2 Max with Torch 2.12.1, FP16
 activations, W4 packed weights, `in_features=768`, and
 `out_features=2304`:
 
-| Rows | Packed Metal | Materialize weight + `F.linear` | Packed speedup |
-| ---: | ---: | ---: | ---: |
-| 1 | 0.0508 ms | 0.2181 ms | 4.29x |
-| 3 | 0.0879 ms | 0.2188 ms | 2.49x |
-| 8 | 0.1698 ms | 0.2230 ms | 1.31x |
-| 9 | 0.0368 ms | 0.2264 ms | 6.15x |
-| 16 | 0.0485 ms | 0.2581 ms | 5.33x |
-| 31 | 0.0568 ms | 0.2635 ms | 4.64x |
+| Rows | Packed Metal | Resident FP16 `F.linear` | Materialize + `F.linear` | Packed vs materialize |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.0470 ms | 0.0411 ms | 0.2310 ms | 4.92x |
+| 2 | 0.0439 ms | 0.0422 ms | 0.2371 ms | 5.40x |
+| 3 | 0.0451 ms | 0.0404 ms | 0.2348 ms | 5.20x |
+| 8 | 0.0420 ms | 0.0503 ms | 0.2512 ms | 5.97x |
+| 9 | 0.0446 ms | 0.0501 ms | 0.2422 ms | 5.43x |
+| 16 | 0.0459 ms | 0.0581 ms | 0.2512 ms | 5.47x |
+| 31 | 0.0428 ms | 0.0659 ms | 0.2623 ms | 6.12x |
 
-Rows 1-8 use a SIMD-group packed matvec. Larger and partial tiles use the
-padded matrix path. Both paths consume packed indices directly and do not
-allocate a full floating-point weight matrix.
+One-row projections use the SIMD-group packed matvec. Aligned FP16/BF16
+projections with two or more rows use the padded matrix path; unsupported or
+unaligned shapes retain the generic packed path. All paths consume packed
+indices directly and do not allocate a full floating-point weight matrix.
 
 For this shape, packed indices, row norms, and centroids occupy 25.26% of the
 FP16 materialized weight size. A permanently resident pre-dequantized
-`F.linear` remains faster on these short rows, at the cost of retaining the
-full FP16 weight.
+`F.linear` can remain faster at one to three rows, at the cost of retaining the
+full FP16 weight; packed execution is faster in the measured 8-31 row cases.
+
+For a full 4096-coordinate RPBH block with constants resident on MPS, the
+fused activation stage uses a 512-thread group:
+
+| Rows | 256 threads | 512 threads | Speedup |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.0752 ms | 0.0562 ms | 1.34x |
+| 8 | 0.0797 ms | 0.0551 ms | 1.45x |
+| 64 | 0.0839 ms | 0.0693 ms | 1.21x |
+| 512 | 0.3229 ms | 0.2548 ms | 1.27x |
+| 4096 | 2.0754 ms | 1.7717 ms | 1.17x |
+
+Smaller or multi-block RPBH dimensions retain the 256-thread path.
 
 The Triton CUDA fallback passed on an NVIDIA B200 with Torch 2.8.0+cu128 and
 Triton 3.7.1. For the same 1x768 by 2304x768 W4 shape, activation quantization
