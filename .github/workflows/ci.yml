@@ -111,8 +111,30 @@ jobs:
             Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | `
             Format-List
           cmake --version
-          $env:CMAKE_GENERATOR = "Visual Studio 18 2026"
-          $env:CMAKE_GENERATOR_PLATFORM = "x64"
+          $vswhere = `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
+          }
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to initialize the MSVC x86_64 environment"
+          }
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
+          cl.exe 2>&1 | Select-Object -First 3
+          $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "2"
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
