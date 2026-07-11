@@ -141,14 +141,10 @@ jobs:
             }
           }
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
-          $ninja = "$env:GITHUB_WORKSPACE\.venv\Scripts\ninja.exe"
-          if (-not (Test-Path $ninja)) {
-            throw "venv Ninja executable was not found: $ninja"
-          }
-          $env:Path = "$(Split-Path $ninja);$env:Path"
           cl.exe 2>&1 | Select-Object -First 3
-          & $ninja --version
-          $env:CMAKE_GENERATOR = "Ninja"
+          $nmake = Get-Command nmake.exe -ErrorAction Stop
+          Write-Host "Using NMake: $($nmake.Source)"
+          $env:CMAKE_GENERATOR = "NMake Makefiles"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "2"
           & $python setup.py bdist_wheel --py-limited-api=cp39
