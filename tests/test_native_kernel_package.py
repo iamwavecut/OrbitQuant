@@ -101,6 +101,11 @@ def make_args():
         cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") if item]
     ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"
     return cmake_args, ninja_executable_path
+
+class Build:
+    def build_extension(self, ext):
+        build_temp = Path(self.build_temp) / ext.name
+        return build_temp
 """,
         encoding="utf-8",
     )
@@ -119,6 +124,8 @@ def make_args():
     prepared_setup = (project / "setup.py").read_text(encoding="utf-8")
     ast.parse(prepared_setup)
     assert 'os.environ.get("ORBITQUANT_CMAKE_MAKE_PROGRAM")' in prepared_setup
+    assert 'os.environ.get("ORBITQUANT_BUILD_TEMP", self.build_temp)' in prepared_setup
+    assert "build_temp = (Path(build_temp_root) / ext.name).resolve()" in prepared_setup
     assert 'return os.name != "nt" and which("ccache") is not None' in prepared_setup
     assert 'Path(ninja.BIN_DIR) / ("ninja.exe" if os.name == "nt" else "ninja")' in prepared_setup
     prepared_project = tomllib.loads(

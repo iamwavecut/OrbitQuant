@@ -67,6 +67,16 @@ def main() -> None:
         + '        cmake_args.append(f"-DCMAKE_MAKE_PROGRAM:FILEPATH={cmake_make_program}")\n',
         1,
     )
+    build_temp = "        build_temp = Path(self.build_temp) / ext.name"
+    if setup_text.count(build_temp) != 1:
+        raise RuntimeError("generated setup must contain one extension build temp")
+    setup_text = setup_text.replace(
+        build_temp,
+        '        build_temp_root = os.environ.get("ORBITQUANT_BUILD_TEMP", '
+        "self.build_temp)\n"
+        "        build_temp = (Path(build_temp_root) / ext.name).resolve()",
+        1,
+    )
     setup.write_text(setup_text, encoding="utf-8")
 
 

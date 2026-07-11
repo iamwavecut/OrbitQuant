@@ -147,6 +147,7 @@ jobs:
           $env:CMAKE_GENERATOR = "NMake Makefiles"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:ORBITQUANT_CMAKE_MAKE_PROGRAM = $nmake.Source
+          $env:ORBITQUANT_BUILD_TEMP = "$env:RUNNER_TEMP\orbitquant-native-build"
           $env:MAX_JOBS = "2"
           & $python setup.py bdist_wheel --py-limited-api=cp39
 
