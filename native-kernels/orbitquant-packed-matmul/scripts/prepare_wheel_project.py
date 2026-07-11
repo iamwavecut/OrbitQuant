@@ -77,6 +77,18 @@ def main() -> None:
         "        build_temp = (Path(build_temp_root) / ext.name).resolve()",
         1,
     )
+    windows_multi_config = (
+        '        if sys.platform == "win32":\n'
+        "            # Move the dylib one folder up for discovery."
+    )
+    if setup_text.count(windows_multi_config) != 1:
+        raise RuntimeError("generated setup must contain one Windows output move")
+    setup_text = setup_text.replace(
+        windows_multi_config,
+        '        if sys.platform == "win32" and (extdir / cfg).is_dir():\n'
+        "            # Move the dylib one folder up for discovery.",
+        1,
+    )
     setup.write_text(setup_text, encoding="utf-8")
 
 

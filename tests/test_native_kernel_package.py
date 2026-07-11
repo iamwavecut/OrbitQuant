@@ -105,6 +105,12 @@ def make_args():
 class Build:
     def build_extension(self, ext):
         build_temp = Path(self.build_temp) / ext.name
+        extdir = Path("output")
+        cfg = "Release"
+        if sys.platform == "win32":
+            # Move the dylib one folder up for discovery.
+            for filename in os.listdir(extdir / cfg):
+                move(extdir / cfg / filename, extdir / filename)
         return build_temp
 """,
         encoding="utf-8",
@@ -126,6 +132,7 @@ class Build:
     assert 'os.environ.get("ORBITQUANT_CMAKE_MAKE_PROGRAM")' in prepared_setup
     assert 'os.environ.get("ORBITQUANT_BUILD_TEMP", self.build_temp)' in prepared_setup
     assert "build_temp = (Path(build_temp_root) / ext.name).resolve()" in prepared_setup
+    assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in prepared_setup
     assert 'return os.name != "nt" and which("ccache") is not None' in prepared_setup
     assert 'Path(ninja.BIN_DIR) / ("ninja.exe" if os.name == "nt" else "ninja")' in prepared_setup
     prepared_project = tomllib.loads(
