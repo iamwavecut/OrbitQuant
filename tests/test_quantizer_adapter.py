@@ -1,7 +1,9 @@
 from collections import OrderedDict
+from pathlib import Path
 
 import pytest
 import torch
+from safetensors.torch import save_file
 
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
@@ -228,7 +230,10 @@ def test_quantizer_defaults_to_auto_quantization_device(monkeypatch):
     assert seen_values == ["auto"]
 
 
-def test_transformers_streaming_conversion_moves_weight_to_quantization_device(monkeypatch):
+def test_transformers_streaming_conversion_passes_tile_quantization_device(
+    tmp_path,
+    monkeypatch,
+):
     pytest.importorskip("transformers")
     from orbitquant.transformers_ops import OrbitQuantWeightQuantize
 
@@ -238,17 +243,27 @@ def test_transformers_streaming_conversion_moves_weight_to_quantization_device(m
         pre_quantized=False,
         quantization_device="cpu",
     )
-    quantizer._process_model_before_weight_loading(model, checkpoint_files=["dummy.safetensors"])
-    seen_weights = []
+    checkpoint = tmp_path / "model.safetensors"
+    save_file(
+        {
+            "transformer_blocks.0.attn.to_q.weight": model.transformer_blocks[0][
+                "attn"
+            ]["to_q"].weight
+        },
+        checkpoint,
+    )
+    quantizer._process_model_before_weight_loading(model, checkpoint_files=[checkpoint])
+    seen_calls = []
+    original_from_weight = OrbitQuantLinear.from_weight.__func__
 
-    def fake_move_tensor_for_quantization(tensor):
-        seen_weights.append(tensor)
-        return tensor
+    def recording_from_weight(cls, weight, **kwargs):
+        seen_calls.append((weight.device, kwargs["quantization_device"]))
+        return original_from_weight(cls, weight, **kwargs)
 
     monkeypatch.setattr(
-        quantizer,
-        "move_tensor_for_quantization",
-        fake_move_tensor_for_quantization,
+        OrbitQuantLinear,
+        "from_weight",
+        classmethod(recording_from_weight),
     )
     op = OrbitQuantWeightQuantize(quantizer)
 
@@ -258,16 +273,15 @@ def test_transformers_streaming_conversion_moves_weight_to_quantization_device(m
         model=model,
     )
 
-    assert seen_weights
+    assert seen_calls == [(torch.device("cpu"), torch.device("cpu"))]
     assert set(results) == {
         "transformer_blocks.0.attn.to_q.packed_weight_indices",
         "transformer_blocks.0.attn.to_q.row_norms",
     }
 
 
-def test_transformers_streaming_quantizer_declares_and_clears_weight_conversions():
+def test_transformers_streaming_quantizer_builds_and_cleans_bounded_packed_shard(tmp_path):
     pytest.importorskip("transformers.core_model_loading")
-    from orbitquant.transformers_ops import OrbitQuantWeightQuantize
 
     model = TinyQuantizerTransformer()
     model.transformer_blocks[0]["modulation"] = torch.nn.Linear(16, 32)
@@ -279,24 +293,40 @@ def test_transformers_streaming_quantizer_declares_and_clears_weight_conversions
 
     assert quantizer.get_weight_conversions() == []
 
-    quantizer._process_model_before_weight_loading(model, checkpoint_files=["dummy.safetensors"])
-    conversions = quantizer.get_weight_conversions()
-    targets = {tuple(conversion.target_patterns): conversion for conversion in conversions}
+    checkpoint = tmp_path / "model.safetensors"
+    save_file(
+        {
+            "transformer_blocks.0.attn.to_q.weight": model.transformer_blocks[0][
+                "attn"
+            ]["to_q"].weight,
+            "transformer_blocks.0.modulation.weight": model.transformer_blocks[0][
+                "modulation"
+            ].weight,
+        },
+        checkpoint,
+    )
+    checkpoint_files = [checkpoint]
+    quantizer._process_model_before_weight_loading(
+        model,
+        checkpoint_files=checkpoint_files,
+    )
+    packed_checkpoint = checkpoint_files[-1]
 
-    assert set(targets) == {
-        ("transformer_blocks.0.attn.to_q.packed_weight_indices",),
-        ("transformer_blocks.0.modulation.packed_weight",),
-    }
-    for conversion in conversions:
-        assert conversion.source_patterns[0].endswith(".weight")
-        assert len(conversion.operations) == 1
-        assert isinstance(conversion.operations[0], OrbitQuantWeightQuantize)
+    assert quantizer.get_weight_conversions() == []
+    assert len(checkpoint_files) == 2
+    assert packed_checkpoint.endswith("orbitquant-streaming.safetensors")
+    assert Path(packed_checkpoint).is_file()
+    assert isinstance(model.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    assert isinstance(model.transformer_blocks[0]["modulation"], RTNInt4Linear)
+    assert any(
+        "transformer_blocks\\.0\\.attn\\.to_q\\.weight" in pattern
+        for pattern in model._keys_to_ignore_on_load_unexpected
+    )
 
-    model._weight_conversions = conversions
     quantizer._process_model_after_weight_loading(model)
 
-    assert not hasattr(model, "_weight_conversions")
     assert quantizer.get_weight_conversions() == []
+    assert not Path(packed_checkpoint).exists()
 
 
 def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():

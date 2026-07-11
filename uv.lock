@@ -1109,6 +1109,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
@@ -1139,6 +1140,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "packaging", specifier = ">=24.0" },
     { name = "pillow", marker = "extra == 'eval'", specifier = ">=11.0" },
+    { name = "psutil", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12" },

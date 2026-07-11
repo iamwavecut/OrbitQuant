@@ -1,4 +1,6 @@
+import gc
 import json
+import weakref
 
 import pytest
 import torch
@@ -35,20 +37,83 @@ class TinyDiffusersTransformer(diffusers.ModelMixin, diffusers.ConfigMixin):
         return self.proj_out(self.transformer_blocks[0]["attn"]["to_q"](x))
 
 
-def test_diffusers_modelmixin_from_pretrained_quantizes_on_load(tmp_path):
+def test_diffusers_modelmixin_from_pretrained_quantizes_on_load(tmp_path, monkeypatch):
     register_hf_quantizers()
     model = TinyDiffusersTransformer()
+    config = OrbitQuantConfig(block_size=8, weight_row_tile_size=2)
+    expected = OrbitQuantLinear.from_linear(
+        model.transformer_blocks[0]["attn"]["to_q"],
+        config=config,
+        module_name="transformer_blocks.0.attn.to_q",
+    )
     model.save_pretrained(tmp_path)
+
+    def fail_post_load_quantization(*args, **kwargs):
+        raise AssertionError("Diffusers load fell back to post-load quantization")
+
+    monkeypatch.setattr(
+        "orbitquant.quantizer.quantize_linear_modules",
+        fail_post_load_quantization,
+    )
 
     loaded = TinyDiffusersTransformer.from_pretrained(
         tmp_path,
-        quantization_config=OrbitQuantConfig(block_size=8),
+        quantization_config=config,
     )
 
-    assert isinstance(loaded.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+    quantized = loaded.transformer_blocks[0]["attn"]["to_q"]
+    assert isinstance(quantized, OrbitQuantLinear)
+    assert torch.equal(quantized.packed_weight_indices, expected.packed_weight_indices)
+    assert torch.equal(quantized.row_norms, expected.row_norms)
+    assert loaded.hf_quantizer.released_source_tensor_bytes > 0
+    assert loaded.hf_quantizer.source_page_release_failures == 0
     assert isinstance(loaded.proj_out, torch.nn.Linear)
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(loaded(x)).all()
+
+
+def test_diffusers_streaming_sharded_safetensors_releases_source_weights(
+    tmp_path,
+    monkeypatch,
+):
+    register_hf_quantizers()
+    model = TinyDiffusersTransformer()
+    model.save_pretrained(tmp_path, max_shard_size="1KB")
+    assert (tmp_path / "diffusion_pytorch_model.safetensors.index.json").is_file()
+    source_refs = []
+    original_from_weight = OrbitQuantLinear.from_weight.__func__
+
+    def recording_from_weight(cls, weight, **kwargs):
+        source_refs.append(weakref.ref(weight))
+        return original_from_weight(cls, weight, **kwargs)
+
+    monkeypatch.setattr(
+        OrbitQuantLinear,
+        "from_weight",
+        classmethod(recording_from_weight),
+    )
+
+    loaded = TinyDiffusersTransformer.from_pretrained(
+        tmp_path,
+        quantization_config=OrbitQuantConfig(block_size=8, weight_row_tile_size=2),
+    )
+    gc.collect()
+
+    assert source_refs
+    assert all(ref() is None for ref in source_refs)
+    assert isinstance(loaded.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
+
+
+def test_diffusers_on_the_fly_bounded_mode_rejects_pickle_checkpoint(tmp_path):
+    register_hf_quantizers()
+    TinyDiffusersTransformer().save_pretrained(tmp_path, safe_serialization=False)
+
+    with pytest.raises(RuntimeError, match="requires safetensors checkpoints"):
+        TinyDiffusersTransformer.from_pretrained(
+            tmp_path,
+            quantization_config=OrbitQuantConfig(block_size=8),
+            use_safetensors=False,
+        )
 
 
 def test_diffusers_modelmixin_save_pretrained_round_trips_pre_quantized_model(

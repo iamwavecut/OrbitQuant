@@ -54,6 +54,9 @@ DEFAULT_TESTS=(
   "tests/test_pipeline_helpers.py"
   "tests/test_diffusers_modelmixin_integration.py"
   "tests/test_transformers_pretrained_integration.py"
+  "tests/test_offload_integration.py"
+  "tests/test_streaming_quantization.py"
+  "tests/test_universal_transformers.py"
 )
 
 compat_tests=("${DEFAULT_TESTS[@]}")
@@ -193,7 +196,7 @@ prepare_venv() {
     install_with_python \
       "$python_path" \
       "diffusers>=0.35" \
-      "transformers>=4.53" \
+      "transformers>=5.0,<6" \
       "accelerate>=1.8" \
       "huggingface_hub>=0.33" \
       "safetensors>=0.5" \

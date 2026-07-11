@@ -46,6 +46,7 @@ eval = [
   "pillow>=11.0",
 ]
 dev = [
+  "psutil>=7.0",
   "pytest>=8.4",
   "pytest-xdist>=3.8",
   "ruff>=0.12",

@@ -15,6 +15,12 @@ def test_readme_documents_the_universal_public_contract():
     assert "quantize_model" in readme
     assert "save_pretrained" in readme
     assert "snapshot_download" in readme
+    assert "build_diffusers_pipeline_quantization_config" in readme
+    assert "enable_model_cpu_offload" in readme
+    assert "enable_sequential_cpu_offload" in readme
+    assert "requires safetensors" in normalized
+    assert "RSS separately from mmap virtual size" in normalized
+    assert "weight_row_tile_size" not in readme
     assert 'runtime_mode="auto_fused"' in readme
     assert 'runtime_mode="dequant_bf16"' in readme
     assert "does not guarantee a quality-preserving bit setting" in normalized

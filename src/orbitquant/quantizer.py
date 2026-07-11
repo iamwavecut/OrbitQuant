@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import torch
 
 from orbitquant.adaln import RTNInt4Linear
+from orbitquant.checkpoint_streaming import (
+    StreamingCheckpoint,
+    build_diffusers_streaming_conversion,
+    build_transformers_streaming_checkpoint,
+)
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import (
@@ -14,10 +20,22 @@ from orbitquant.modeling import (
     quantize_linear_modules,
 )
 from orbitquant.policies import classify_linear_modules
+from orbitquant.streaming import release_cpu_tensor_pages
 
 _ORBITQUANT_STATE_TENSORS = {"packed_weight_indices", "row_norms", "debug_weight", "bias"}
 _RTN_INT4_STATE_TENSORS = {"packed_weight", "scales", "bias"}
 _MISSING = object()
+
+
+def _require_safetensors(checkpoint_files: list[Any], *, framework: str) -> None:
+    unsupported = [str(path) for path in checkpoint_files if not str(path).endswith(".safetensors")]
+    if unsupported:
+        raise RuntimeError(
+            f"OrbitQuant bounded-memory {framework} conversion requires safetensors "
+            f"checkpoints; unsupported files: {unsupported}. Convert the source checkpoint "
+            "to safetensors or load it without an OrbitQuant quantization_config and use the "
+            "explicit post-load helper without a bounded-memory guarantee."
+        )
 
 
 def _hf_base_classes() -> tuple[type, ...]:
@@ -159,7 +177,23 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_orbit_module_names: list[str] = []
         self._transformers_adaln_module_names: list[str] = []
         self._transformers_base_model_prefix = ""
+        self._transformers_preconverted_checkpoint = False
+        self._transformers_streaming_checkpoint: StreamingCheckpoint | None = None
+        self._diffusers_streaming_quantization = False
+        self._diffusers_model: Any | None = None
+        self._diffusers_loaded_keys: list[str] | None = None
+        self._diffusers_checkpoint_files: list[Any] = []
+        self._diffusers_packed_state: dict[str, torch.Tensor] | None = None
+        self._diffusers_replaced_source_keys: set[str] = set()
+        self.released_source_tensor_bytes = 0
+        self.source_page_release_failures = 0
         self.quantization_device = quantization_device
+
+    def release_source_tensor(self, tensor: torch.Tensor) -> None:
+        if release_cpu_tensor_pages(tensor):
+            self.released_source_tensor_bytes += tensor.numel() * tensor.element_size()
+        elif tensor.device.type == "cpu":
+            self.source_page_release_failures += 1
 
     def _quantization_device_from_kwargs(self, kwargs: dict[str, Any]) -> torch.device | None:
         explicit_device = _normalise_quantization_device(kwargs.get("quantization_device"))
@@ -213,7 +247,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         *args: Any,
         **kwargs: Any,
     ) -> bool:
-        if not self.pre_quantized:
+        if not self.pre_quantized and not self._diffusers_streaming_quantization:
             return False
         try:
             module, tensor_name = _module_and_tensor_name(model, param_name)
@@ -234,7 +268,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         unexpected_keys: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
-        if self.pre_quantized:
+        if self.pre_quantized or self._diffusers_streaming_quantization:
             module, tensor_name = _module_and_tensor_name(model, param_name)
             if not _is_prequantized_state_tensor(module, tensor_name):
                 raise ValueError(f"{param_name} is not an OrbitQuant pre-quantized tensor")
@@ -269,6 +303,57 @@ class OrbitQuantizer(*_hf_base_classes()):
         )
         raise RuntimeError(msg)
 
+    @property
+    def supports_parallel_loading(self) -> bool:
+        return self.pre_quantized
+
+    def maybe_update_loaded_keys(
+        self,
+        loaded_keys: list[str],
+        checkpoint_files: list[Any],
+    ) -> list[str]:
+        if self.pre_quantized:
+            return loaded_keys
+        _require_safetensors(checkpoint_files, framework="Diffusers")
+        self._diffusers_loaded_keys = loaded_keys
+        self._diffusers_checkpoint_files = list(checkpoint_files)
+        return loaded_keys
+
+    def _diffusers_streaming_key_mapping(self) -> dict[str, list[str]]:
+        mapping: dict[str, list[str]] = {}
+        for name in self._transformers_orbit_module_names:
+            outputs = (
+                [f"{name}.debug_weight"]
+                if self.quantization_config.runtime_mode == "debug_no_quant"
+                else [f"{name}.packed_weight_indices", f"{name}.row_norms"]
+            )
+            mapping[f"{name}.weight"] = outputs
+        for name in self._transformers_adaln_module_names:
+            mapping[f"{name}.weight"] = [f"{name}.packed_weight", f"{name}.scales"]
+        return mapping
+
+    def _update_diffusers_loaded_keys(self) -> None:
+        if self._diffusers_loaded_keys is None:
+            return
+        mapping = self._diffusers_streaming_key_mapping()
+        updated: list[str] = []
+        for key in self._diffusers_loaded_keys:
+            updated.extend(mapping.get(key, [key]))
+        self._diffusers_loaded_keys[:] = updated
+
+    def maybe_update_state_dict(self, state_dict: dict[str, Any]) -> dict[str, Any]:
+        if not self._diffusers_streaming_quantization:
+            return state_dict
+        if self._diffusers_model is None:
+            raise RuntimeError("Diffusers streaming conversion has no prepared model skeleton")
+
+        for source_key in self._diffusers_replaced_source_keys:
+            state_dict.pop(source_key, None)
+        if self._diffusers_packed_state is not None:
+            state_dict.update(self._diffusers_packed_state)
+            self._diffusers_packed_state = None
+        return state_dict
+
     def check_quantized_param_shape(
         self,
         param_name: str,
@@ -292,7 +377,10 @@ class OrbitQuantizer(*_hf_base_classes()):
         return state_or_model, {}
 
     def get_weight_conversions(self) -> list[Any]:
-        if not self._transformers_streaming_quantization:
+        if (
+            not self._transformers_streaming_quantization
+            or self._transformers_preconverted_checkpoint
+        ):
             return []
         from transformers.core_model_loading import WeightConverter
 
@@ -337,14 +425,22 @@ class OrbitQuantizer(*_hf_base_classes()):
 
     def _process_model_before_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
         model.quantization_config = self.quantization_config
+        checkpoint_files = kwargs.get("checkpoint_files")
         self._transformers_postload_quantization = (
-            not self.pre_quantized and "checkpoint_files" in kwargs
+            not self.pre_quantized and checkpoint_files is not None
         )
         self._transformers_streaming_quantization = self._transformers_postload_quantization
+        if self._transformers_streaming_quantization:
+            _require_safetensors(checkpoint_files, framework="Transformers")
+        self._diffusers_streaming_quantization = (
+            not self.pre_quantized
+            and not self._transformers_streaming_quantization
+            and bool(self._diffusers_checkpoint_files)
+        )
         self._transformers_orbit_module_names = []
         self._transformers_adaln_module_names = []
         self._transformers_base_model_prefix = str(getattr(model, "base_model_prefix", "") or "")
-        if self._transformers_streaming_quantization:
+        if self._transformers_streaming_quantization or self._diffusers_streaming_quantization:
             decisions = classify_linear_modules(model, self.quantization_config)
             self._transformers_orbit_module_names = [
                 name for name, decision in decisions.items() if decision.action == "orbitquant"
@@ -352,12 +448,68 @@ class OrbitQuantizer(*_hf_base_classes()):
             self._transformers_adaln_module_names = [
                 name for name, decision in decisions.items() if decision.action == "adaln_int4_rtn"
             ]
-        if self.pre_quantized or self._transformers_streaming_quantization:
-            prepare_prequantized_linear_modules(model, self.quantization_config)
+        if self._transformers_streaming_quantization:
+            streaming_checkpoint = build_transformers_streaming_checkpoint(
+                model,
+                self.quantization_config,
+                checkpoint_files,
+                orbit_module_names=self._transformers_orbit_module_names,
+                adaln_module_names=self._transformers_adaln_module_names,
+                base_model_prefix=self._transformers_base_model_prefix,
+                quantization_device=self.quantization_device,
+            )
+            checkpoint_files.append(str(streaming_checkpoint.packed_file))
+            self._transformers_streaming_checkpoint = streaming_checkpoint
+            self._transformers_preconverted_checkpoint = True
+            self.released_source_tensor_bytes = streaming_checkpoint.source_tensor_bytes
+            ignored_source_keys = set(
+                getattr(model, "_keys_to_ignore_on_load_unexpected", None) or ()
+            )
+            ignored_source_keys.update(
+                rf"^{re.escape(key)}$" for key in streaming_checkpoint.replaced_source_keys
+            )
+            for name in (
+                self._transformers_orbit_module_names
+                + self._transformers_adaln_module_names
+            ):
+                ignored_source_keys.add(rf"^{re.escape(f'{name}.weight')}$")
+                if self._transformers_base_model_prefix:
+                    ignored_source_keys.add(
+                        rf"^{re.escape(f'{self._transformers_base_model_prefix}.{name}.weight')}$"
+                    )
+            model._keys_to_ignore_on_load_unexpected = ignored_source_keys
+        if self._diffusers_streaming_quantization:
+            conversion = build_diffusers_streaming_conversion(
+                model,
+                self.quantization_config,
+                self._diffusers_checkpoint_files,
+                orbit_module_names=self._transformers_orbit_module_names,
+                adaln_module_names=self._transformers_adaln_module_names,
+                quantization_device=self.quantization_device,
+            )
+            self._diffusers_packed_state = conversion.packed_state
+            self._diffusers_replaced_source_keys = set(conversion.replaced_source_keys)
+            self.released_source_tensor_bytes = conversion.source_tensor_bytes
+        if (
+            self.pre_quantized
+            or self._transformers_streaming_quantization
+            or self._diffusers_streaming_quantization
+        ):
+            prepare_prequantized_linear_modules(
+                model,
+                self.quantization_config,
+            )
+        if self._diffusers_streaming_quantization:
+            self._diffusers_model = model
+            self._update_diffusers_loaded_keys()
         return model
 
     def _process_model_after_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
-        if not self.pre_quantized and not self._transformers_streaming_quantization:
+        if (
+            not self.pre_quantized
+            and not self._transformers_streaming_quantization
+            and not self._diffusers_streaming_quantization
+        ):
             quantize_linear_modules(
                 model,
                 self.quantization_config,
@@ -371,6 +523,19 @@ class OrbitQuantizer(*_hf_base_classes()):
             self._transformers_orbit_module_names = []
             self._transformers_adaln_module_names = []
             self._transformers_base_model_prefix = ""
+            self._transformers_preconverted_checkpoint = False
+            if self._transformers_streaming_checkpoint is not None:
+                self._transformers_streaming_checkpoint.directory.cleanup()
+                self._transformers_streaming_checkpoint = None
+        if self._diffusers_streaming_quantization:
+            self._diffusers_streaming_quantization = False
+            self._diffusers_model = None
+            self._diffusers_loaded_keys = None
+            self._diffusers_checkpoint_files = []
+            self._diffusers_packed_state = None
+            self._diffusers_replaced_source_keys = set()
+            self._transformers_orbit_module_names = []
+            self._transformers_adaln_module_names = []
         return model
 
     def _dequantize(self, model: Any) -> Any:

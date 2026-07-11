@@ -46,37 +46,52 @@ Diffusers versions. The default `target_policy="auto"` selects a known
 paper policy where applicable and otherwise uses the universal policy.
 
 ```python
-import torch
 import orbitquant
-from transformers import AutoModelForCausalLM
+from transformers import AutoModel
+from orbitquant import OrbitQuantConfig
 
-config = orbitquant.recipe(
-    "w4a4",
-    runtime_mode="auto_fused",
+model_id = "google/vit-base-patch16-224"
+model = AutoModel.from_pretrained(
+    model_id,
+    quantization_config=OrbitQuantConfig(target_policy="auto"),
+    low_cpu_mem_usage=True,
 )
-
-model = AutoModelForCausalLM.from_pretrained(
-    "your-org/your-transformer",
-    dtype=torch.bfloat16,
-    quantization_config=config,
-)
-model.save_pretrained("./your-transformer-orbitquant-w4a4")
 ```
 
-Load the packed model after importing the backend:
+This is checkpoint-level conversion, not post-load module replacement. For each
+target weight OrbitQuant reads aligned row tiles from safetensors, closes that
+source mapping, and feeds a temporary packed shard back to the normal
+Transformers loader. Peak model-side memory is bounded by packed resident state,
+one source row tile, quantization workspace, intentionally skipped state, and
+runtime overhead. The full source transformer is never resident at once.
+
+Save an offline packed artifact without loading the source model again:
+
+```python
+model.save_pretrained("./model-orbitquant-w4a4", max_shard_size="2GB")
+```
+
+Load the packed artifact after importing the backend:
 
 ```python
 import orbitquant
-from transformers import AutoModelForCausalLM
+from transformers import AutoModel
 
-model = AutoModelForCausalLM.from_pretrained(
-    "./your-transformer-orbitquant-w4a4",
+model = AutoModel.from_pretrained(
+    "./model-orbitquant-w4a4",
     device_map="auto",
 )
 ```
 
 Named recipes are `w4a4`, `w3a3`, `w2a4`, `w2a3`, and `w4a6`. They create a
 normal `OrbitQuantConfig`, so every field can be overridden.
+
+Bounded on-the-fly conversion requires safetensors and the Transformers 5
+weight-conversion APIs. Local paths and Hub model IDs use the normal
+`revision`, `variant`, token/auth, `device_map`, `max_memory`, CPU, and disk
+offload arguments. Pickle/`.bin` checkpoints fail with an actionable error;
+use the explicit post-load helper only when accepting that it has no
+checkpoint-level memory guarantee.
 
 ## Inspect Coverage
 
@@ -118,7 +133,7 @@ Explicit dtype overrides remain available through `modules_dtype_dict`.
 ## Quantize An Instantiated Module
 
 For ordinary PyTorch models or frameworks that do not use Hugging Face loading
-hooks:
+hooks, or as an explicit compatibility fallback:
 
 ```python
 from orbitquant import quantize_model, recipe
@@ -130,6 +145,10 @@ summary = quantize_model(
 )
 print(summary.quantized_modules)
 ```
+
+Here `staging_mode="streaming"` limits device staging per module only. The
+source model is already loaded, so this helper does not make a bounded host-RAM
+claim.
 
 The replacement supports arbitrary leading dimensions and treats the final
 dimension as `in_features`, including sequence, image-token, and video-token
@@ -159,38 +178,56 @@ silently replacing them.
 
 ## Diffusers
 
-Quantize the denoiser component of a pipeline:
+Quantize the denoiser while loading an arbitrary compatible pipeline:
 
 ```python
 import torch
+import orbitquant
 from diffusers import DiffusionPipeline
-from orbitquant import quantize_pipeline, recipe, save_quantized_pipeline_component
+from orbitquant import (
+    OrbitQuantConfig,
+    build_diffusers_pipeline_quantization_config,
+)
 
+model_id = "black-forest-labs/FLUX.1-schnell"
+qconfig = build_diffusers_pipeline_quantization_config(
+    OrbitQuantConfig(target_policy="auto"),
+    components="transformer",
+)
 pipe = DiffusionPipeline.from_pretrained(
-    "black-forest-labs/FLUX.2-klein-4B",
+    model_id,
+    quantization_config=qconfig,
     torch_dtype=torch.bfloat16,
 )
-config = recipe("w4a4", target_policy="flux2")
-summary = quantize_pipeline(
-    pipe,
-    config,
-    component="transformer",
-    quantization_device="cuda",
-)
-save_quantized_pipeline_component(
-    pipe,
-    "./flux2-klein-orbitquant-w4a4",
-    config=config,
-    component="transformer",
-    source_model_id="black-forest-labs/FLUX.2-klein-4B",
-    summary=summary,
-)
+pipe.enable_model_cpu_offload()
 ```
 
+Use sequential offload without an OrbitQuant-specific hook or preparation step:
+
+```python
+pipe = DiffusionPipeline.from_pretrained(
+    model_id,
+    quantization_config=qconfig,
+    torch_dtype=torch.bfloat16,
+)
+pipe.enable_sequential_cpu_offload()
+```
+
+Save the packed pipeline for later prequantized loading:
+
+```python
+pipe.save_pretrained("./pipeline-orbitquant", safe_serialization=True)
+```
+
+The default component is only `transformer`; text encoders require an explicit
+component opt-in. Diffusers uses the same safetensors row-sliced conversion and
+normal `PipelineQuantizationConfig` loading path. Unknown architectures receive
+structural `target_policy="auto"` coverage, not a quality guarantee; inspect the
+policy and validate output quality before publishing an artifact.
+
 Published FLUX, Z-Image, and Wan repositories are compact Diffusers component
-artifacts. Image model cards contain the matching pipeline code, native
-generation settings, and a ten-prompt full-resolution BF16-vs-OrbitQuant
-comparison matrix.
+artifacts. Their model cards contain the matching pipeline code and validation
+evidence.
 
 Load a published component artifact together with its recorded source pipeline:
 
@@ -209,6 +246,33 @@ pipe = load_quantized_pipeline_from_artifact(
     runtime_mode="auto_fused",
 )
 ```
+
+## Reproduce Load Memory
+
+The memory harness runs ordinary, on-the-fly, and prequantized loads in separate
+processes and reports RSS separately from mmap virtual size:
+
+```bash
+python scripts/measure_streaming_load_memory.py \
+  --framework transformers \
+  --model-id google/vit-base-patch16-224 \
+  --prequantized-model-id ./vit-base-orbitquant \
+  --torch-dtype bfloat16 \
+  --output ./memory-results.json
+```
+
+One CPU/MPS host run with Torch 2.12.1 measured:
+
+| Load | Peak RSS | Virtual/mmap peak | Resident state | Disk artifact | Wall time |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| BF16 source | 705.7 MiB | 416.3 GiB | 164.8 MiB | 330.3 MiB | 1.57 s |
+| On-the-fly OrbitQuant | 436.6 MiB | 416.4 GiB | 43.4 MiB | 330.3 MiB source | 3.01 s |
+| Prequantized | 331.3 MiB | 415.9 GiB | 43.4 MiB | 43.5 MiB | 0.14 s |
+
+The streaming run processed 324.0 MiB of selected source tensors with a 9.0
+MiB largest source tensor, retained no full dequantized cache, and reported no
+source-release failure. CUDA allocated/reserved and NVML fields are emitted
+when CUDA and NVML are available; they were unavailable for this Mac run.
 
 ## Packed Runtime
 

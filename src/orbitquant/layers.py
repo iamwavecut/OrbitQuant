@@ -10,6 +10,7 @@ from orbitquant.kernels import quantize_activations_kernel, select_backend
 from orbitquant.linear_adapters import canonical_linear_weight, linear_module_spec
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
+from orbitquant.streaming import accelerate_hook_offloads, iter_aligned_row_tiles
 
 _PACKED_MATMUL_PROBE_MISSING = object()
 _NATIVE_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
@@ -91,6 +92,95 @@ def _quantize_weight_pack(
     return pack_lowbit(weight_indices, bits=bits, validate=False)
 
 
+def _quantize_weight_bounded(
+    weight: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook,
+    bits: int,
+    eps: float,
+    row_tile_size: int,
+    quantization_device: torch.device | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Quantize a matrix with workspace bounded by one aligned row tile."""
+
+    if weight.ndim != 2:
+        raise ValueError("weight must be a matrix")
+    out_features, in_features = weight.shape
+    output_device = weight.device
+    work_device = output_device if quantization_device is None else quantization_device
+    packed = torch.empty(
+        _packed_length(out_features * in_features, bits),
+        dtype=torch.uint8,
+        device=output_device,
+    )
+    row_norms_output = torch.empty(
+        out_features,
+        dtype=torch.bfloat16,
+        device=output_device,
+    )
+    packed_offset = 0
+
+    for row_start, row_end in iter_aligned_row_tiles(
+        out_features,
+        in_features,
+        bits,
+        row_tile_size,
+    ):
+        tile = weight[row_start:row_end].to(device=work_device)
+        if tile.is_cuda:
+            from orbitquant.kernels.triton_cuda import row_norms_with_triton
+
+            row_norms = row_norms_with_triton(tile, eps=eps)
+            quantization_weight = tile
+        else:
+            quantization_weight = tile.to(torch.float32)
+            row_norms = quantization_weight.norm(dim=-1)
+        packed_tile = _quantize_weight_pack(
+            quantization_weight,
+            row_norms,
+            rotation=rotation,
+            codebook=codebook,
+            bits=bits,
+            eps=eps,
+        )
+        packed_end = packed_offset + packed_tile.numel()
+        packed[packed_offset:packed_end].copy_(packed_tile.to(device=output_device))
+        row_norms_output[row_start:row_end].copy_(
+            row_norms.to(device=output_device, dtype=torch.bfloat16)
+        )
+        packed_offset = packed_end
+
+    if packed_offset != packed.numel():
+        raise RuntimeError(
+            f"row-tiled packing wrote {packed_offset} bytes, expected {packed.numel()}"
+        )
+    return packed, row_norms_output
+
+
+def _rotate_weight_bounded(
+    weight: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    row_tile_size: int,
+    quantization_device: torch.device | None = None,
+) -> torch.Tensor:
+    output_device = weight.device
+    work_device = output_device if quantization_device is None else quantization_device
+    rotated = torch.empty(weight.shape, dtype=torch.float32, device=output_device)
+    for row_start, row_end in iter_aligned_row_tiles(
+        weight.shape[0],
+        weight.shape[1],
+        8,
+        row_tile_size,
+    ):
+        tile = weight[row_start:row_end].to(device=work_device, dtype=torch.float32)
+        rotated[row_start:row_end].copy_(
+            rotation.apply_to_weight(tile).to(device=output_device)
+        )
+    return rotated
+
+
 def _native_packed_matmul_load_error() -> Exception | None:
     global _NATIVE_PACKED_MATMUL_LOAD_ERROR
     if _NATIVE_PACKED_MATMUL_LOAD_ERROR is not _PACKED_MATMUL_PROBE_MISSING:
@@ -132,6 +222,11 @@ class OrbitQuantLinear(nn.Module):
     or Triton kernels are available. The explicit ``dequant_bf16`` mode keeps
     the compatibility/debug reference path.
     """
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name == "_hf_hook" and accelerate_hook_offloads(self):
+            self.clear_dequantized_cache()
 
     def __init__(
         self,
@@ -207,11 +302,13 @@ class OrbitQuantLinear(nn.Module):
             self.bias = nn.Parameter(bias.detach().clone(), requires_grad=False)
 
         if packed_weight_indices is not None:
-            self.register_buffer("packed_weight_indices", packed_weight_indices)
+            self.packed_weight_indices = nn.Parameter(
+                packed_weight_indices, requires_grad=False
+            )
         else:
             self.packed_weight_indices = None
         if row_norms is not None:
-            self.register_buffer("row_norms", row_norms)
+            self.row_norms = nn.Parameter(row_norms, requires_grad=False)
         else:
             self.row_norms = None
         if debug_weight is not None:
@@ -245,52 +342,77 @@ class OrbitQuantLinear(nn.Module):
         source_weight = canonical_linear_weight(layer).detach()
         source_bias = getattr(layer, "bias", None)
         bias = None if source_bias is None else source_bias.detach()
+        return cls.from_weight(
+            source_weight,
+            bias=bias,
+            in_features=spec.in_features,
+            out_features=spec.out_features,
+            source_weight_layout=spec.weight_layout,
+            config=config,
+            module_name=module_name,
+        )
+
+    @classmethod
+    def from_weight(
+        cls,
+        weight: torch.Tensor,
+        *,
+        bias: torch.Tensor | None,
+        in_features: int,
+        out_features: int,
+        source_weight_layout: str,
+        config: OrbitQuantConfig,
+        module_name: str,
+        quantization_device: torch.device | None = None,
+    ) -> OrbitQuantLinear:
+        expected_shape = (out_features, in_features)
+        if tuple(weight.shape) != expected_shape:
+            raise ValueError(
+                f"expected canonical weight shape {expected_shape}, got {tuple(weight.shape)}"
+            )
         rotation = get_rpbh_rotation(
-            dim=spec.in_features, seed=config.rotation_seed, block_size=config.block_size
+            dim=in_features, seed=config.rotation_seed, block_size=config.block_size
         )
 
         if config.runtime_mode == "debug_no_quant":
-            weight = source_weight.to(torch.float32)
-            rotated_weight = rotation.apply_to_weight(weight)
+            rotated_weight = _rotate_weight_bounded(
+                weight,
+                rotation=rotation,
+                row_tile_size=config.weight_row_tile_size,
+                quantization_device=quantization_device,
+            )
             return cls(
-                in_features=spec.in_features,
-                out_features=spec.out_features,
+                in_features=in_features,
+                out_features=out_features,
                 config=config,
                 module_name=module_name,
-                source_weight_layout=spec.weight_layout,
+                source_weight_layout=source_weight_layout,
                 bias=bias,
                 packed_weight_indices=None,
                 row_norms=None,
                 debug_weight=rotated_weight,
             )
 
-        if source_weight.is_cuda:
-            from orbitquant.kernels.triton_cuda import row_norms_with_triton
-
-            row_norms = row_norms_with_triton(source_weight, eps=config.activation_eps)
-            quantization_weight = source_weight
-        else:
-            quantization_weight = source_weight.to(torch.float32)
-            row_norms = quantization_weight.norm(dim=-1)
-        codebook = get_codebook(spec.in_features, config.weight_bits, config.codebook_version)
-        packed = _quantize_weight_pack(
-            quantization_weight,
-            row_norms,
+        codebook = get_codebook(in_features, config.weight_bits, config.codebook_version)
+        packed, row_norms = _quantize_weight_bounded(
+            weight,
             rotation=rotation,
             codebook=codebook,
             bits=config.weight_bits,
             eps=config.activation_eps,
+            row_tile_size=config.weight_row_tile_size,
+            quantization_device=quantization_device,
         )
 
         return cls(
-            in_features=spec.in_features,
-            out_features=spec.out_features,
+            in_features=in_features,
+            out_features=out_features,
             config=config,
             module_name=module_name,
-            source_weight_layout=spec.weight_layout,
+            source_weight_layout=source_weight_layout,
             bias=bias,
             packed_weight_indices=packed,
-            row_norms=row_norms.to(torch.bfloat16),
+            row_norms=row_norms,
             debug_weight=None,
         )
 
@@ -345,6 +467,16 @@ class OrbitQuantLinear(nn.Module):
     def clear_dequantized_cache(self) -> None:
         self._dequantized_weight_cache = None
         self._dequantized_weight_cache_key = None
+
+    def _remember_dequantized_weight(
+        self,
+        weight: torch.Tensor,
+        cache_key: tuple[str, torch.dtype],
+    ) -> torch.Tensor:
+        if not accelerate_hook_offloads(self):
+            self._dequantized_weight_cache = weight.detach()
+            self._dequantized_weight_cache_key = cache_key
+        return weight
 
     def _apply(self, fn, recurse: bool = True):
         result = super()._apply(fn, recurse=recurse)
@@ -579,16 +711,15 @@ class OrbitQuantLinear(nn.Module):
     def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         cache_key = (str(device), dtype)
         if (
-            self._dequantized_weight_cache is not None
+            not accelerate_hook_offloads(self)
+            and self._dequantized_weight_cache is not None
             and self._dequantized_weight_cache_key == cache_key
         ):
             return self._dequantized_weight_cache
 
         if self.debug_weight is not None:
             weight = self.debug_weight.to(device=device, dtype=dtype)
-            self._dequantized_weight_cache = weight.detach()
-            self._dequantized_weight_cache_key = cache_key
-            return weight
+            return self._remember_dequantized_weight(weight, cache_key)
         if self.packed_weight_indices is None or self.row_norms is None:
             raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
 
@@ -610,9 +741,7 @@ class OrbitQuantLinear(nn.Module):
                     in_features=self.in_features,
                 )
                 dequantized = weight.to(dtype=dtype)
-                self._dequantized_weight_cache = dequantized.detach()
-                self._dequantized_weight_cache_key = cache_key
-                return dequantized
+                return self._remember_dequantized_weight(dequantized, cache_key)
         if device.type == "cuda":
             try:
                 from orbitquant.kernels.triton_cuda import dequantize_packed_weight_with_triton
@@ -629,9 +758,7 @@ class OrbitQuantLinear(nn.Module):
                     device=device,
                 )
                 dequantized = weight.to(dtype=dtype)
-                self._dequantized_weight_cache = dequantized.detach()
-                self._dequantized_weight_cache_key = cache_key
-                return dequantized
+                return self._remember_dequantized_weight(dequantized, cache_key)
 
         flat = unpack_lowbit(
             self.packed_weight_indices,
@@ -643,9 +770,7 @@ class OrbitQuantLinear(nn.Module):
         row_norms = self.row_norms.to(device=device, dtype=torch.float32)
         weight = row_norms[:, None] * centroids[indices]
         dequantized = weight.to(dtype=dtype)
-        self._dequantized_weight_cache = dequantized.detach()
-        self._dequantized_weight_cache_key = cache_key
-        return dequantized
+        return self._remember_dequantized_weight(dequantized, cache_key)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_derived_constants(x.device)
