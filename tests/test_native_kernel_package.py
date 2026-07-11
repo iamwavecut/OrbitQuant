@@ -87,7 +87,7 @@ def test_wheel_project_preparation_injects_build_tool_argv_hook(tmp_path) -> Non
     (project / "setup.py").write_text(
         """import os
 from pathlib import Path
-from shutil import which
+from shutil import which, move
 
 def is_sccache_available() -> bool:
     return which("sccache") is not None
@@ -107,11 +107,19 @@ class Build:
         build_temp = Path(self.build_temp) / ext.name
         extdir = Path("output")
         cfg = "Release"
+        build_args = []
+        subprocess.run(
+            ["cmake", "--build", str(build_temp), *build_args], cwd=build_temp, check=True
+        )
         if sys.platform == "win32":
             # Move the dylib one folder up for discovery.
             for filename in os.listdir(extdir / cfg):
                 move(extdir / cfg / filename, extdir / filename)
         return build_temp
+
+setup(
+    zip_safe=False,
+)
 """,
         encoding="utf-8",
     )
@@ -135,6 +143,8 @@ class Build:
     assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in prepared_setup
     assert 'return os.name != "nt" and which("ccache") is not None' in prepared_setup
     assert 'Path(ninja.BIN_DIR) / ("ninja.exe" if os.name == "nt" else "ninja")' in prepared_setup
+    assert 'copy2(generated_ops, extdir / "_ops.py")' in prepared_setup
+    assert 'options={"bdist_wheel": {"py_limited_api": "cp39"}}' in prepared_setup
     prepared_project = tomllib.loads(
         (project / "pyproject.toml").read_text(encoding="utf-8")
     )
