@@ -200,3 +200,121 @@ jobs:
         with:
           name: orbitquant-packed-matmul-windows-cpu
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
+
+  manylinux-native-cpu:
+    name: manylinux x86_64 native CPU
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Install test dependencies
+        run: uv sync --extra dev
+
+      - name: Restore pinned kernel-builder
+        id: manylinux-kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-linux-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
+
+      - name: Install pinned kernel-builder
+        if: steps.manylinux-kernel-builder-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install \
+            --git https://github.com/huggingface/kernels \
+            --rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b \
+            --locked \
+            --debug \
+            --root "$RUNNER_TEMP/kernel-builder" \
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.manylinux-kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-linux-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
+
+      - name: Generate native build project
+        shell: bash
+        run: |
+          kernel_root="native-kernels/orbitquant-packed-matmul"
+          builder="$RUNNER_TEMP/kernel-builder/bin/kernel-builder"
+          "$builder" check-config "$kernel_root"
+          "$builder" create-pyproject --unique-id manylinux_ci -f "$kernel_root"
+          uv run python \
+            "$kernel_root/scripts/prepare_wheel_project.py" \
+            "$kernel_root" \
+            --version 0.1.0
+
+      - name: Build manylinux 2.28 ABI3 wheel
+        env:
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_BUILD: cp312-manylinux_x86_64
+          CIBW_ENVIRONMENT_LINUX: >-
+            CMAKE_ARGS=-DGPU_LANG=CPU
+            MAX_JOBS=2
+            ORBITQUANT_BUILD_TEMP=/tmp/oq-native-build
+            PIP_INDEX_URL=https://download.pytorch.org/whl/cpu
+            PIP_EXTRA_INDEX_URL=https://pypi.org/simple
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair
+            --exclude libc10.so
+            --exclude libtorch_cpu.so
+            --exclude libtorch.so
+            -w {dest_dir} {wheel}
+          CIBW_TEST_COMMAND: >-
+            python -m pytest {package}/tests/test_packed_matmul.py
+            -m kernels_ci -ra
+          CIBW_TEST_REQUIRES: numpy pytest torch==2.12.1
+        run: |
+          uv run --with cibuildwheel==4.1.0 \
+            python -m cibuildwheel \
+            native-kernels/orbitquant-packed-matmul \
+            --output-dir wheelhouse
+
+      - name: Verify wheel tag, metadata, and size
+        shell: bash
+        run: |
+          wheel=$(find wheelhouse -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "$wheel"
+          case "$(basename "$wheel")" in
+            *-cp39-abi3-*manylinux_2_28_x86_64.whl) ;;
+            *) echo "unexpected native CPU wheel: $wheel" >&2; exit 1 ;;
+          esac
+          test "$(stat -c %s "$wheel")" -lt 1048576
+          uv run python -c "import pathlib, zipfile; p=next(pathlib.Path('wheelhouse').glob('*.whl')); z=zipfile.ZipFile(p); names=z.namelist(); m=z.read(next(n for n in names if n.endswith('.dist-info/METADATA'))).decode(); assert 'Requires-Dist: torch>=2.11' in m; assert any(n.endswith('/_ops.py') for n in names); assert not any('/libtorch' in n or '/libc10' in n for n in names); print(p.name); print(m)"
+
+      - name: Clean-install integration tests
+        shell: bash
+        run: |
+          smoke="$RUNNER_TEMP/orbitquant-manylinux-smoke"
+          uv venv "$smoke" --python 3.12
+          python="$smoke/bin/python"
+          uv pip install \
+            --python "$python" \
+            --index https://download.pytorch.org/whl/cpu \
+            --index-strategy unsafe-best-match \
+            . torch==2.12.1 pytest
+          uv pip install --python "$python" wheelhouse/*.whl --no-deps
+          "$python" -m pytest \
+            tests/test_native_packed_matmul.py \
+            tests/test_adaln_rtn.py \
+            tests/test_paper_reference_oracle.py \
+            -ra
+
+      - name: Upload manylinux native CPU wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: orbitquant-packed-matmul-manylinux-cpu
+          path: wheelhouse/*.whl

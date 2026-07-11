@@ -67,7 +67,13 @@ def _runnable_cpu_isas() -> list[str]:
     isas = ["scalar"]
     if machine in {"x86_64", "amd64"} and capability in {"AVX2", "AVX512"}:
         isas.append("avx2")
-    if machine in {"x86_64", "amd64"} and capability == "AVX512":
+    if (
+        machine in {"x86_64", "amd64"}
+        and capability == "AVX512"
+        and platform.system() != "Windows"
+    ):
+        # The MSVC wheel currently ships the separately compiled AVX2 TU; the
+        # AVX-512 implementation uses GCC/Clang per-function target attributes.
         isas.append("avx512")
     if machine in {"aarch64", "arm64"}:
         isas.append("neon")

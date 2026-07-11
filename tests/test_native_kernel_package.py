@@ -84,10 +84,16 @@ def test_wheel_project_preparation_injects_build_tool_argv_hook(tmp_path) -> Non
         '[project]\nversion = "0.1.0"\nrequires-python = ">=3.9"\n',
         encoding="utf-8",
     )
+    (project / "CMakeLists.txt").write_text(
+        "find_package(Python3 COMPONENTS Development Development.SABIModule Interpreter)\n"
+        "find_package(Python3 REQUIRED COMPONENTS Development "
+        "Development.SABIModule Interpreter)\n",
+        encoding="utf-8",
+    )
     (project / "setup.py").write_text(
         """import os
 from pathlib import Path
-from shutil import which
+from shutil import which, move
 
 def is_sccache_available() -> bool:
     return which("sccache") is not None
@@ -107,11 +113,19 @@ class Build:
         build_temp = Path(self.build_temp) / ext.name
         extdir = Path("output")
         cfg = "Release"
+        build_args = []
+        subprocess.run(
+            ["cmake", "--build", str(build_temp), *build_args], cwd=build_temp, check=True
+        )
         if sys.platform == "win32":
             # Move the dylib one folder up for discovery.
             for filename in os.listdir(extdir / cfg):
                 move(extdir / cfg / filename, extdir / filename)
         return build_temp
+
+setup(
+    zip_safe=False,
+)
 """,
         encoding="utf-8",
     )
@@ -135,11 +149,16 @@ class Build:
     assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in prepared_setup
     assert 'return os.name != "nt" and which("ccache") is not None' in prepared_setup
     assert 'Path(ninja.BIN_DIR) / ("ninja.exe" if os.name == "nt" else "ninja")' in prepared_setup
+    assert 'copy2(generated_ops, extdir / "_ops.py")' in prepared_setup
+    assert 'options={"bdist_wheel": {"py_limited_api": "cp39"}}' in prepared_setup
     prepared_project = tomllib.loads(
         (project / "pyproject.toml").read_text(encoding="utf-8")
     )
     assert prepared_project["project"]["version"] == "0.4.0"
     assert prepared_project["project"]["dependencies"] == ["torch>=2.11"]
+    prepared_cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "COMPONENTS Development.SABIModule Interpreter" in prepared_cmake
+    assert "COMPONENTS Development Development.SABIModule" not in prepared_cmake
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:

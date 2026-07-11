@@ -30,8 +30,35 @@ def main() -> None:
     )
     pyproject.write_text(text, encoding="utf-8")
 
+    cmake = args.project / "CMakeLists.txt"
+    cmake_text = cmake.read_text(encoding="utf-8")
+    for required in (False, True):
+        marker = " REQUIRED" if required else ""
+        development = (
+            f"find_package(Python3{marker} COMPONENTS Development "
+            "Development.SABIModule Interpreter)"
+        )
+        if cmake_text.count(development) != 1:
+            raise RuntimeError(
+                "generated CMake must contain one Python development lookup"
+            )
+        cmake_text = cmake_text.replace(
+            development,
+            f"find_package(Python3{marker} COMPONENTS Development.SABIModule Interpreter)",
+            1,
+        )
+    cmake.write_text(cmake_text, encoding="utf-8")
+
     setup = args.project / "setup.py"
     setup_text = setup.read_text(encoding="utf-8")
+    shutil_import = "from shutil import which, move\n"
+    if setup_text.count(shutil_import) != 1:
+        raise RuntimeError("generated setup must contain one shutil import")
+    setup_text = setup_text.replace(
+        shutil_import,
+        "from shutil import copy2, move, which\n",
+        1,
+    )
     ninja_path = 'ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"'
     if setup_text.count(ninja_path) != 1:
         raise RuntimeError("generated setup must contain one Ninja executable path")
@@ -87,6 +114,33 @@ def main() -> None:
         windows_multi_config,
         '        if sys.platform == "win32" and (extdir / cfg).is_dir():\n'
         "            # Move the dylib one folder up for discovery.",
+        1,
+    )
+    build_call = (
+        "        subprocess.run(\n"
+        '            ["cmake", "--build", str(build_temp), *build_args], '
+        "cwd=build_temp, check=True\n"
+        "        )\n"
+    )
+    if setup_text.count(build_call) != 1:
+        raise RuntimeError("generated setup must contain one wheel CMake build call")
+    setup_text = setup_text.replace(
+        build_call,
+        build_call
+        + "\n"
+        + '        package_name = ext.name.split(".", 1)[0]\n'
+        + "        generated_ops = (\n"
+        + '            Path(ext.sourcedir) / "torch-ext" / package_name / "_ops.py"\n'
+        + "        )\n"
+        + '        copy2(generated_ops, extdir / "_ops.py")\n',
+        1,
+    )
+    zip_safe = "    zip_safe=False,\n"
+    if setup_text.count(zip_safe) != 1:
+        raise RuntimeError("generated setup must contain one zip-safe option")
+    setup_text = setup_text.replace(
+        zip_safe,
+        '    options={"bdist_wheel": {"py_limited_api": "cp39"}},\n' + zip_safe,
         1,
     )
     setup.write_text(setup_text, encoding="utf-8")

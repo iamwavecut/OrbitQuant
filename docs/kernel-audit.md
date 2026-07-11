@@ -35,7 +35,7 @@ Other explicit modes are `native_packed_matmul`, `triton_packed_matmul`,
 | --- | --- | --- |
 | CUDA | Optimized packed inference | Native RPBH/quantization, chunked packed-weight decode plus CUTLASS INT8 matmul, direct packed CUDA MMA fallback, and generic Triton packed fallback |
 | MPS/Metal | Optimized packed inference | Native Metal packed matmul and Metal activation quantization stages |
-| CPU | Hardware-verified native source build; platform wheels pending | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
+| CPU | Hardware-verified native source and CI wheel builds; wheel publication pending | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
 | Vulkan | Unverified | No runtime backend |
 | ROCm | Unsupported | No release backend |
 | XPU | Unsupported | No release backend |
@@ -92,8 +92,9 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate.py
 The generated `setup.py` and CMake files come from `kernel-builder` and must not
 be committed. This development build targets the current host toolchain. Use the
 Nix build for a redistributable variant and run `kernel-builder check-abi` before
-distributing it. A local Ubuntu 24.04 build can be ABI3 at the Python boundary
-while still depending on a GLIBC version newer than `manylinux_2_28`.
+distributing it. The Linux wheel CI builds inside `manylinux_2_28`, repairs the
+result with `auditwheel`, and runs strict `abi3audit`; an ordinary local Ubuntu
+build can still depend on a newer GLIBC.
 
 To load the local build through Hugging Face `kernels` instead of importing it
 through `PYTHONPATH`, map the kernel repository to the same generated variant
@@ -127,6 +128,18 @@ maximum error `1.526e-5`. Packed weights and row norms occupied 1,179,648 bytes
 versus 4,718,592 bytes for BF16 weights, and the native layer retained no
 dequantized-weight cache.
 
+A second x86_64 profile used a Secure Cloud AMD EPYC 9654 host with GCC 13.3,
+Torch 2.12.1+cpu, and the two SMT threads `36,132` of one physical core. For a
+W4A4 packed matmul with 32 rows and a 1536x1536 projection, the hot median was
+1.4928 ms, p95 was 1.5151 ms, and first call was 1.9775 ms. Materializing the
+weight and then calling `F.linear` measured 6.6373 ms median and 7.0199 ms p95,
+so the packed path was 4.51x faster than that explicit reference. A resident
+BF16 `F.linear` remained faster at 0.7823 ms; the packed kernel is selected to
+retain the memory advantage, not to claim superiority over a permanently dense
+weight. The packed payload, row norms, and centroids occupied 1,182,784 bytes
+versus 4,718,592 bytes for BF16, with relative RMSE `6.546e-6` and maximum error
+`0.03125`. Disassembly confirmed `vpermw` lookup and `vdpbf16ps` accumulation.
+
 AdaLN uses an exact signed INT4 group-64 lookup with BF16 scales and
 activations. The realistic modulation shape below is 3072 input channels and
 18432 output channels. Timings are 21 post-warmup calls with
@@ -149,8 +162,25 @@ spatial-token row counts.
 The same x86_64 stable-ABI 2.11 binary built against Torch 2.13 loaded and ran
 under Torch 2.12.1. This verifies the current LibTorch Stable ABI boundary for
 those two runtimes; it does not make the wheel independent of the platform
-GLIBC, C++ runtime, or CPU ISA. Linux and Windows wheel policy remains pending,
-and Windows CPU execution is not yet verified.
+GLIBC, C++ runtime, or CPU ISA.
+
+CI run `29162193254` separately verified installable Python 3.9 ABI3 wheels on
+Linux and Windows. The 101,453-byte Linux wheel has both
+`manylinux_2_24_x86_64` and `manylinux_2_28_x86_64` tags, passed strict
+`abi3audit` with a computed Python 3.9 baseline, and has SHA-256
+`5cd19321e11281e03b9b1126f40571ad2c1e956060fc0bc5173c90628045d4df`.
+Inside the manylinux container, 73 native tests passed and 33 CUDA/MPS tests
+were skipped; a separate clean environment with OrbitQuant 0.4.0 and Torch
+2.12.1+cpu passed 33 integration/oracle tests with two CUDA/Triton skips.
+
+The 53,178-byte Windows wheel has the `cp39-abi3-win_amd64` tag and SHA-256
+`cf200774d7388496ce3b7f554dd3e757eca470d99ef9986fe7a7bb0ea1e0e297`.
+It was built with MSVC 14.51 on Windows Server 2025 and executed on an AMD EPYC
+9V74 runner with two cores and four logical processors. Its clean native suite
+passed 73 tests with 33 CUDA/MPS skips, and the OrbitQuant integration/oracle
+suite passed 33 tests with two CUDA/Triton skips. Both wheels include only the
+extension, Python loader, and metadata rather than bundled LibTorch libraries.
+They are verified CI artifacts, not yet published platform packages.
 
 The ARM64 native CPU path was separately built on an Apple M2 Max. At 32 rows
 and dimension 1536, the full native W4A4 layer measured about 1.20 ms versus
