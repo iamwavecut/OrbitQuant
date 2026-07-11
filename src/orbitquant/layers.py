@@ -14,6 +14,9 @@ from orbitquant.streaming import accelerate_hook_offloads, iter_aligned_row_tile
 
 _PACKED_MATMUL_PROBE_MISSING = object()
 _NATIVE_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
+_NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = (
+    _PACKED_MATMUL_PROBE_MISSING
+)
 _TRITON_PACKED_MATMUL_IMPORT_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
 
 
@@ -209,18 +212,38 @@ def _triton_packed_matmul_import_error() -> Exception | None:
     return None
 
 
+def _native_cpu_packed_matmul_load_error() -> Exception | None:
+    global _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR
+    if _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR is not _PACKED_MATMUL_PROBE_MISSING:
+        return _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR
+    try:
+        from orbitquant.kernels.native_packed_matmul import (
+            native_packed_matmul_device_available,
+        )
+
+        if not native_packed_matmul_device_available("cpu"):
+            raise RuntimeError("the loaded native package has no CPU backend")
+    except Exception as exc:
+        _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR = exc
+        return exc
+    _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR = None
+    return None
+
+
 def _clear_packed_matmul_probe_cache() -> None:
+    global _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR
     global _NATIVE_PACKED_MATMUL_LOAD_ERROR, _TRITON_PACKED_MATMUL_IMPORT_ERROR
     _NATIVE_PACKED_MATMUL_LOAD_ERROR = _PACKED_MATMUL_PROBE_MISSING
+    _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR = _PACKED_MATMUL_PROBE_MISSING
     _TRITON_PACKED_MATMUL_IMPORT_ERROR = _PACKED_MATMUL_PROBE_MISSING
 
 
 class OrbitQuantLinear(nn.Module):
     """Linear layer with OrbitQuant-packed rotated weights.
 
-    The default runtime uses packed low-bit matmul on CUDA/MPS when the native
-    or Triton kernels are available. The explicit ``dequant_bf16`` mode keeps
-    the compatibility/debug reference path.
+    The default runtime uses packed low-bit matmul on CPU/CUDA/MPS when the
+    native or Triton kernels are available. The explicit ``dequant_bf16`` mode
+    keeps the compatibility/debug reference path.
     """
 
     def __setattr__(self, name, value):
@@ -452,7 +475,7 @@ class OrbitQuantLinear(nn.Module):
             row_norms = torch.empty(
                 spec.out_features, dtype=torch.bfloat16, device=layer.weight.device
             )
-        return cls(
+        empty = cls(
             in_features=spec.in_features,
             out_features=spec.out_features,
             config=config,
@@ -463,6 +486,11 @@ class OrbitQuantLinear(nn.Module):
             row_norms=row_norms,
             debug_weight=debug_weight,
         )
+        # Hugging Face streaming loaders may replace non-persistent buffers while
+        # moving an empty module skeleton out of meta initialization. Rebuild these
+        # deterministic RPBH/codebook constants on the first real forward.
+        empty._derived_constants_valid = False
+        return empty
 
     def clear_dequantized_cache(self) -> None:
         self._dequantized_weight_cache = None
@@ -546,9 +574,9 @@ class OrbitQuantLinear(nn.Module):
             )
 
     def _validate_native_packed_matmul_input(self, x: torch.Tensor) -> None:
-        if x.device.type not in {"cuda", "mps"}:
+        if x.device.type not in {"cpu", "cuda", "mps"}:
             raise RuntimeError(
-                "native_packed_matmul runtime requires CUDA or MPS input tensors; "
+                "native_packed_matmul runtime requires CPU, CUDA, or MPS input tensors; "
                 f"got {x.device.type}."
             )
 
@@ -574,6 +602,18 @@ class OrbitQuantLinear(nn.Module):
         except (ImportError, RuntimeError):
             return False
         return True
+
+    def _native_cpu_activation_available(self, x: torch.Tensor) -> bool:
+        if x.device.type != "cpu":
+            return False
+        try:
+            from orbitquant.kernels.native_packed_matmul import (
+                native_cpu_activation_available,
+            )
+
+            return native_cpu_activation_available()
+        except (ImportError, RuntimeError):
+            return False
 
     def _native_w4_activation_available(self, x: torch.Tensor) -> bool:
         if (
@@ -682,6 +722,8 @@ class OrbitQuantLinear(nn.Module):
     def _resolve_auto_fused_runtime(self, x: torch.Tensor) -> str:
         device_type = x.device.type
         if device_type == "cpu":
+            if _native_cpu_packed_matmul_load_error() is None:
+                return "native_packed_matmul"
             return "dequant_bf16"
         if device_type == "cuda":
             native_error = _native_packed_matmul_load_error()
@@ -935,6 +977,23 @@ class OrbitQuantLinear(nn.Module):
             rotated_x = (
                 self.rotation.apply_to_activations(work / (norms + self.activation_eps)) * norms
             ).to(x.dtype)
+        elif runtime_mode == "native_packed_matmul" and self._native_cpu_activation_available(x):
+            from orbitquant.kernels.native_packed_matmul import (
+                quantize_activations_with_native_cpu_kernel,
+            )
+
+            activation_constants = self._activation_kernel_constant_tensors(x.device)
+            self.last_activation_kernel_backend = "native_cpu"
+            rotated_x = quantize_activations_with_native_cpu_kernel(
+                x,
+                activation_constants["permutation"],
+                activation_constants["signs"],
+                activation_constants["centroids"],
+                activation_constants["boundaries"],
+                eps=self.activation_eps,
+                inv_sqrt_block=self.rotation.normalization,
+                block_size=self.rotation.block_size,
+            )
         else:
             self.last_activation_kernel_backend = select_backend(
                 x.device, requested=self.activation_kernel_backend

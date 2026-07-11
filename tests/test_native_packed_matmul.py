@@ -9,10 +9,17 @@ import orbitquant.kernels.native_packed_matmul as native_module
 from orbitquant.codebooks import get_codebook
 
 
-def test_native_packed_matmul_rejects_cpu_before_loading_kernel():
+def test_native_packed_matmul_rejects_variant_without_cpu_backend(monkeypatch):
     codebook = get_codebook(dim=16, bits=4)
+    fake_kernel = SimpleNamespace(
+        matmul_packed_weight=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unsupported CPU variant must not be invoked")
+        ),
+        supports_device=lambda device_type: device_type == "mps",
+    )
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", fake_kernel)
 
-    with pytest.raises(RuntimeError, match="requires CUDA or MPS input tensors"):
+    with pytest.raises(RuntimeError, match="does not contain a CPU backend"):
         native_module.matmul_packed_weight_with_native_kernel(
             torch.randn(2, 16),
             torch.empty(56, dtype=torch.uint8),
@@ -21,6 +28,39 @@ def test_native_packed_matmul_rejects_cpu_before_loading_kernel():
             bits=4,
             out_features=7,
             in_features=16,
+        )
+
+
+def test_native_device_capability_treats_legacy_variants_as_accelerator_only(monkeypatch):
+    fake_legacy_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", fake_legacy_kernel)
+
+    assert native_module.native_packed_matmul_device_available("cpu") is False
+    assert native_module.native_packed_matmul_device_available("mps") is True
+
+
+def test_native_cpu_adaln_availability_requires_capability_operation(monkeypatch):
+    fake_kernel = SimpleNamespace(
+        supports_cpu_adaln=lambda: True,
+        matmul_packed_adaln_int4_cpu=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", fake_kernel)
+
+    assert native_module.native_cpu_adaln_available() is True
+
+
+def test_native_cpu_adaln_bridge_rejects_legacy_variant(monkeypatch):
+    fake_kernel = SimpleNamespace(matmul_packed_adaln_int4_cpu=lambda *args, **kwargs: None)
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", fake_kernel)
+
+    with pytest.raises(RuntimeError, match="does not provide the CPU AdaLN"):
+        native_module.matmul_packed_adaln_int4_with_native_cpu_kernel(
+            torch.randn(2, 8, dtype=torch.bfloat16),
+            torch.empty(32, dtype=torch.uint8),
+            torch.ones(4, 1, dtype=torch.bfloat16),
+            out_features=4,
+            in_features=8,
+            group_size=8,
         )
 
 

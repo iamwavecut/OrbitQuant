@@ -114,6 +114,9 @@ def test_backend_selection_is_explicit_and_fails_loud_for_unavailable_backends()
 def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
     capabilities = backend_capabilities(
         backends={"cpu": True, "mps": True, "triton_cuda": True}
     )
@@ -121,7 +124,10 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["cpu"]["available"] is True
     assert capabilities["cpu"]["claim_status"] == "reference_only"
     assert capabilities["cpu"]["optimized"] is False
-    assert capabilities["cpu"]["implemented_stage"] is None
+    assert capabilities["cpu"]["implemented_stage"] == (
+        "activation_norm_rpbh_quant_rescale,packed_weight_matmul,"
+        "adaln_rtn_packed_matmul"
+    )
     assert capabilities["cpu"]["optimized_stage"] is None
     assert capabilities["cpu"]["weight_dequant_optimized"] is False
     assert capabilities["cpu"]["weight_pack_optimized"] is False
@@ -173,6 +179,9 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
 def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: True)
     monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
     capabilities = backend_capabilities(
         backends={"cpu": True, "mps": True, "triton_cuda": False}
@@ -227,6 +236,9 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
 def test_backend_capabilities_report_mps_shader_without_native_matmul(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: True)
     monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
     capabilities = backend_capabilities(
         backends={"cpu": True, "mps": True, "triton_cuda": False}
@@ -253,6 +265,9 @@ def test_backend_capabilities_report_mps_shader_without_native_matmul(monkeypatc
 def test_backend_capabilities_report_mps_native_matmul_without_shader(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
     capabilities = backend_capabilities(
         backends={"cpu": True, "mps": True, "triton_cuda": False}
@@ -264,6 +279,73 @@ def test_backend_capabilities_report_mps_native_matmul_without_shader(monkeypatc
     assert capabilities["mps"]["package_format"] == "native_kernel_package"
     assert capabilities["mps"]["optimized_stage"] == "packed_weight_matmul"
     assert capabilities["mps"]["weight_dequant_optimized"] is False
+
+
+def test_backend_capabilities_label_cpu_native_matmul_as_partial_not_fused(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
+
+    capabilities = backend_capabilities(
+        backends={"cpu": True, "mps": False, "triton_cuda": False}
+    )
+
+    assert capabilities["cpu"]["claim_status"] == "partial_optimized"
+    assert capabilities["cpu"]["optimized"] is True
+    assert capabilities["cpu"]["full_fusion"] is False
+    assert capabilities["cpu"]["optimized_stage"] == "packed_weight_matmul"
+    assert capabilities["cpu"]["implementation"] == (
+        "native_exact_packed_matmul+torch_activation_reference"
+    )
+    assert capabilities["cpu"]["hf_kernel_builder_compliant"] is True
+
+
+def test_backend_capabilities_report_native_cpu_activation_and_matmul(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
+
+    capabilities = backend_capabilities(
+        backends={"cpu": True, "mps": False, "triton_cuda": False}
+    )
+
+    assert capabilities["cpu"]["claim_status"] == "partial_optimized"
+    assert capabilities["cpu"]["optimized"] is True
+    assert capabilities["cpu"]["full_fusion"] is False
+    assert capabilities["cpu"]["optimized_stage"] == (
+        "activation_norm_rpbh_quant_rescale,packed_weight_matmul"
+    )
+    assert capabilities["cpu"]["implementation"] == (
+        "native_exact_activation+native_exact_packed_matmul"
+    )
+    assert capabilities["cpu"]["hf_kernel_builder_compliant"] is True
+
+
+def test_backend_capabilities_report_complete_native_cpu_kernel_surface(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_mps_metal_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_packed_matmul_available", lambda: False)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: True)
+
+    capabilities = backend_capabilities(
+        backends={"cpu": True, "mps": False, "triton_cuda": False}
+    )
+
+    assert capabilities["cpu"]["optimized_stage"] == (
+        "activation_norm_rpbh_quant_rescale,packed_weight_matmul,"
+        "adaln_rtn_packed_matmul"
+    )
+    assert capabilities["cpu"]["adaln_quant_optimized"] is False
+    assert capabilities["cpu"]["adaln_dequant_optimized"] is True
+    assert capabilities["cpu"]["implementation"] == (
+        "native_exact_activation+native_exact_packed_matmul+native_packed_adaln_int4"
+    )
+    assert "without a full floating-point cache" in capabilities["cpu"]["notes"]
 
 
 def test_backend_selection_accepts_injected_availability_for_gpu_paths():

@@ -12,6 +12,10 @@ BackendCapabilities = dict[str, dict[str, object]]
 _MPS_SHADER_STAGE = "activation_norm_rpbh_quant_rescale,packed_weight_dequant"
 _MPS_NATIVE_STAGE = "packed_weight_matmul"
 _MPS_IMPLEMENTED_STAGE = f"{_MPS_SHADER_STAGE},{_MPS_NATIVE_STAGE}"
+_CPU_IMPLEMENTED_STAGE = (
+    "activation_norm_rpbh_quant_rescale,packed_weight_matmul,"
+    "adaln_rtn_packed_matmul"
+)
 _TRITON_CUDA_IMPLEMENTED_STAGE = (
     "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
     "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
@@ -46,6 +50,39 @@ def _native_packed_matmul_available() -> bool:
     return True
 
 
+def _native_cpu_packed_matmul_available() -> bool:
+    try:
+        from orbitquant.kernels.native_packed_matmul import (
+            native_packed_matmul_device_available,
+        )
+
+        return native_packed_matmul_device_available("cpu")
+    except Exception:
+        return False
+
+
+def _native_cpu_activation_available() -> bool:
+    try:
+        from orbitquant.kernels.native_packed_matmul import (
+            native_cpu_activation_available,
+        )
+
+        return native_cpu_activation_available()
+    except Exception:
+        return False
+
+
+def _native_cpu_adaln_available() -> bool:
+    try:
+        from orbitquant.kernels.native_packed_matmul import (
+            native_cpu_adaln_available,
+        )
+
+        return native_cpu_adaln_available()
+    except Exception:
+        return False
+
+
 def _join_stages(stages: list[str]) -> str | None:
     return ",".join(stages) if stages else None
 
@@ -60,6 +97,63 @@ def available_backends() -> BackendAvailability:
 
 def backend_capabilities(backends: BackendAvailability | None = None) -> BackendCapabilities:
     available = available_backends() if backends is None else backends
+    cpu_native_matmul_optimized = bool(
+        available["cpu"] and _native_cpu_packed_matmul_available()
+    )
+    cpu_native_activation_optimized = bool(
+        available["cpu"] and _native_cpu_activation_available()
+    )
+    cpu_native_adaln_optimized = bool(
+        available["cpu"] and _native_cpu_adaln_available()
+    )
+    cpu_optimized_stages = _join_stages(
+        [
+            *(
+                ["activation_norm_rpbh_quant_rescale"]
+                if cpu_native_activation_optimized
+                else []
+            ),
+            *(["packed_weight_matmul"] if cpu_native_matmul_optimized else []),
+            *(
+                ["adaln_rtn_packed_matmul"]
+                if cpu_native_adaln_optimized
+                else []
+            ),
+        ]
+    )
+    cpu_implementation = (
+        "native_exact_activation+native_exact_packed_matmul"
+        if cpu_native_activation_optimized and cpu_native_matmul_optimized
+        else "native_exact_packed_matmul+torch_activation_reference"
+        if cpu_native_matmul_optimized
+        else "native_exact_activation+reference_weight_matmul"
+        if cpu_native_activation_optimized
+        else "torch_reference"
+    )
+    if cpu_native_adaln_optimized:
+        cpu_implementation += "+native_packed_adaln_int4"
+    cpu_notes = []
+    if cpu_native_activation_optimized:
+        cpu_notes.append(
+            "The native exact activation pipeline performs FP32 token norm, "
+            "RPBH/FWHT, codebook assignment, and rescale."
+        )
+    else:
+        cpu_notes.append("Activation quantization uses the reference PyTorch CPU path.")
+    if cpu_native_matmul_optimized:
+        cpu_notes.append(
+            "Native exact packed matmul consumes low-bit weights without a full "
+            "floating-point cache."
+        )
+    else:
+        cpu_notes.append("The main linear matmul uses the reference PyTorch CPU path.")
+    if cpu_native_adaln_optimized:
+        cpu_notes.append(
+            "Native packed INT4 AdaLN matmul consumes group-64 weights without a "
+            "full floating-point cache."
+        )
+    else:
+        cpu_notes.append("AdaLN uses the explicit BF16 dequantization path.")
     mps_shader_optimized = bool(available["mps"] and _mps_metal_available())
     mps_native_matmul_optimized = bool(
         available["mps"] and _native_packed_matmul_available()
@@ -98,22 +192,26 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
     return {
         "cpu": {
             "available": bool(available["cpu"]),
-            "claim_status": "reference_only",
-            "optimized": False,
+            "claim_status": "partial_optimized"
+            if cpu_optimized_stages is not None
+            else "reference_only",
+            "optimized": cpu_optimized_stages is not None,
             "full_fusion": False,
-            "implemented_stage": None,
-            "optimized_stage": None,
+            "implemented_stage": _CPU_IMPLEMENTED_STAGE,
+            "optimized_stage": cpu_optimized_stages,
             "weight_dequant_optimized": False,
             "weight_pack_optimized": False,
             "lowbit_unpack_optimized": False,
             "weight_quant_optimized": False,
             "adaln_quant_optimized": False,
-            "adaln_dequant_optimized": False,
+            "adaln_dequant_optimized": cpu_native_adaln_optimized,
             "device_types": ["cpu"],
-            "implementation": "torch_reference",
-            "package_format": "torch_reference",
-            "hf_kernel_builder_compliant": False,
-            "notes": "Correctness baseline using the reference PyTorch path.",
+            "implementation": cpu_implementation,
+            "package_format": "native_kernel_package_torch_stable_abi"
+            if cpu_optimized_stages is not None
+            else "torch_reference",
+            "hf_kernel_builder_compliant": cpu_optimized_stages is not None,
+            "notes": " ".join(cpu_notes),
         },
         "mps": {
             "available": bool(available["mps"]),

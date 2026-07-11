@@ -50,3 +50,120 @@ jobs:
           source "$tmpdir/.venv/bin/activate"
           "$tmpdir/.venv/bin/python" -c "import orbitquant; print(orbitquant.__version__)"
           orbitquant --version
+
+  windows-native-cpu:
+    name: Windows native CPU
+    runs-on: windows-2025
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          uv sync --extra dev
+          uv pip install --python .venv\Scripts\python.exe cmake ninja setuptools wheel
+
+      - name: Cache pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cargo install `
+            --git https://github.com/huggingface/kernels `
+            --rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b `
+            --locked `
+            --debug `
+            --root "$env:RUNNER_TEMP\kernel-builder" `
+            hf-kernel-builder
+
+      - name: Generate native build project
+        shell: pwsh
+        run: |
+          $kernelRoot = "native-kernels\orbitquant-packed-matmul"
+          $builder = "$env:RUNNER_TEMP\kernel-builder\bin\kernel-builder.exe"
+          & $builder check-config $kernelRoot
+          & $builder create-pyproject --unique-id windows_ci -f $kernelRoot
+          & .venv\Scripts\python.exe `
+            "$kernelRoot\scripts\prepare_wheel_project.py" `
+            $kernelRoot `
+            --version 0.1.0
+
+      - name: Build ABI3 CPU wheel with MSVC
+        shell: pwsh
+        working-directory: native-kernels/orbitquant-packed-matmul
+        run: |
+          Get-CimInstance Win32_Processor | `
+            Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | `
+            Format-List
+          cmake --version
+          $env:CMAKE_GENERATOR = "Visual Studio 18 2026"
+          $env:CMAKE_GENERATOR_PLATFORM = "x64"
+          $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
+          $env:MAX_JOBS = "2"
+          $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
+          & $python setup.py bdist_wheel --py-limited-api=cp39
+
+      - name: Verify wheel tag and metadata
+        shell: pwsh
+        working-directory: native-kernels/orbitquant-packed-matmul
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          if ($null -eq $wheel) {
+            throw "native CPU wheel was not produced"
+          }
+          if ($wheel.Name -notmatch "-cp39-abi3-win_amd64\.whl$") {
+            throw "unexpected native CPU wheel tag: $($wheel.Name)"
+          }
+          $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
+          & $python -c "import pathlib, zipfile; p=next(pathlib.Path('dist').glob('*.whl')); z=zipfile.ZipFile(p); m=z.read(next(n for n in z.namelist() if n.endswith('.dist-info/METADATA'))).decode(); assert 'Requires-Dist: torch>=2.11' in m; print(p.name); print(m)"
+
+      - name: Smoke install and native package tests
+        shell: pwsh
+        run: |
+          $smoke = "$env:RUNNER_TEMP\orbitquant-native-smoke"
+          uv venv $smoke --python 3.12
+          $python = "$smoke\Scripts\python.exe"
+          uv pip install --python $python torch==2.12.1 pytest
+          $wheel = Get-ChildItem `
+            native-kernels\orbitquant-packed-matmul\dist\*.whl | `
+            Select-Object -First 1
+          uv pip install --python $python $wheel.FullName --no-deps
+          & $python -m pytest `
+            native-kernels\orbitquant-packed-matmul\tests\test_packed_matmul.py `
+            -m kernels_ci `
+            -ra
+
+      - name: OrbitQuant native integration tests
+        shell: pwsh
+        run: |
+          $python = ".venv\Scripts\python.exe"
+          $wheel = Get-ChildItem `
+            native-kernels\orbitquant-packed-matmul\dist\*.whl | `
+            Select-Object -First 1
+          uv pip install --python $python $wheel.FullName --no-deps
+          & $python -m pytest `
+            tests\test_native_packed_matmul.py `
+            tests\test_adaln_rtn.py `
+            tests\test_paper_reference_oracle.py `
+            -ra
+
+      - name: Upload Windows native CPU wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: orbitquant-packed-matmul-windows-cpu
+          path: native-kernels/orbitquant-packed-matmul/dist/*.whl

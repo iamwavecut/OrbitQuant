@@ -905,6 +905,11 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
     capsys,
     tmp_path,
 ):
+    monkeypatch.setattr(
+        "orbitquant.layers._native_cpu_packed_matmul_load_error",
+        lambda: RuntimeError("reference-path test"),
+    )
+
     class TinyPipeline:
         def __init__(self, color="red"):
             self.color = color
