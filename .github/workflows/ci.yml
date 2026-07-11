@@ -141,8 +141,10 @@ jobs:
             }
           }
           cl.exe 2>&1 | Select-Object -First 3
-          Get-Command nmake.exe | Select-Object -ExpandProperty Source
+          $nmake = (Get-Command nmake.exe).Source
+          $nmake
           $env:CMAKE_GENERATOR = "NMake Makefiles"
+          $env:CMAKE_MAKE_PROGRAM = $nmake.Replace("\", "/")
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "1"
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"

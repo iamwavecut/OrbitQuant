@@ -45,8 +45,9 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "uses: actions/cache/save@v6.1.0" in text
     assert "vswhere.exe" in text
     assert "VsDevCmd.bat" in text
-    assert "Get-Command nmake.exe" in text
+    assert "(Get-Command nmake.exe).Source" in text
     assert 'CMAKE_GENERATOR = "NMake Makefiles"' in text
+    assert "CMAKE_MAKE_PROGRAM" in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text

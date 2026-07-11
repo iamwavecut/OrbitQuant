@@ -67,6 +67,8 @@ def test_wheel_project_preparation_supports_windows_single_config_build() -> Non
     )
 
     assert 'dependencies = ["torch>=2.11"]' in script
+    assert 'if "CMAKE_MAKE_PROGRAM" in os.environ' in script
+    assert 'is_ccache_available() and sys.platform != "win32"' in script
     assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in script
 
 

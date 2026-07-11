@@ -32,6 +32,29 @@ def main() -> None:
 
     setup = args.project / "setup.py"
     setup_text = setup.read_text(encoding="utf-8")
+
+    cmake_args = '    if "CMAKE_ARGS" in os.environ:\n'
+    if setup_text.count(cmake_args) != 1:
+        raise RuntimeError("generated setup must contain one CMake arguments block")
+    setup_text = setup_text.replace(
+        cmake_args,
+        '    if "CMAKE_MAKE_PROGRAM" in os.environ:\n'
+        "        cmake_args.append(\n"
+        '            f"-DCMAKE_MAKE_PROGRAM:FILEPATH='
+        "{os.environ['CMAKE_MAKE_PROGRAM']}" + '"\n'
+        "        )\n\n" + cmake_args,
+        1,
+    )
+
+    ccache_condition = "    elif is_ccache_available():\n"
+    if setup_text.count(ccache_condition) != 1:
+        raise RuntimeError("generated setup must contain one ccache condition")
+    setup_text = setup_text.replace(
+        ccache_condition,
+        '    elif is_ccache_available() and sys.platform != "win32":\n',
+        1,
+    )
+
     windows_move = '        if sys.platform == "win32":\n'
     if setup_text.count(windows_move) != 1:
         raise RuntimeError("generated setup must contain one Windows output move")
