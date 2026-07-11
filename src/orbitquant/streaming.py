@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import ctypes
-import mmap
-import os
 from collections.abc import Iterator
 from math import gcd
 from typing import Any
-
-import torch
 
 
 def iter_aligned_row_tiles(
@@ -45,25 +40,7 @@ def accelerate_hook_offloads(module: Any) -> bool:
     )
 
 
-def release_cpu_tensor_pages(tensor: torch.Tensor) -> bool:
-    """Drop clean CPU pages after the checkpoint tensor's final use."""
-
-    if tensor.device.type != "cpu" or tensor.numel() == 0:
-        return False
-    page_size = int(os.sysconf("SC_PAGE_SIZE"))
-    start = int(tensor.data_ptr())
-    aligned_start = start - (start % page_size)
-    end = start + tensor.numel() * tensor.element_size()
-    aligned_length = ((end - aligned_start + page_size - 1) // page_size) * page_size
-    madvise = ctypes.CDLL(None, use_errno=True).madvise
-    madvise.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
-    madvise.restype = ctypes.c_int
-    advice = int(getattr(mmap, "MADV_DONTNEED", 4))
-    return madvise(ctypes.c_void_p(aligned_start), aligned_length, advice) == 0
-
-
 __all__ = [
     "accelerate_hook_offloads",
     "iter_aligned_row_tiles",
-    "release_cpu_tensor_pages",
 ]

@@ -20,7 +20,6 @@ from orbitquant.modeling import (
     quantize_linear_modules,
 )
 from orbitquant.policies import classify_linear_modules
-from orbitquant.streaming import release_cpu_tensor_pages
 
 _ORBITQUANT_STATE_TENSORS = {"packed_weight_indices", "row_norms", "debug_weight", "bias"}
 _RTN_INT4_STATE_TENSORS = {"packed_weight", "scales", "bias"}
@@ -190,10 +189,8 @@ class OrbitQuantizer(*_hf_base_classes()):
         self.quantization_device = quantization_device
 
     def release_source_tensor(self, tensor: torch.Tensor) -> None:
-        if release_cpu_tensor_pages(tensor):
+        if tensor.device.type == "cpu":
             self.released_source_tensor_bytes += tensor.numel() * tensor.element_size()
-        elif tensor.device.type == "cpu":
-            self.source_page_release_failures += 1
 
     def _quantization_device_from_kwargs(self, kwargs: dict[str, Any]) -> torch.device | None:
         explicit_device = _normalise_quantization_device(kwargs.get("quantization_device"))
