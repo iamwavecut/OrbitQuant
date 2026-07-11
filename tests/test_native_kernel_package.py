@@ -67,7 +67,8 @@ def test_wheel_project_preparation_keeps_windows_ninja_executable() -> None:
     )
 
     assert 'dependencies = ["torch>=2.11"]' in script
-    assert 'which("ninja") or Path(ninja.BIN_DIR)' in script
+    assert 'ninja_executable_path = Path(ninja.BIN_DIR)' in script
+    assert 'which("ninja")' not in script
     assert '"ninja.exe" if os.name == "nt" else "ninja"' in script
 
 
