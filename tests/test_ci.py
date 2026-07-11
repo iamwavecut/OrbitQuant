@@ -43,8 +43,8 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "prepare_wheel_project.py" in text
     assert "uses: actions/cache/restore@v6.1.0" in text
     assert "uses: actions/cache/save@v6.1.0" in text
-    assert 'CMAKE_GENERATOR = "Visual Studio 17 2022"' in text
-    assert "Microsoft.Component.MSBuild" in text
+    assert "VsDevCmd.bat" in text
+    assert 'CMAKE_GENERATOR = "Ninja Multi-Config"' in text
     assert "CMAKE_MAKE_PROGRAM" in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text

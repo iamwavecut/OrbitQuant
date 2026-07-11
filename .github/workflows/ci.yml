@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           uv sync --extra dev
-          uv pip install --python .venv\Scripts\python.exe cmake setuptools wheel
+          uv pip install --python .venv\Scripts\python.exe cmake ninja setuptools wheel
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
@@ -123,16 +123,31 @@ jobs:
           $vsRoot = & $vswhere `
             -latest `
             -products * `
-            -requires Microsoft.Component.MSBuild `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
             -property installationPath
-          $msbuild = Join-Path $vsRoot "MSBuild\Current\Bin\MSBuild.exe"
-          if (-not (Test-Path $msbuild)) {
-            throw "32-bit host MSBuild was not found"
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
           }
-          & $msbuild -version
-          $env:CMAKE_GENERATOR = "Visual Studio 17 2022"
-          $env:CMAKE_GENERATOR_PLATFORM = "x64"
-          $env:CMAKE_MAKE_PROGRAM = $msbuild.Replace("\", "/")
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to initialize the MSVC x86_64 environment"
+          }
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
+          cl.exe 2>&1 | Select-Object -First 3
+          $ninja = "$env:GITHUB_WORKSPACE\.venv\Scripts\ninja.exe"
+          if (-not (Test-Path $ninja)) {
+            throw "the Python Ninja executable was not installed"
+          }
+          & $ninja --version
+          $env:CMAKE_GENERATOR = "Ninja Multi-Config"
+          $env:CMAKE_MAKE_PROGRAM = $ninja.Replace("\", "/")
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "2"
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"

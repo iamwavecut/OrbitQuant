@@ -44,6 +44,15 @@ def main() -> None:
         "        )\n\n" + cmake_args,
         1,
     )
+
+    ccache_condition = "    elif is_ccache_available():\n"
+    if setup_text.count(ccache_condition) != 1:
+        raise RuntimeError("generated setup must contain one ccache condition")
+    setup_text = setup_text.replace(
+        ccache_condition,
+        '    elif is_ccache_available() and sys.platform != "win32":\n',
+        1,
+    )
     setup.write_text(setup_text, encoding="utf-8")
 
 
