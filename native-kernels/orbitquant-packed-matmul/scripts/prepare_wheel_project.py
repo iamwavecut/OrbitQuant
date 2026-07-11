@@ -52,6 +52,21 @@ def main() -> None:
             f'return os.name != "nt" and which("{cache_tool}") is not None',
             1,
         )
+    cmake_args_hook = (
+        '    if "CMAKE_ARGS" in os.environ:\n'
+        '        cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") '
+        "if item]\n"
+    )
+    if setup_text.count(cmake_args_hook) != 1:
+        raise RuntimeError("generated setup must contain one CMAKE_ARGS hook")
+    setup_text = setup_text.replace(
+        cmake_args_hook,
+        cmake_args_hook
+        + '    cmake_make_program = os.environ.get("ORBITQUANT_CMAKE_MAKE_PROGRAM")\n'
+        + "    if cmake_make_program:\n"
+        + '        cmake_args.append(f"-DCMAKE_MAKE_PROGRAM:FILEPATH={cmake_make_program}")\n',
+        1,
+    )
     setup.write_text(setup_text, encoding="utf-8")
 
 

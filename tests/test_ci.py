@@ -46,8 +46,7 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "vswhere.exe" in text
     assert "VsDevCmd.bat" in text
     assert "Get-Command nmake.exe -ErrorAction Stop" in text
-    assert "Copy-Item -LiteralPath $nmake.Source" in text
-    assert "-DCMAKE_MAKE_PROGRAM:FILEPATH=$nmakeCopy" in text
+    assert "ORBITQUANT_CMAKE_MAKE_PROGRAM = $nmake.Source" in text
     assert 'CMAKE_GENERATOR = "NMake Makefiles"' in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text

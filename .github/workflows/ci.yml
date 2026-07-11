@@ -143,12 +143,10 @@ jobs:
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
           cl.exe 2>&1 | Select-Object -First 3
           $nmake = Get-Command nmake.exe -ErrorAction Stop
-          $nmakeCopy = "$env:RUNNER_TEMP\nmake.exe"
-          Copy-Item -LiteralPath $nmake.Source -Destination $nmakeCopy -Force
-          Write-Host "Using NMake: $nmakeCopy"
+          Write-Host "Using NMake: $($nmake.Source)"
           $env:CMAKE_GENERATOR = "NMake Makefiles"
-          $env:CMAKE_ARGS = `
-            "-DGPU_LANG=CPU -DCMAKE_MAKE_PROGRAM:FILEPATH=$nmakeCopy"
+          $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
+          $env:ORBITQUANT_CMAKE_MAKE_PROGRAM = $nmake.Source
           $env:MAX_JOBS = "2"
           & $python setup.py bdist_wheel --py-limited-api=cp39
 
