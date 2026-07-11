@@ -92,6 +92,15 @@ def main() -> None:
         '        copy2(generated_ops, extdir / "_ops.py")\n'
     )
     setup_text = setup_text.replace(build_call, wheel_build_call, 1)
+
+    zip_safe = "    zip_safe=False,\n"
+    if setup_text.count(zip_safe) != 1:
+        raise RuntimeError("generated setup must contain one zip-safe option")
+    setup_text = setup_text.replace(
+        zip_safe,
+        '    options={"bdist_wheel": {"py_limited_api": "cp39"}},\n' + zip_safe,
+        1,
+    )
     setup.write_text(setup_text, encoding="utf-8")
 
 

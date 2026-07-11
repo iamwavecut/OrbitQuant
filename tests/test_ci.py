@@ -52,6 +52,13 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text
     assert "torch==2.12.1 pytest" in text
     assert "-m kernels_ci" in text
+    assert "manylinux-native-cpu:" in text
+    assert "cibuildwheel==4.1.0" in text
+    assert "CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28" in text
+    assert "--exclude libc10.so" in text
+    assert "--exclude libtorch_cpu.so" in text
+    assert "--exclude libtorch.so" in text
+    assert "*-cp39-abi3-manylinux_2_28_x86_64.whl" in text
 
 
 def test_package_version_matches_import_version():

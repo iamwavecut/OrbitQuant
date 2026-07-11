@@ -72,6 +72,7 @@ def test_wheel_project_preparation_adds_runtime_requirement() -> None:
     assert 'os.environ.get("ORBITQUANT_BUILD_TEMP", ' in script
     assert "build_temp = (Path(build_temp_root) / ext.name).resolve()" in script
     assert 'copy2(generated_ops, extdir / "_ops.py")' in script
+    assert 'options={"bdist_wheel": {"py_limited_api": "cp39"}}' in script
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
