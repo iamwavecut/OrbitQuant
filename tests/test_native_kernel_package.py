@@ -67,6 +67,7 @@ def test_wheel_project_preparation_adds_runtime_requirement() -> None:
     )
 
     assert 'dependencies = ["torch>=2.11"]' in script
+    assert 'if "CMAKE_MAKE_PROGRAM" in os.environ' in script
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:

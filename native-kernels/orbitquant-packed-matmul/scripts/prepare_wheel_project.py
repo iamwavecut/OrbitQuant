@@ -30,6 +30,22 @@ def main() -> None:
     )
     pyproject.write_text(text, encoding="utf-8")
 
+    setup = args.project / "setup.py"
+    setup_text = setup.read_text(encoding="utf-8")
+    cmake_args = '    if "CMAKE_ARGS" in os.environ:\n'
+    if setup_text.count(cmake_args) != 1:
+        raise RuntimeError("generated setup must contain one CMake arguments block")
+    setup_text = setup_text.replace(
+        cmake_args,
+        '    if "CMAKE_MAKE_PROGRAM" in os.environ:\n'
+        "        cmake_args.append(\n"
+        '            f"-DCMAKE_MAKE_PROGRAM:FILEPATH='
+        "{os.environ['CMAKE_MAKE_PROGRAM']}" + '"\n'
+        "        )\n\n" + cmake_args,
+        1,
+    )
+    setup.write_text(setup_text, encoding="utf-8")
+
 
 if __name__ == "__main__":
     main()
