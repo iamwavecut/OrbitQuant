@@ -302,6 +302,29 @@ The implementation follows the paper's shared data-agnostic basis:
 The detailed requirement matrix is in
 [`docs/paper-methodology-audit.md`](docs/paper-methodology-audit.md).
 
+## Citation
+
+If you use OrbitQuant in research, cite the original paper describing the
+method:
+
+> Donghyun Lee, Jitesh Chavan, Duy Nguyen, Sam Huang, Liming Jiang,
+> Priyadarshini Panda, Timo Mertens, and Saurabh Shukla. "OrbitQuant:
+> Data-Agnostic Quantization for Image and Video Diffusion Transformers."
+> arXiv:2607.02461, 2026. https://doi.org/10.48550/arXiv.2607.02461
+
+```bibtex
+@misc{lee2026orbitquant,
+  title         = {OrbitQuant: Data-Agnostic Quantization for Image and Video Diffusion Transformers},
+  author        = {Lee, Donghyun and Chavan, Jitesh and Nguyen, Duy and Huang, Sam and Jiang, Liming and Panda, Priyadarshini and Mertens, Timo and Shukla, Saurabh},
+  year          = {2026},
+  eprint        = {2607.02461},
+  archiveprefix = {arXiv},
+  primaryclass  = {cs.CV},
+  doi           = {10.48550/arXiv.2607.02461},
+  url           = {https://arxiv.org/abs/2607.02461},
+}
+```
+
 ## Development
 
 ```bash
