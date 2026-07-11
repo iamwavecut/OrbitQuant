@@ -46,6 +46,7 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "VsDevCmd.bat" in text
     assert 'CMAKE_GENERATOR = "Ninja Multi-Config"' in text
     assert "CMAKE_MAKE_PROGRAM" in text
+    assert "ORBITQUANT_BUILD_TEMP" in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text

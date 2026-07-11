@@ -53,6 +53,17 @@ def main() -> None:
         '    elif is_ccache_available() and sys.platform != "win32":\n',
         1,
     )
+
+    build_temp = "        build_temp = Path(self.build_temp) / ext.name\n"
+    if setup_text.count(build_temp) != 1:
+        raise RuntimeError("generated setup must contain one extension build path")
+    setup_text = setup_text.replace(
+        build_temp,
+        '        build_temp_root = os.environ.get("ORBITQUANT_BUILD_TEMP", '
+        "self.build_temp)\n"
+        "        build_temp = (Path(build_temp_root) / ext.name).resolve()\n",
+        1,
+    )
     setup.write_text(setup_text, encoding="utf-8")
 
 

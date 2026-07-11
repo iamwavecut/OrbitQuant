@@ -69,6 +69,8 @@ def test_wheel_project_preparation_adds_runtime_requirement() -> None:
     assert 'dependencies = ["torch>=2.11"]' in script
     assert 'if "CMAKE_MAKE_PROGRAM" in os.environ' in script
     assert 'is_ccache_available() and sys.platform != "win32"' in script
+    assert 'os.environ.get("ORBITQUANT_BUILD_TEMP", ' in script
+    assert "build_temp = (Path(build_temp_root) / ext.name).resolve()" in script
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
