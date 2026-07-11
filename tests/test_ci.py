@@ -41,8 +41,12 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "--rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b" in text
     assert "--debug" in text
     assert "prepare_wheel_project.py" in text
-    assert "uses: actions/cache@v6.1.0" in text
-    assert 'CMAKE_GENERATOR = "Visual Studio 18 2026"' in text
+    assert "uses: actions/cache/restore@v6.1.0" in text
+    assert "uses: actions/cache/save@v6.1.0" in text
+    assert "vswhere.exe" in text
+    assert "VsDevCmd.bat" in text
+    assert "ninja --version" in text
+    assert 'CMAKE_GENERATOR = "Ninja"' in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text
