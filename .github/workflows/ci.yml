@@ -289,7 +289,7 @@ jobs:
           wheel=$(find wheelhouse -maxdepth 1 -name '*.whl' -print -quit)
           test -n "$wheel"
           case "$(basename "$wheel")" in
-            *-cp39-abi3-manylinux_2_28_x86_64.whl) ;;
+            *-cp39-abi3-*manylinux_2_28_x86_64.whl) ;;
             *) echo "unexpected native CPU wheel: $wheel" >&2; exit 1 ;;
           esac
           test "$(stat -c %s "$wheel")" -lt 1048576
