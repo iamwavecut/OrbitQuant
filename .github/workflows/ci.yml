@@ -305,7 +305,7 @@ jobs:
             --python "$python" \
             --index https://download.pytorch.org/whl/cpu \
             --index-strategy unsafe-best-match \
-            torch==2.12.1 pytest
+            . torch==2.12.1 pytest
           uv pip install --python "$python" wheelhouse/*.whl --no-deps
           "$python" -m pytest \
             tests/test_native_packed_matmul.py \
