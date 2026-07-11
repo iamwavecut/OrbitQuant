@@ -37,7 +37,7 @@ def main() -> None:
         raise RuntimeError("generated setup must contain one Ninja executable path")
     setup_text = setup_text.replace(
         ninja_path,
-        "ninja_executable_path = Path(ninja.BIN_DIR) / "
+        'ninja_executable_path = which("ninja") or Path(ninja.BIN_DIR) / '
         '("ninja.exe" if os.name == "nt" else "ninja")',
         1,
     )

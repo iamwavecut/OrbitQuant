@@ -72,9 +72,9 @@ jobs:
           uv sync --extra dev
           uv pip install --python .venv\Scripts\python.exe cmake ninja setuptools wheel
 
-      - name: Cache pinned kernel-builder
+      - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache@v6.1.0
+        uses: actions/cache/restore@v6.1.0
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
@@ -90,6 +90,13 @@ jobs:
             --debug `
             --root "$env:RUNNER_TEMP\kernel-builder" `
             hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
 
       - name: Generate native build project
         shell: pwsh
@@ -134,6 +141,7 @@ jobs:
             }
           }
           cl.exe 2>&1 | Select-Object -First 3
+          ninja --version
           $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "2"
