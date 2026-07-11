@@ -66,7 +66,7 @@ def _install_snippet() -> str:
     return "\n".join(
         [
             "```bash",
-            "pip install \"orbitquant[hf,kernels]>=0.3.1\"",
+            "pip install \"orbitquant[hf,kernels]>=0.4.0\"",
             "```",
         ]
     )

@@ -221,7 +221,7 @@ def test_model_card_renders_imported_vbench_release_metrics():
 def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    assert 'pip install "orbitquant[hf,kernels]>=0.3.1"' in card
+    assert 'pip install "orbitquant[hf,kernels]>=0.4.0"' in card
     assert "git+https://github.com/iamwavecut/OrbitQuant.git" not in card
     for forbidden in (
         "reports/",
