@@ -32,6 +32,16 @@ def main() -> None:
 
     setup = args.project / "setup.py"
     setup_text = setup.read_text(encoding="utf-8")
+
+    shutil_import = "from shutil import which, move\n"
+    if setup_text.count(shutil_import) != 1:
+        raise RuntimeError("generated setup must contain one shutil import")
+    setup_text = setup_text.replace(
+        shutil_import,
+        "from shutil import copy2, move, which\n",
+        1,
+    )
+
     cmake_args = '    if "CMAKE_ARGS" in os.environ:\n'
     if setup_text.count(cmake_args) != 1:
         raise RuntimeError("generated setup must contain one CMake arguments block")
@@ -64,6 +74,24 @@ def main() -> None:
         "        build_temp = (Path(build_temp_root) / ext.name).resolve()\n",
         1,
     )
+
+    build_call = (
+        "        subprocess.run(\n"
+        '            ["cmake", "--build", str(build_temp), *build_args], '
+        "cwd=build_temp, check=True\n"
+        "        )\n"
+    )
+    if setup_text.count(build_call) != 1:
+        raise RuntimeError("generated setup must contain one wheel CMake build call")
+    wheel_build_call = build_call + (
+        "\n"
+        '        package_name = ext.name.split(".", 1)[0]\n'
+        "        generated_ops = (\n"
+        '            Path(ext.sourcedir) / "torch-ext" / package_name / "_ops.py"\n'
+        "        )\n"
+        '        copy2(generated_ops, extdir / "_ops.py")\n'
+    )
+    setup_text = setup_text.replace(build_call, wheel_build_call, 1)
     setup.write_text(setup_text, encoding="utf-8")
 
 
