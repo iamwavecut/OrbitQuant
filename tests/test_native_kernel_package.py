@@ -70,6 +70,7 @@ def test_wheel_project_preparation_keeps_windows_ninja_executable() -> None:
     assert 'ninja_executable_path = Path(ninja.BIN_DIR)' in script
     assert 'which("ninja")' not in script
     assert '"ninja.exe" if os.name == "nt" else "ninja"' in script
+    assert 'os.name != "nt" and which("{cache_tool}") is not None' in script
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:

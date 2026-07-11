@@ -41,6 +41,17 @@ def main() -> None:
         '("ninja.exe" if os.name == "nt" else "ninja")',
         1,
     )
+    for cache_tool in ("sccache", "ccache"):
+        availability = f'return which("{cache_tool}") is not None'
+        if setup_text.count(availability) != 1:
+            raise RuntimeError(
+                f"generated setup must contain one {cache_tool} availability check"
+            )
+        setup_text = setup_text.replace(
+            availability,
+            f'return os.name != "nt" and which("{cache_tool}") is not None',
+            1,
+        )
     setup.write_text(setup_text, encoding="utf-8")
 
 
