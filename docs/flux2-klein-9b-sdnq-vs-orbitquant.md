@@ -7,7 +7,7 @@ VRAM, paired visual output and the measured OrbitQuant kernel path.
 
 ## Checkpoints
 
-| Variant | Repository | Revision | Quantized components |
+| Variant | Repository | Measured revision | Quantized components |
 | --- | --- | --- | --- |
 | BF16 | [`black-forest-labs/FLUX.2-klein-9B`](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) | `92196c8e11f7b6cf2b7493e037d8c5345c559216` | None |
 | SDNQ UINT4 | [`WaveCut/FLUX.2-klein-9B-SDNQ-uint4-static`](https://huggingface.co/WaveCut/FLUX.2-klein-9B-SDNQ-uint4-static) | `ed71b3f19ce640e88b66a2a743aabb8a613adeac` | Transformer and Qwen3 text encoder |
@@ -22,6 +22,10 @@ OrbitQuant quantized 144 transformer projections and 252 text-encoder projection
 transformer modulation projections use INT4 RTN with BF16 activations, and the text
 encoder `lm_head` remains BF16. Quantizing the text encoder is a deliberate universal
 adapter extension for this comparison; the OrbitQuant paper leaves text encoders in BF16.
+
+The revisions above pin the weight snapshots used by the experiment. Later
+OrbitQuant Hub commits update only its model card and comparison matrix; the
+measured transformer, text-encoder, and VAE payloads are unchanged.
 
 ## Protocol
 
@@ -42,6 +46,10 @@ adapter extension for this comparison; the OrbitQuant paper leaves text encoders
 - Ten identical prompts per variant
 - Each variant loaded and ran in a separate process
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+
+These are the measured software versions, not current installation minimums.
+OrbitQuant 0.3.1 changes the Metal/MPS path and does not supersede this 0.3.0
+L40S CUDA measurement.
 
 The prompt pack stresses micro-detail, exact counting, nested spatial composition,
 fictional authorial style, abstract material separation, English fine print, Russian,

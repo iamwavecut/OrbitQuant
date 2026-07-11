@@ -4,13 +4,17 @@ OrbitQuant uses packed low-bit weights directly in optimized runtime modes. The
 reference path materializes a floating-point weight matrix and is available only
 when explicitly selected.
 
+The runtime contract below reflects OrbitQuant 0.3.1. Benchmark tables retain
+the exact software and hardware of each recorded run rather than implying that
+those versions are current installation requirements.
+
 ## Runtime Contract
 
 `runtime_mode="auto_fused"` is the default.
 
 | Device | Default dispatch | Required support |
 | --- | --- | --- |
-| CUDA | Native activation kernel plus packed W4A4 tensor-core path; native or Triton packed fallback | An importable local native package and, for the CUTLASS path, Triton |
+| CUDA | Native activation kernel plus packed W4A4 tensor-core path; native or Triton packed fallback | A matching native package for the fastest path; Triton for the CUTLASS epilogue and generic packed fallback |
 | MPS | Native packed matmul | An importable local Metal package |
 | CPU | Reference matmul | PyTorch |
 
@@ -87,10 +91,12 @@ Nix build for a redistributable variant and run `kernel-builder check-abi` befor
 distributing it. A local Ubuntu 24.04 build can be ABI3 at the Python boundary
 while still depending on a GLIBC version newer than `manylinux_2_28`.
 
-Alternatively, point Hugging Face `kernels` at the local source tree:
+To load the local build through Hugging Face `kernels` instead of importing it
+through `PYTHONPATH`, map the kernel repository to the same generated variant
+directory containing `metadata.json`:
 
 ```bash
-export LOCAL_KERNELS="$PWD"
+export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$PWD/build/<matching-variant>"
 ```
 
 The variant must match the active Torch, CUDA or Metal, platform, and C++ ABI
@@ -114,24 +120,26 @@ families:
 The activation path used Triton CUDA. No tested layer reached full-weight
 dequantization or `F.linear` fallback in optimized mode.
 
-MPS verification passed on Apple Silicon with Torch 2.12.1. It covered the
-native Metal package, inline shader stages, `auto_fused` dispatch, and a real
-3072x3072 projection restored from the published FLUX.2 W4A4 artifact. The
-macOS 15 deployment-target build passed `kernel-builder check-abi` for the
-Python 3.9 stable ABI, and the packed and reference outputs were finite and
-numerically close.
+OrbitQuant 0.3.1 MPS verification passed on an Apple M2 Max with Torch 2.12.1.
+It covered the native Metal package, inline shader stages, `auto_fused`
+dispatch, and a real 3072x3072 projection restored from the published FLUX.2
+W4A4 artifact. The current native package suite passed 74 tests on the MPS
+host; 23 CUDA-only cases were skipped. The macOS 15 deployment-target build
+passed `kernel-builder check-abi` for the Python 3.9 stable ABI, and the packed
+and reference outputs were finite and numerically close.
 
 The Metal package also passed an ABI3 build matrix for Torch 2.11, 2.12, and
 2.13. A quantized tiny GPT-2 run exercised all eight wrapped projections during
 prefill and cached decode through `native_packed_matmul`, with finite outputs.
 
-The final CUDA W4A4 stack was built and tested on an NVIDIA L40S (`sm_89`) with
-Torch 2.9.1+cu128 and CUDA 12.8. The native package suite passed 49 CUDA tests;
-the ten skipped cases were Metal-only. Coverage includes W2/W3/W4/W6 generic
-packed matmul, FP16/BF16, bias and no-bias paths, partial output tiles, direct
-packed W4A4 MMA, native packed-A4 activation quantization, and native INT8
-activation quantization for full-block dimensions and the 12288/4096 blocked
-RPBH case.
+The CUDA W4A4 stack released in OrbitQuant 0.3.0 was built and tested on an
+NVIDIA L40S (`sm_89`) with Torch 2.9.1+cu128 and CUDA 12.8. That recorded native
+package suite passed 49 CUDA tests; the ten skipped cases were Metal-only.
+Coverage includes W2/W3/W4/W6 generic packed matmul, FP16/BF16, bias and
+no-bias paths, partial output tiles, direct packed W4A4 MMA, native packed-A4
+activation quantization, and native INT8 activation quantization for full-block
+dimensions and the 12288/4096 blocked RPBH case. OrbitQuant 0.3.1 changes the
+Metal path; the CUDA implementation measured in this section is unchanged.
 
 For W4A4 on compute capability 8.0 or newer, the selected path is:
 

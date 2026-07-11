@@ -1,11 +1,14 @@
 # OrbitQuant Paper Methodology Audit
 
 Paper revision: arXiv 2607.02461v1.
+Implementation baseline: OrbitQuant 0.3.1.
 
 This audit defines the method-conformance and claim boundaries for OrbitQuant.
 Run `scripts/run_paper_methodology_checks.sh` to verify the implementation,
 model policies, artifact basis metadata, and native settings. Native artifact
-proof and release-grade GenEval/VBench metrics are separate release gates.
+proof is a checkpoint-readiness gate. GenEval/VBench results are required only
+for claims that quote or reproduce those scores, not for publishing the library
+or a checkpoint without such claims.
 
 Paper source:
 
@@ -62,7 +65,7 @@ Status legend:
 | The only input-dependent runtime scalar is the per-token norm. | Pass | `src/orbitquant/functional.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py` | Codebook, rotation, centroids, boundaries, signs, and permutation are fixed after construction; persistent layer state is limited to packed weight indices, row norms, and optional bias. |
 | AdaLN modulation projections use INT4 weight-only RTN with group size 64 and BF16 activations. | Pass | `src/orbitquant/adaln.py`, `src/orbitquant/config.py`, `src/orbitquant/artifacts/manifest.py`, `tests/test_adaln_rtn.py` | AdaLN wrappers do not call OrbitQuant activation rotation. Default `adaln_group_size` is 64, and artifacts record the actual group size so non-default artifacts are labeled. |
 | Transformer-block linear projections are quantized through OrbitQuant. | Pass | `src/orbitquant/policies/generic_dit.py`, `src/orbitquant/linear_adapters.py`, `tests/test_target_policies.py`, `tests/test_universal_transformers.py` | Paper targets retain exact model policies. Unknown architectures use the universal policy over every registered linear-compatible module, subject to explicit boundary skips and user allowlists. |
-| Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. Artifact manifests still need per-artifact cross-checks before final publication. |
+| Embeddings, timestep MLPs, final projection/unpatchify heads, text encoders, VAE, scheduler, safety/image processors remain unquantized by default. | Pass for configured transformer components | `src/orbitquant/policies/generic_dit.py`, `tests/test_target_policies.py`; inventory summary below | Text encoders and VAE are outside the transformer component and are not passed into the default quantization helper. The 14 canonical transformer artifacts were cross-checked against this policy; future artifacts require the same validation. |
 | Native settings match paper for FLUX.1-schnell, Z-Image-Turbo, and Wan 2.1-1.3B. | Pass for encoded settings | `src/orbitquant/eval/native_settings.py`, `README.md`, `src/orbitquant/artifacts/model_card.py` | Native artifact-readiness evidence is separate from release-grade metric tables. Full metric runs are required before metric-table or paper-reproduction claims. |
 | FLUX.2 Klein is separated from paper-reproduction targets. | Pass | `src/orbitquant/eval/native_settings.py`, `src/orbitquant/artifacts/model_card.py` | It is treated as an additional target using paper-style native settings. |
 | Runtime acceleration claims match implemented kernels. | Pass for the measured FLUX.2 Klein 9B W4A4 configuration; partial across other models | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/mps.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | Default `auto_fused` requires packed low-bit matmul on CUDA/MPS and fails loudly when kernels are missing. CUDA and MPS avoid full floating-point weight materialization. The CUDA INT8-surrogate fast path is an explicitly documented runtime approximation; exact Lloyd-Max centroid evaluation remains available through `dequant_bf16`. |
@@ -180,7 +183,7 @@ not silently substitute a different quantization method.
 | The optimized CUDA W4A4 path evaluates an INT8 surrogate of each Lloyd-Max codebook. | Documented runtime deviation | Packed nearest-centroid indices, row norms, token norms, and the artifact remain unchanged. The surrogate adds 0.21-0.28% codebook relative RMSE for the measured FLUX.2 dimensions. `dequant_bf16` evaluates the stored Lloyd-Max centroids directly and is the exact methodology reference. |
 | Full-model speedup is configuration-specific. | Accepted claim boundary | FLUX.2 Klein 9B on L40S reached practical SDNQ hot-generation parity with lower memory. That result does not establish universal speedup for other models, shapes, GPUs, or offload policies. |
 | The paper's block-size enumeration omits `h=256`, although its stated largest-power-of-two-divisor rule gives `h=256` for Z-Image `d=3840` and Wan `d=8960` projections. | Paper inconsistency | The implementation follows the formal rule. The selected target dimensions produce `h` in `{256, 512, 1024, 2048, 4096}`. |
-| Published checkpoints use converged Lloyd-Max codebook version 2 and `activation_eps=1e-10`. | Pass | All 14 canonical FLUX.2, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 artifacts were regenerated and validated. Legacy version 1 artifacts remain loadable by the library but are no longer the published release checkpoints. |
+| Published checkpoints use converged Lloyd-Max codebook version 2 and `activation_eps=1e-10`. | Pass | All 14 canonical FLUX.2 4B, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 manifests expose these values. The FLUX.2 Klein 9B comparison checkpoint records them in both quantized component configs. Legacy version 1 artifacts remain loadable but are no longer the published release checkpoints. |
 | Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
 | Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
 | ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
