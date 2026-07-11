@@ -84,6 +84,12 @@ def test_wheel_project_preparation_injects_build_tool_argv_hook(tmp_path) -> Non
         '[project]\nversion = "0.1.0"\nrequires-python = ">=3.9"\n',
         encoding="utf-8",
     )
+    (project / "CMakeLists.txt").write_text(
+        "find_package(Python3 COMPONENTS Development Development.SABIModule Interpreter)\n"
+        "find_package(Python3 REQUIRED COMPONENTS Development "
+        "Development.SABIModule Interpreter)\n",
+        encoding="utf-8",
+    )
     (project / "setup.py").write_text(
         """import os
 from pathlib import Path
@@ -150,6 +156,9 @@ setup(
     )
     assert prepared_project["project"]["version"] == "0.4.0"
     assert prepared_project["project"]["dependencies"] == ["torch>=2.11"]
+    prepared_cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "COMPONENTS Development.SABIModule Interpreter" in prepared_cmake
+    assert "COMPONENTS Development Development.SABIModule" not in prepared_cmake
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:

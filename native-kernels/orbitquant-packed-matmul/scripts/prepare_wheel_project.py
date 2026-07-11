@@ -30,6 +30,25 @@ def main() -> None:
     )
     pyproject.write_text(text, encoding="utf-8")
 
+    cmake = args.project / "CMakeLists.txt"
+    cmake_text = cmake.read_text(encoding="utf-8")
+    for required in (False, True):
+        marker = " REQUIRED" if required else ""
+        development = (
+            f"find_package(Python3{marker} COMPONENTS Development "
+            "Development.SABIModule Interpreter)"
+        )
+        if cmake_text.count(development) != 1:
+            raise RuntimeError(
+                "generated CMake must contain one Python development lookup"
+            )
+        cmake_text = cmake_text.replace(
+            development,
+            f"find_package(Python3{marker} COMPONENTS Development.SABIModule Interpreter)",
+            1,
+        )
+    cmake.write_text(cmake_text, encoding="utf-8")
+
     setup = args.project / "setup.py"
     setup_text = setup.read_text(encoding="utf-8")
     shutil_import = "from shutil import which, move\n"
