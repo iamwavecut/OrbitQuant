@@ -36,6 +36,14 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "dist/*.whl" in text
     assert "orbitquant-0.1.0-py3-none-any.whl" not in text
     assert "orbitquant --version" in text
+    assert "windows-native-cpu:" in text
+    assert "runs-on: windows-2025" in text
+    assert "--rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b" in text
+    assert "prepare_wheel_project.py" in text
+    assert "bdist_wheel --py-limited-api=cp39" in text
+    assert '"-cp39-abi3-win_amd64\\.whl$"' in text
+    assert "torch==2.12.1 pytest" in text
+    assert "-m kernels_ci" in text
 
 
 def test_package_version_matches_import_version():
@@ -272,7 +280,8 @@ def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant
         "pybind11": re.compile(r"pybind11|PYBIND11|py::"),
         "torch extension header": re.compile(r"torch/extension\.h"),
         "hardcoded torch op namespace": re.compile(
-            r"TORCH_LIBRARY\(|TORCH_LIBRARY_FRAGMENT|TORCH_LIBRARY_IMPL|PyInit"
+            r"TORCH_LIBRARY\(|TORCH_LIBRARY_FRAGMENT|"
+            r"(?<!STABLE_)TORCH_LIBRARY_IMPL|PyInit"
         ),
         "setuptools extension build": re.compile(
             r"CUDAExtension|BuildExtension|cpp_extension\.load|load_inline"
@@ -296,7 +305,8 @@ def test_native_packed_matmul_kernel_package_stays_kernel_builder_abi3_compliant
     assert build_config["general"]["name"] == "orbitquant-packed-matmul"
     assert "_" not in build_config["general"]["name"]
     assert build_config["general"]["license"] == "Apache-2.0"
-    assert build_config["general"]["backends"] == ["cuda", "metal"]
+    assert build_config["general"]["backends"] == ["cpu", "cuda", "metal"]
+    assert build_config["torch"]["stable-abi"] == {"cpu": "2.11"}
     assert build_config["general"]["upstream"] == "https://github.com/iamwavecut/OrbitQuant"
     assert (
         build_config["general"]["source"]

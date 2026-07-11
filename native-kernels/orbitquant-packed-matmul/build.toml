@@ -3,7 +3,7 @@ name = "orbitquant-packed-matmul"
 version = 1
 edition = 5
 license = "Apache-2.0"
-backends = ["cuda", "metal"]
+backends = ["cpu", "cuda", "metal"]
 upstream = "https://github.com/iamwavecut/OrbitQuant"
 source = "https://huggingface.co/WaveCut/orbitquant-packed-matmul"
 
@@ -14,6 +14,37 @@ repo-id = "WaveCut/orbitquant-packed-matmul"
 src = [
   "torch-ext/torch_binding.cpp",
   "torch-ext/torch_binding.h",
+]
+
+[torch.stable-abi]
+cpu = "2.11"
+
+[kernel.packed_matmul_cpu]
+backend = "cpu"
+depends = ["torch"]
+include = ["orbitquant_packed_matmul_cpu"]
+src = [
+  "orbitquant_packed_matmul_cpu/cpu_isa.cpp",
+  "orbitquant_packed_matmul_cpu/cpu_kernel_args.h",
+  "orbitquant_packed_matmul_cpu/cpu_threads.cpp",
+  "orbitquant_packed_matmul_cpu/cpu_threads.h",
+  "orbitquant_packed_matmul_cpu/packed_adaln_cpu.cpp",
+  "orbitquant_packed_matmul_cpu/packed_matmul_cpu.cpp",
+  "orbitquant_packed_matmul_cpu/packed_matmul_cpu.h",
+  "orbitquant_packed_matmul_cpu/packed_matmul_scalar.cpp",
+  "orbitquant_packed_matmul_cpu/packed_matmul_neon.cpp",
+  "orbitquant_packed_matmul_cpu/packed_matmul_x86_avx512.cpp",
+  "orbitquant_packed_matmul_cpu/quantize_activations_cpu.cpp",
+]
+
+[kernel.packed_matmul_cpu_x86_avx2]
+backend = "cpu"
+depends = ["torch"]
+include = ["orbitquant_packed_matmul_cpu"]
+cxx-flags = ["$<$<CXX_COMPILER_ID:MSVC>:/arch:AVX2>"]
+src = [
+  "orbitquant_packed_matmul_cpu/cpu_msvc_avx2.cpp",
+  "orbitquant_packed_matmul_cpu/packed_matmul_x86.cpp",
 ]
 
 [kernel.packed_matmul_cuda]

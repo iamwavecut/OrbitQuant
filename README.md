@@ -218,11 +218,12 @@ pipe = load_quantized_pipeline_from_artifact(
 | --- | --- |
 | CUDA | Native activation kernel plus packed W4A4 tensor-core path; native or Triton packed fallback |
 | MPS | Native packed Metal package |
-| CPU | PyTorch reference path |
+| CPU | Native exact activation, packed low-bit matmul, and packed INT4 AdaLN when the CPU package is importable; PyTorch reference fallback otherwise |
 
 CUDA and MPS do not silently materialize a full BF16/FP16 weight matrix in
 `auto_fused`. If no packed backend is available, the error includes the missing
-backend and installation guidance.
+backend and installation guidance. CPU retains a compatibility fallback when
+the optional native package is absent.
 
 Use the explicit reference path for compatibility or numerical debugging:
 
@@ -257,8 +258,9 @@ inference by setting the allocator before Python starts:
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate.py
 ```
 
-The variant must match the Torch minor version, CUDA or Metal backend, C++ ABI,
-architecture, and operating system. See
+CUDA and Metal variants must match the Torch/backend tuple. The CPU variant
+targets the LibTorch Stable ABI 2.11, but remains specific to its operating
+system, C++ runtime, and architecture. See
 [`docs/kernel-audit.md`](docs/kernel-audit.md) for tested shapes, benchmark
 methodology, and local package verification.
 

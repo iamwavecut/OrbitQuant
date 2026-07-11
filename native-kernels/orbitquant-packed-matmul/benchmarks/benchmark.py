@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
+import statistics
 import time
 
 import torch
@@ -28,18 +31,29 @@ def _synchronize(device: str) -> None:
         torch.mps.synchronize()
 
 
-def _time_call(device: str, iters: int, fn) -> float:
+def _time_call(device: str, fn) -> float:
     _synchronize(device)
-    start = time.perf_counter()
+    start = time.perf_counter_ns()
+    fn()
+    _synchronize(device)
+    return (time.perf_counter_ns() - start) / 1_000_000_000
+
+
+def _time_distribution(device: str, iters: int, fn) -> dict[str, float]:
+    samples = []
     for _ in range(iters):
-        fn()
-    _synchronize(device)
-    return (time.perf_counter() - start) / iters
+        samples.append(_time_call(device, fn))
+    samples.sort()
+    return {
+        "mean": statistics.fmean(samples),
+        "median": statistics.median(samples),
+        "p95": samples[min(len(samples) - 1, int(len(samples) * 0.95))],
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", choices=["cuda", "mps"], default="cuda")
+    parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default="cuda")
     parser.add_argument("--bits", type=int, default=4)
     parser.add_argument("--rows", type=int, default=4096)
     parser.add_argument("--in-features", type=int, default=3072)
@@ -47,8 +61,17 @@ def main() -> None:
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--with-bias", action="store_true")
     args = parser.parse_args()
+
+    if args.threads < 0:
+        parser.error("--threads must be non-negative")
+    if args.iters <= 0 or args.warmup < 0:
+        parser.error("--iters must be positive and --warmup must be non-negative")
+    if args.device == "cpu" and args.threads > 0:
+        os.environ["ORBITQUANT_CPU_THREADS"] = str(args.threads)
+        torch.set_num_threads(args.threads)
 
     torch.manual_seed(args.seed)
     dtype = torch.float16 if args.device == "mps" else torch.bfloat16
@@ -98,30 +121,48 @@ def main() -> None:
     def dequantize_then_linear_call() -> torch.Tensor:
         return torch.nn.functional.linear(x, materialize_reference_weight(), bias)
 
+    packed_first_call_seconds = _time_call(args.device, packed_call)
+    predequantized_first_call_seconds = _time_call(args.device, predequantized_linear_call)
+    dequantize_then_first_call_seconds = _time_call(args.device, dequantize_then_linear_call)
+
     for _ in range(args.warmup):
         packed_call()
         predequantized_linear_call()
         dequantize_then_linear_call()
-    packed_seconds = _time_call(args.device, args.iters, packed_call)
-    predequantized_linear_seconds = _time_call(
+    packed_distribution = _time_distribution(args.device, args.iters, packed_call)
+    predequantized_distribution = _time_distribution(
         args.device,
         args.iters,
         predequantized_linear_call,
     )
-    dequantize_then_linear_seconds = _time_call(
+    dequantize_then_distribution = _time_distribution(
         args.device,
         args.iters,
         dequantize_then_linear_call,
     )
+    packed_seconds = packed_distribution["mean"]
+    predequantized_linear_seconds = predequantized_distribution["mean"]
+    dequantize_then_linear_seconds = dequantize_then_distribution["mean"]
 
     packed_output = packed_call()
     reference_output = predequantized_linear_call()
     _synchronize(args.device)
-    max_abs_error = (packed_output.float() - reference_output.float()).abs().max().item()
+    error = packed_output.float() - reference_output.float()
+    max_abs_error = error.abs().max().item()
+    rmse = error.square().mean().sqrt().item()
+    reference_rms = reference_output.float().square().mean().sqrt().item()
+    relative_rmse = rmse / max(reference_rms, 1e-12)
 
     payload = {
         "device": args.device,
-        "device_name": torch.cuda.get_device_name(0) if args.device == "cuda" else "mps",
+        "device_name": (
+            torch.cuda.get_device_name(0)
+            if args.device == "cuda"
+            else "mps"
+            if args.device == "mps"
+            else f"{platform.processor() or platform.machine()} "
+            f"({torch.backends.cpu.get_cpu_capability()})"
+        ),
         "dtype": str(dtype).replace("torch.", ""),
         "bits": args.bits,
         "rows": args.rows,
@@ -129,10 +170,25 @@ def main() -> None:
         "out_features": args.out_features,
         "iters": args.iters,
         "warmup": args.warmup,
+        "threads": (
+            os.environ.get("ORBITQUANT_CPU_THREADS", "runtime default")
+            if args.device == "cpu"
+            else None
+        ),
+        "torch_threads": torch.get_num_threads() if args.device == "cpu" else None,
         "with_bias": args.with_bias,
         "packed_seconds_per_iter": packed_seconds,
+        "packed_first_call_seconds": packed_first_call_seconds,
+        "packed_hot_median_seconds": packed_distribution["median"],
+        "packed_hot_p95_seconds": packed_distribution["p95"],
         "predequantized_f_linear_seconds_per_iter": predequantized_linear_seconds,
+        "predequantized_first_call_seconds": predequantized_first_call_seconds,
+        "predequantized_hot_median_seconds": predequantized_distribution["median"],
+        "predequantized_hot_p95_seconds": predequantized_distribution["p95"],
         "dequantize_then_f_linear_seconds_per_iter": dequantize_then_linear_seconds,
+        "dequantize_then_first_call_seconds": dequantize_then_first_call_seconds,
+        "dequantize_then_hot_median_seconds": dequantize_then_distribution["median"],
+        "dequantize_then_hot_p95_seconds": dequantize_then_distribution["p95"],
         "packed_weight_indices_bytes": packed_weight_indices_bytes,
         "row_norms_bytes": row_norms_bytes,
         "centroid_bytes": centroid_bytes,
@@ -155,6 +211,8 @@ def main() -> None:
         if packed_seconds > 0
         else None,
         "max_abs_error": max_abs_error,
+        "rmse": rmse,
+        "relative_rmse": relative_rmse,
         "reference": (
             "predequantized PyTorch F.linear over a materialized dequantized "
             "weight matrix"

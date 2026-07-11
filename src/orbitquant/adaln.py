@@ -58,6 +58,7 @@ class RTNInt4Linear(nn.Module):
         in_features: int,
         out_features: int,
         group_size: int,
+        runtime_mode: str,
         module_name: str,
         source_weight_layout: str,
         packed_weight: torch.Tensor,
@@ -68,6 +69,7 @@ class RTNInt4Linear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.group_size = group_size
+        self.runtime_mode = runtime_mode
         self.module_name = module_name
         self.source_weight_layout = source_weight_layout
         self.num_groups = (in_features + group_size - 1) // group_size
@@ -79,6 +81,7 @@ class RTNInt4Linear(nn.Module):
             self.bias = nn.Parameter(bias.detach().clone(), requires_grad=False)
         self._dequantized_weight_cache: torch.Tensor | None = None
         self._dequantized_weight_cache_key: tuple[str, torch.dtype] | None = None
+        self.last_effective_runtime_mode: str | None = None
 
     def clear_dequantized_cache(self) -> None:
         self._dequantized_weight_cache = None
@@ -100,6 +103,7 @@ class RTNInt4Linear(nn.Module):
             in_features=spec.in_features,
             out_features=spec.out_features,
             group_size=group_size,
+            runtime_mode=config.runtime_mode,
             module_name=module_name,
             source_weight_layout=spec.weight_layout,
             packed_weight=packed,
@@ -134,6 +138,7 @@ class RTNInt4Linear(nn.Module):
             in_features=spec.in_features,
             out_features=spec.out_features,
             group_size=group_size,
+            runtime_mode=config.runtime_mode,
             module_name=module_name,
             source_weight_layout=spec.weight_layout,
             packed_weight=packed,
@@ -184,6 +189,44 @@ class RTNInt4Linear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         activation = x.to(torch.bfloat16)
+        if x.device.type == "cpu" and self.runtime_mode in {
+            "auto_fused",
+            "native_packed_matmul",
+        }:
+            try:
+                from orbitquant.kernels.native_packed_matmul import (
+                    matmul_packed_adaln_int4_with_native_cpu_kernel,
+                    native_cpu_adaln_available,
+                )
+
+                native_available = native_cpu_adaln_available()
+            except Exception as exc:
+                if self.runtime_mode == "native_packed_matmul":
+                    raise RuntimeError(
+                        "native_packed_matmul AdaLN on CPU requires a current "
+                        "orbitquant_packed_matmul CPU package with the INT4 group "
+                        "kernel; install/build it or use runtime_mode='dequant_bf16'."
+                    ) from exc
+                native_available = False
+            if native_available:
+                self.last_effective_runtime_mode = "native_packed_adaln_int4"
+                return matmul_packed_adaln_int4_with_native_cpu_kernel(
+                    activation,
+                    self.packed_weight,
+                    self.scales,
+                    out_features=self.out_features,
+                    in_features=self.in_features,
+                    group_size=self.group_size,
+                    bias=self.bias,
+                )
+            if self.runtime_mode == "native_packed_matmul":
+                raise RuntimeError(
+                    "the loaded orbitquant_packed_matmul CPU package has no packed "
+                    "AdaLN INT4 kernel; build a current variant or use "
+                    "runtime_mode='dequant_bf16'."
+                )
+
+        self.last_effective_runtime_mode = "dequant_bf16"
         weight = self._dequantize_weight(device=x.device, dtype=torch.bfloat16)
         bias = None if self.bias is None else self.bias.to(device=x.device, dtype=torch.bfloat16)
         return F.linear(activation, weight, bias)

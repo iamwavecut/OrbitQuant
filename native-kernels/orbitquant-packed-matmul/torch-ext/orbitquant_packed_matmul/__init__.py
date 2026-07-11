@@ -6,10 +6,103 @@ from ._ops import ops
 
 __all__ = [
     "matmul_packed_w4a4_int8",
+    "matmul_packed_adaln_int4_cpu",
     "matmul_packed_weight",
+    "quantize_activations_cpu",
     "quantize_activations_int8",
     "quantize_activations_packed_w4",
+    "supports_cpu_activation",
+    "supports_cpu_adaln",
+    "supports_device",
 ]
+
+
+def supports_device(device_type: str) -> bool:
+    dispatch_keys = {
+        "cpu": "CPU",
+        "cuda": "CUDA",
+        "mps": "MPS",
+    }
+    try:
+        dispatch_key = dispatch_keys[device_type]
+    except KeyError as exc:
+        raise ValueError(f"unknown device type {device_type!r}") from exc
+    return bool(
+        torch._C._dispatch_has_kernel_for_dispatch_key(  # noqa: SLF001
+            ops.matmul_packed_weight._qualified_op_name,  # noqa: SLF001
+            dispatch_key,
+        )
+    )
+
+
+def supports_cpu_activation() -> bool:
+    try:
+        operation = ops.quantize_activations_cpu
+        qualified_name = operation._qualified_op_name  # noqa: SLF001
+    except (AttributeError, RuntimeError):
+        return False
+    return bool(
+        torch._C._dispatch_has_kernel_for_dispatch_key(  # noqa: SLF001
+            qualified_name,
+            "CPU",
+        )
+    )
+
+
+def supports_cpu_adaln() -> bool:
+    try:
+        operation = ops.matmul_packed_adaln_int4_cpu
+        qualified_name = operation._qualified_op_name  # noqa: SLF001
+    except (AttributeError, RuntimeError):
+        return False
+    return bool(
+        torch._C._dispatch_has_kernel_for_dispatch_key(  # noqa: SLF001
+            qualified_name,
+            "CPU",
+        )
+    )
+
+
+def quantize_activations_cpu(
+    x: torch.Tensor,
+    permutation: torch.Tensor,
+    signs: torch.Tensor,
+    centroids: torch.Tensor,
+    boundaries: torch.Tensor,
+    *,
+    eps: float,
+    inv_sqrt_block: float,
+    block_size: int,
+) -> torch.Tensor:
+    if x.device.type != "cpu":
+        raise RuntimeError("native CPU activation quantization requires CPU tensors")
+    if x.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+        raise ValueError("x must be float32, float16, or bfloat16")
+    if block_size <= 0 or block_size & (block_size - 1):
+        raise ValueError("block_size must be a positive power of two")
+    dim = x.shape[-1]
+    if dim % block_size != 0:
+        raise ValueError("block_size must divide the input dimension")
+
+    original_shape = x.shape
+    values = x.contiguous().reshape(-1, dim)
+    out = torch.empty_like(values)
+    permutation_values = permutation.to(device="cpu", dtype=torch.int64).contiguous()
+    sign_values = signs.to(device="cpu", dtype=torch.int8).contiguous()
+    centroid_values = centroids.to(device="cpu", dtype=torch.float32).contiguous()
+    boundary_values = boundaries.to(device="cpu", dtype=torch.float32).contiguous()
+    ops.quantize_activations_cpu(
+        out,
+        values,
+        permutation_values,
+        sign_values,
+        centroid_values,
+        boundary_values,
+        eps,
+        inv_sqrt_block,
+        block_size,
+    )
+    return out.reshape(original_shape)
 
 
 def matmul_packed_weight(
@@ -62,6 +155,50 @@ def matmul_packed_weight(
         block_m,
         block_n,
         block_k,
+    )
+    return out.reshape(*original_shape[:-1], out_features)
+
+
+def matmul_packed_adaln_int4_cpu(
+    x: torch.Tensor,
+    packed_weight: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    out_features: int,
+    in_features: int,
+    group_size: int,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if x.device.type != "cpu":
+        raise RuntimeError("native packed AdaLN requires CPU tensors")
+    if x.shape[-1] != in_features:
+        raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+
+    original_shape = x.shape
+    x_2d = x.to(dtype=torch.bfloat16).contiguous().reshape(-1, in_features)
+    out = torch.empty((x_2d.shape[0], out_features), dtype=torch.bfloat16)
+    packed = packed_weight.to(device="cpu", dtype=torch.uint8).contiguous()
+    scale_values = scales.to(device="cpu", dtype=torch.float32).contiguous()
+    if bias is None:
+        bias_values = torch.empty((1,), dtype=torch.float32)
+        has_bias = False
+    else:
+        bias_values = (
+            bias.to(device="cpu", dtype=torch.bfloat16).to(dtype=torch.float32).contiguous()
+        )
+        has_bias = True
+    ops.matmul_packed_adaln_int4_cpu(
+        out,
+        x_2d,
+        packed,
+        scale_values,
+        bias_values,
+        has_bias,
+        out_features,
+        in_features,
+        group_size,
     )
     return out.reshape(*original_shape[:-1], out_features)
 

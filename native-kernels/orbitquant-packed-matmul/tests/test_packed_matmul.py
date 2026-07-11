@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import platform
+
 import pytest
 import torch
 from orbitquant_packed_matmul import (
+    matmul_packed_adaln_int4_cpu,
     matmul_packed_w4a4_int8,
     matmul_packed_weight,
+    quantize_activations_cpu,
     quantize_activations_int8,
     quantize_activations_packed_w4,
+    supports_cpu_activation,
+    supports_cpu_adaln,
+    supports_device,
 )
 
 
@@ -24,15 +31,17 @@ def _pack(values: torch.Tensor, bits: int) -> torch.Tensor:
 
 
 def _device() -> str:
-    if torch.cuda.is_available():
+    if supports_device("cuda") and torch.cuda.is_available():
         return "cuda"
-    if torch.backends.mps.is_available():
+    if supports_device("mps") and torch.backends.mps.is_available():
         return "mps"
-    pytest.skip("CUDA or MPS is required")
+    if supports_device("cpu"):
+        return "cpu"
+    pytest.skip("the built variant has no runnable backend")
 
 
 def _mps_device() -> str:
-    if not torch.backends.mps.is_available():
+    if not supports_device("mps") or not torch.backends.mps.is_available():
         pytest.skip("MPS is required")
     return "mps"
 
@@ -47,14 +56,215 @@ def _mps_bfloat16_device() -> str:
 
 
 def _cuda_device() -> str:
-    if not torch.cuda.is_available():
+    if not supports_device("cuda") or not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     return "cuda"
+
+
+def _runnable_cpu_isas() -> list[str]:
+    machine = platform.machine().lower()
+    capability = torch.backends.cpu.get_cpu_capability().upper()
+    isas = ["scalar"]
+    if machine in {"x86_64", "amd64"} and capability in {"AVX2", "AVX512"}:
+        isas.append("avx2")
+    if machine in {"x86_64", "amd64"} and capability == "AVX512":
+        isas.append("avx512")
+    if machine in {"aarch64", "arm64"}:
+        isas.append("neon")
+    return isas
 
 
 def _row_norms(device: str, out_features: int) -> torch.Tensor:
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     return torch.linspace(0.5, 1.5, out_features, device=device, dtype=dtype)
+
+
+def _fwht_reference(values: torch.Tensor) -> torch.Tensor:
+    output = values.clone()
+    half = 1
+    while half < output.shape[-1]:
+        blocks = output.reshape(*output.shape[:-1], -1, 2 * half)
+        left = blocks[..., :half].clone()
+        right = blocks[..., half:].clone()
+        blocks[..., :half] = left + right
+        blocks[..., half:] = left - right
+        half *= 2
+    return output
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_quantize_activations_cpu_matches_independent_reference(dtype: torch.dtype) -> None:
+    if not supports_cpu_activation():
+        pytest.skip("the built variant has no native CPU activation pipeline")
+    torch.manual_seed(41)
+    dim = 24
+    block_size = 8
+    x = torch.randn(2, 3, dim, dtype=dtype)
+    x[0, 0].zero_()
+    permutation = torch.randperm(dim)
+    signs = torch.randint(0, 2, (dim,), dtype=torch.int8).mul(2).sub(1)
+    centroids = torch.tanh(torch.linspace(-1.7, 1.7, 16))
+    boundaries = (centroids[:-1] + centroids[1:]) / 2
+    eps = 1e-10
+
+    work = x.float()
+    norms = work.norm(dim=-1, keepdim=True)
+    unit = work / (norms + eps)
+    gathered = unit.index_select(-1, permutation) * signs.float()
+    rotated = _fwht_reference(gathered.reshape(2, 3, 3, block_size)) / block_size**0.5
+    rotated = rotated.reshape_as(work)
+    indices = (rotated.unsqueeze(-1) - centroids).abs().argmin(dim=-1)
+    expected = (centroids[indices] * norms).to(dtype)
+
+    actual = quantize_activations_cpu(
+        x,
+        permutation,
+        signs,
+        centroids,
+        boundaries,
+        eps=eps,
+        inv_sqrt_block=block_size**-0.5,
+        block_size=block_size,
+    )
+
+    torch.testing.assert_close(actual, expected, atol=2e-3, rtol=2e-3)
+    assert torch.equal(actual[0, 0], torch.zeros(dim, dtype=dtype))
+
+
+@pytest.mark.kernels_ci
+def test_cpu_runtime_isa_dispatch_matches_scalar_reference(monkeypatch) -> None:
+    if not supports_device("cpu") or not supports_cpu_activation():
+        pytest.skip("the built variant has no complete native CPU pipeline")
+    torch.manual_seed(43)
+    rows = 8
+    in_features = 64
+    out_features = 11
+    x = torch.randn(rows, in_features)
+    indices = torch.randint(0, 16, (out_features, in_features), dtype=torch.uint8)
+    packed = _pack(indices, 4)
+    row_norms = torch.linspace(0.5, 1.5, out_features)
+    centroids = torch.tanh(torch.linspace(-1.7, 1.7, 16))
+    boundaries = (centroids[:-1] + centroids[1:]) / 2
+    bias = torch.randn(out_features)
+    permutation = torch.randperm(in_features)
+    signs = torch.randint(0, 2, (in_features,), dtype=torch.int8).mul(2).sub(1)
+
+    outputs = {}
+    activations = {}
+    for isa in _runnable_cpu_isas():
+        monkeypatch.setenv("ORBITQUANT_CPU_ISA", isa)
+        activations[isa] = quantize_activations_cpu(
+            x,
+            permutation,
+            signs,
+            centroids,
+            boundaries,
+            eps=1e-10,
+            inv_sqrt_block=in_features**-0.5,
+            block_size=in_features,
+        )
+        outputs[isa] = matmul_packed_weight(
+            activations[isa],
+            packed,
+            row_norms,
+            centroids,
+            bits=4,
+            out_features=out_features,
+            in_features=in_features,
+            bias=bias,
+        )
+
+    for isa in _runnable_cpu_isas()[1:]:
+        torch.testing.assert_close(
+            activations[isa], activations["scalar"], atol=2e-6, rtol=2e-6
+        )
+        torch.testing.assert_close(outputs[isa], outputs["scalar"], atol=2e-5, rtol=2e-5)
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("group_size", [8, 64])
+@pytest.mark.parametrize("with_bias", [False, True])
+def test_matmul_packed_adaln_cpu_matches_independent_bf16_reference(
+    group_size: int,
+    with_bias: bool,
+) -> None:
+    if not supports_cpu_adaln():
+        pytest.skip("the built variant has no native CPU AdaLN kernel")
+    torch.manual_seed(47)
+    in_features = 65
+    out_features = 9
+    num_groups = (in_features + group_size - 1) // group_size
+    padded_in_features = num_groups * group_size
+    indices = torch.randint(
+        0,
+        16,
+        (out_features, num_groups, group_size),
+        dtype=torch.uint8,
+    )
+    indices.reshape(out_features, padded_in_features)[:, in_features:] = 8
+    packed = _pack(indices, 4)
+    scales = torch.rand(out_features, num_groups, dtype=torch.bfloat16).mul(0.1)
+    x = torch.randn(2, 3, in_features, dtype=torch.bfloat16)
+    bias = torch.randn(out_features, dtype=torch.bfloat16) if with_bias else None
+
+    signed = indices.to(torch.int16).sub(8).float()
+    weight = (signed * scales.float()[..., None]).reshape(
+        out_features, padded_in_features
+    )[:, :in_features]
+    expected = torch.nn.functional.linear(x, weight.to(torch.bfloat16), bias)
+    actual = matmul_packed_adaln_int4_cpu(
+        x,
+        packed,
+        scales,
+        out_features=out_features,
+        in_features=in_features,
+        group_size=group_size,
+        bias=bias,
+    )
+
+    assert actual.dtype == torch.bfloat16
+    assert actual.shape == (2, 3, out_features)
+    torch.testing.assert_close(actual, expected, atol=2e-2, rtol=2e-2)
+
+
+@pytest.mark.kernels_ci
+def test_cpu_adaln_runtime_isa_dispatch_matches_scalar_reference(monkeypatch) -> None:
+    if not supports_cpu_adaln():
+        pytest.skip("the built variant has no native CPU AdaLN kernel")
+    torch.manual_seed(53)
+    rows = 8
+    in_features = 64
+    out_features = 11
+    group_size = 64
+    indices = torch.randint(
+        0,
+        16,
+        (out_features, 1, group_size),
+        dtype=torch.uint8,
+    )
+    packed = _pack(indices, 4)
+    scales = torch.rand(out_features, 1, dtype=torch.bfloat16).mul(0.1)
+    x = torch.randn(rows, in_features, dtype=torch.bfloat16)
+    bias = torch.randn(out_features, dtype=torch.bfloat16)
+
+    outputs = {}
+    for isa in _runnable_cpu_isas():
+        monkeypatch.setenv("ORBITQUANT_CPU_ISA", isa)
+        outputs[isa] = matmul_packed_adaln_int4_cpu(
+            x,
+            packed,
+            scales,
+            out_features=out_features,
+            in_features=in_features,
+            group_size=group_size,
+            bias=bias,
+        )
+
+    for isa in _runnable_cpu_isas()[1:]:
+        torch.testing.assert_close(
+            outputs[isa], outputs["scalar"], atol=3e-2, rtol=3e-2
+        )
 
 
 @pytest.mark.kernels_ci
@@ -113,6 +323,7 @@ def test_matmul_packed_weight_short_sequence_matches_reference(
     in_features: int,
     out_features: int,
 ) -> None:
+    torch.manual_seed(1000 + bits * 100 + rows * 10 + in_features + out_features)
     device = _device()
     dtype = torch.float16 if device == "mps" else torch.bfloat16
     x = torch.randn(rows, in_features, device=device, dtype=dtype)
@@ -123,7 +334,16 @@ def test_matmul_packed_weight_short_sequence_matches_reference(
     bias = torch.randn(out_features, device=device, dtype=dtype)
 
     expected_weight = row_norms.cpu()[:, None] * centroids.cpu()[indices.long()]
-    expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, bias.float().cpu())
+    if device == "cpu":
+        expected = torch.nn.functional.linear(
+            x.cpu(),
+            expected_weight.to(torch.bfloat16),
+            bias.cpu(),
+        ).float()
+    else:
+        expected = torch.nn.functional.linear(
+            x.float().cpu(), expected_weight, bias.float().cpu()
+        )
     actual = matmul_packed_weight(
         x,
         packed,

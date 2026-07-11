@@ -62,8 +62,15 @@ def test_transformers_pretrained_from_pretrained_quantizes_on_load(tmp_path):
     assert isinstance(loaded.transformer_blocks[0]["attn"]["to_q"], OrbitQuantLinear)
     assert isinstance(loaded.transformer_blocks[0]["modulation"], RTNInt4Linear)
     assert isinstance(loaded.proj_out, torch.nn.Linear)
+    quantized = loaded.transformer_blocks[0]["attn"]["to_q"]
+    assert not quantized._derived_constants_valid
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(loaded(x)).all()
+    assert quantized._derived_constants_valid
+    assert torch.equal(
+        torch.unique(quantized._rotation_signs),
+        torch.tensor([-1, 1], dtype=torch.int8),
+    )
 
 
 def test_transformers_pretrained_streams_full_precision_weight_into_packed_tensors(
@@ -98,8 +105,14 @@ def test_transformers_pretrained_streams_full_precision_weight_into_packed_tenso
     assert quantized.row_norms is not None
     assert modulation.packed_weight is not None
     assert modulation.scales is not None
+    assert not quantized._derived_constants_valid
     x = torch.randn(2, 3, 16)
     assert torch.isfinite(loaded(x)).all()
+    assert quantized._derived_constants_valid
+    assert torch.equal(
+        torch.unique(quantized._rotation_signs),
+        torch.tensor([-1, 1], dtype=torch.int8),
+    )
 
 
 def test_transformers_pretrained_save_pretrained_round_trips_pre_quantized_model(

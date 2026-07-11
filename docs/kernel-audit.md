@@ -4,9 +4,11 @@ OrbitQuant uses packed low-bit weights directly in optimized runtime modes. The
 reference path materializes a floating-point weight matrix and is available only
 when explicitly selected.
 
-The runtime contract below reflects OrbitQuant 0.3.1. Benchmark tables retain
-the exact software and hardware of each recorded run rather than implying that
-those versions are current installation requirements.
+The runtime contract below reflects the current source tree. Benchmark tables
+retain the exact software and hardware of each recorded run rather than
+implying that those versions are current installation requirements. Binary
+platform support is only marked verified where build, install, and forward
+evidence exists.
 
 ## Runtime Contract
 
@@ -16,10 +18,11 @@ those versions are current installation requirements.
 | --- | --- | --- |
 | CUDA | Native activation kernel plus packed W4A4 tensor-core path; native or Triton packed fallback | A matching native package for the fastest path; Triton for the CUTLASS epilogue and generic packed fallback |
 | MPS | Native packed matmul | An importable local Metal package |
-| CPU | Reference matmul | PyTorch |
+| CPU | Native exact activation, packed low-bit matmul, and packed INT4 AdaLN when the CPU variant is importable; reference fallback otherwise | A matching native CPU package for packed execution |
 
 CUDA and MPS raise an actionable error when no packed backend is available.
-They do not silently fall back to full weight dequantization. Use
+They do not silently fall back to full weight dequantization. CPU keeps a
+compatibility fallback when the optional native package is absent. Use
 `runtime_mode="dequant_bf16"` explicitly for compatibility, debugging, or
 numerical comparison.
 
@@ -32,7 +35,8 @@ Other explicit modes are `native_packed_matmul`, `triton_packed_matmul`,
 | --- | --- | --- |
 | CUDA | Optimized packed inference | Native RPBH/quantization, chunked packed-weight decode plus CUTLASS INT8 matmul, direct packed CUDA MMA fallback, and generic Triton packed fallback |
 | MPS/Metal | Optimized packed inference | Native Metal packed matmul and Metal activation quantization stages |
-| CPU | Reference | PyTorch activation quantization, weight dequantization, and linear matmul |
+| CPU | Hardware-verified native source build; platform wheels pending | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
+| Vulkan | Unverified | No runtime backend |
 | ROCm | Unsupported | No release backend |
 | XPU | Unsupported | No release backend |
 
@@ -103,6 +107,57 @@ The variant must match the active Torch, CUDA or Metal, platform, and C++ ABI
 tuple. OrbitQuant rejects incompatible packages instead of loading them.
 
 ## Verified Devices And Shapes
+
+The native CPU package was built and executed on an AMD EPYC 4564P (Zen 4)
+with GCC 13.3 and Torch 2.13.0+cpu. The hosted cpuset exposed logical CPUs
+`13,29`, which are the two SMT threads of one physical core. These results are
+single-physical-core ISA and latency evidence, not a multi-core scaling claim.
+Runtime dispatch exercised scalar, AVX2/FMA, and AVX-512 paths against the same
+independent BF16 reference. The AVX-512 group-64 path uses `vpermw` for INT4
+lookup and `vdpbf16ps` accumulation; annotated disassembly confirmed that the
+hot rows=4 and rows=8 loops retain accumulators in ZMM registers without a full
+weight decode buffer or stack-spilled accumulator tile.
+
+For an exact W4A4 projection with 32 activation rows and dimension 1536, the
+native activation stage measured 0.1484 ms median, packed matmul measured
+1.0528 ms, and the full native layer measured 1.2081 ms. Explicit
+`dequant_bf16` measured 1.5836 ms and source BF16 `F.linear` measured 0.5479 ms.
+The packed and explicit-reference outputs had relative RMSE `1.203e-7` and
+maximum error `1.526e-5`. Packed weights and row norms occupied 1,179,648 bytes
+versus 4,718,592 bytes for BF16 weights, and the native layer retained no
+dequantized-weight cache.
+
+AdaLN uses an exact signed INT4 group-64 lookup with BF16 scales and
+activations. The realistic modulation shape below is 3072 input channels and
+18432 output channels. Timings are 21 post-warmup calls with
+`ORBITQUANT_CPU_THREADS=1`; `auto_fused` selected the AVX-512/BF16 path.
+
+| Rows | Packed median | Packed p95 | Resident BF16 median | Packed vs resident BF16 | Relative RMSE | Max error |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2.4828 ms | 2.7575 ms | 6.9140 ms | 2.78x | 1.01e-6 | 0.001953 |
+| 4 | 3.0471 ms | 3.0726 ms | 6.3742 ms | 2.09x | 2.50e-5 | 0.0625 |
+| 32 | 24.4159 ms | 24.4693 ms | 15.9194 ms | 0.65x | 2.32e-5 | 0.125 |
+
+The packed AdaLN weight is 28,311,552 bytes and its BF16 scales are 1,769,472
+bytes, compared with 113,246,208 bytes for the BF16 weight. A native-only
+process increased resident memory by 1.4 MB on its first call and by another
+4.3 MB across 500 calls; it did not allocate the 113 MB dense weight. The
+rows=32 result documents the crossover where oneDNN's resident BF16 GEMM is
+faster; AdaLN conditioning normally uses batch-sized row counts rather than
+spatial-token row counts.
+
+The same x86_64 stable-ABI 2.11 binary built against Torch 2.13 loaded and ran
+under Torch 2.12.1. This verifies the current LibTorch Stable ABI boundary for
+those two runtimes; it does not make the wheel independent of the platform
+GLIBC, C++ runtime, or CPU ISA. Linux and Windows wheel policy remains pending,
+and Windows CPU execution is not yet verified.
+
+The ARM64 native CPU path was separately built on an Apple M2 Max. At 32 rows
+and dimension 1536, the full native W4A4 layer measured about 1.20 ms versus
+1.84 ms for explicit BF16 dequantization; the packed matmul itself was about
+0.81 ms versus 0.79 ms for a resident dense matmul. Scalar and NEON paths were
+both exercised against the independent reference. These CPU measurements are
+separate from the preferred Metal GPU path on Apple Silicon.
 
 CUDA native-package verification passed on an NVIDIA RTX PRO 4500 Blackwell
 with Torch 2.13.0+cu130 using the
