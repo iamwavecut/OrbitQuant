@@ -79,6 +79,7 @@ jobs:
             --git https://github.com/huggingface/kernels `
             --rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b `
             --locked `
+            --debug `
             --root "$env:RUNNER_TEMP\kernel-builder" `
             hf-kernel-builder
 
@@ -98,6 +99,12 @@ jobs:
         shell: pwsh
         working-directory: native-kernels/orbitquant-packed-matmul
         run: |
+          Get-CimInstance Win32_Processor | `
+            Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | `
+            Format-List
+          cmake --version
+          $env:CMAKE_GENERATOR = "Visual Studio 17 2022"
+          $env:CMAKE_GENERATOR_PLATFORM = "x64"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "2"
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
