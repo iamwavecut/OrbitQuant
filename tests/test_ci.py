@@ -37,17 +37,13 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "orbitquant-0.1.0-py3-none-any.whl" not in text
     assert "orbitquant --version" in text
     assert "windows-native-cpu:" in text
-    assert "runs-on: windows-2025" in text
+    assert "runs-on: windows-2022" in text
     assert "--rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b" in text
     assert "--debug" in text
     assert "prepare_wheel_project.py" in text
     assert "uses: actions/cache/restore@v6.1.0" in text
     assert "uses: actions/cache/save@v6.1.0" in text
-    assert "vswhere.exe" in text
-    assert "VsDevCmd.bat" in text
-    assert "(Get-Command nmake.exe).Source" in text
-    assert 'CMAKE_GENERATOR = "NMake Makefiles"' in text
-    assert "CMAKE_MAKE_PROGRAM" in text
+    assert 'CMAKE_GENERATOR = "Visual Studio 17 2022"' in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text

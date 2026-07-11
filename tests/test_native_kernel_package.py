@@ -61,15 +61,12 @@ def test_kernel_builder_manifest_targets_cpu_cuda_and_metal() -> None:
     assert kernels["packed_matmul_metal"]["depends"] == ["torch"]
 
 
-def test_wheel_project_preparation_supports_windows_single_config_build() -> None:
+def test_wheel_project_preparation_adds_runtime_requirement() -> None:
     script = (KERNEL_ROOT / "scripts/prepare_wheel_project.py").read_text(
         encoding="utf-8"
     )
 
     assert 'dependencies = ["torch>=2.11"]' in script
-    assert 'if "CMAKE_MAKE_PROGRAM" in os.environ' in script
-    assert 'is_ccache_available() and sys.platform != "win32"' in script
-    assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in script
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
