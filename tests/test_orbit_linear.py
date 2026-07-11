@@ -226,8 +226,19 @@ def test_orbit_linear_records_last_effective_runtime_and_activation_backend():
 
     quantized(x)
 
-    assert quantized.last_effective_runtime_mode == "dequant_bf16"
-    assert quantized.last_activation_kernel_backend == "cpu"
+    expected_runtime = (
+        "native_packed_matmul"
+        if layers_module._native_cpu_packed_matmul_load_error() is None
+        else "dequant_bf16"
+    )
+    assert quantized.last_effective_runtime_mode == expected_runtime
+    expected_activation_backend = (
+        "native_cpu"
+        if expected_runtime == "native_packed_matmul"
+        and quantized._native_cpu_activation_available(x)
+        else "cpu"
+    )
+    assert quantized.last_activation_kernel_backend == expected_activation_backend
     assert quantized.last_forward_device_type == "cpu"
 
 
@@ -267,7 +278,13 @@ def test_orbit_linear_caches_dequantized_weight(monkeypatch):
     torch.manual_seed(2)
     source = torch.nn.Linear(16, 7)
     x = torch.randn(2, 5, 16)
-    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="dequant_bf16",
+    )
     quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     calls = 0
     original_unpack = layers_module.unpack_lowbit
@@ -489,9 +506,7 @@ def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(m
     ]
 
 
-def test_orbit_linear_native_packed_matmul_runtime_rejects_cpu_before_quantization(
-    monkeypatch,
-):
+def test_orbit_linear_native_packed_matmul_runtime_accepts_cpu_input():
     torch.manual_seed(5)
     source = torch.nn.Linear(16, 7)
     config = OrbitQuantConfig(
@@ -505,17 +520,7 @@ def test_orbit_linear_native_packed_matmul_runtime_rejects_cpu_before_quantizati
     quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
     x = torch.randn(2, 5, 16)
 
-    def fail_activation_quantization(*args, **kwargs):
-        raise AssertionError("device validation should run before activation quantization")
-
-    monkeypatch.setattr(
-        layers_module,
-        "quantize_activations_kernel",
-        fail_activation_quantization,
-    )
-
-    with pytest.raises(RuntimeError, match="requires CUDA or MPS input tensors"):
-        quantized(x)
+    quantized._validate_native_packed_matmul_input(x)
 
 
 def test_orbit_linear_native_packed_matmul_runtime_avoids_weight_dequant_cache(monkeypatch):
@@ -862,9 +867,11 @@ def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch)
     if not torch.backends.mps.is_available():
         pytest.skip("MPS backend is not available")
     try:
-        import orbitquant_packed_matmul  # noqa: F401
+        import orbitquant_packed_matmul
     except Exception:
         pytest.skip("native packed matmul kernel package is not importable")
+    if not orbitquant_packed_matmul.supports_device("mps"):
+        pytest.skip("the importable native packed matmul variant has no MPS backend")
 
     import orbitquant.kernels.native_packed_matmul as native_module
 
@@ -901,18 +908,22 @@ def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch)
 def test_orbit_linear_auto_fused_native_packed_matmul_matches_reference_without_dequant(
     monkeypatch,
 ):
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        dtype = torch.bfloat16
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-        dtype = torch.float32
-    else:
-        pytest.skip("CUDA or MPS backend is required")
     try:
-        import orbitquant_packed_matmul  # noqa: F401
+        import orbitquant_packed_matmul
     except Exception:
         pytest.skip("native packed matmul kernel package is not importable")
+
+    if torch.cuda.is_available() and orbitquant_packed_matmul.supports_device("cuda"):
+        device = torch.device("cuda")
+        dtype = torch.bfloat16
+    elif torch.backends.mps.is_available() and orbitquant_packed_matmul.supports_device("mps"):
+        device = torch.device("mps")
+        dtype = torch.float32
+    elif orbitquant_packed_matmul.supports_device("cpu"):
+        device = torch.device("cpu")
+        dtype = torch.float32
+    else:
+        pytest.skip("the importable native packed matmul variant has no runnable backend")
 
     import orbitquant.kernels.native_packed_matmul as native_module
 
@@ -935,6 +946,7 @@ def test_orbit_linear_auto_fused_native_packed_matmul_matches_reference_without_
     packed = copy.deepcopy(reference).to(device)
     packed.runtime_mode = "auto_fused"
     monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
+    layers_module._clear_packed_matmul_probe_cache()
 
     def fail_dequantize_weight(*args, **kwargs):
         raise AssertionError("auto_fused native runtime materialized dequantized weights")

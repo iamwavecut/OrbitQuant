@@ -15,6 +15,11 @@ class OrbitQuantWeightQuantize(ConversionOps):
     def __init__(self, hf_quantizer: Any) -> None:
         self.hf_quantizer = hf_quantizer
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> OrbitQuantWeightQuantize:
+        # Transformers clones each WeightConverter per target. This operation is
+        # stateless and must keep the live quantizer for release accounting.
+        return self
+
     @property
     def reverse_op(self) -> OrbitQuantWeightQuantize:
         return self
@@ -46,24 +51,22 @@ class OrbitQuantWeightQuantize(ConversionOps):
         module = model.get_submodule(module_name)
 
         _, values = next(iter(input_dict.items()))
-        weight = values[0] if isinstance(values, list) else values
-        weight = self.hf_quantizer.move_tensor_for_quantization(weight)
+        source_weight = values[0] if isinstance(values, list) else values
+        weight = source_weight
         if module.source_weight_layout == "in_out":
-            weight = weight.transpose(0, 1).contiguous()
-        proxy = torch.nn.Linear(
-            module.in_features,
-            module.out_features,
-            bias=False,
-            device="meta",
-        )
-        proxy.weight = torch.nn.Parameter(weight, requires_grad=False)
+            weight = weight.transpose(0, 1)
 
         results: dict[str, torch.Tensor] = {}
         if isinstance(module, OrbitQuantLinear):
-            quantized = OrbitQuantLinear.from_linear(
-                proxy,
+            quantized = OrbitQuantLinear.from_weight(
+                weight,
+                bias=None,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                source_weight_layout=module.source_weight_layout,
                 config=self.hf_quantizer.quantization_config,
                 module_name=module_name,
+                quantization_device=self.hf_quantizer.quantization_device,
             )
             if quantized.debug_weight is not None:
                 debug_key = f"{module_name}.debug_weight"
@@ -80,10 +83,15 @@ class OrbitQuantWeightQuantize(ConversionOps):
                     missing_keys.discard(row_norms_key)
             module.clear_dequantized_cache()
         elif isinstance(module, RTNInt4Linear):
-            quantized_rtn = RTNInt4Linear.from_linear(
-                proxy,
+            quantized_rtn = RTNInt4Linear.from_weight(
+                weight,
+                bias=None,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                source_weight_layout=module.source_weight_layout,
                 config=self.hf_quantizer.quantization_config,
                 module_name=module_name,
+                quantization_device=self.hf_quantizer.quantization_device,
             )
             packed_key = f"{module_name}.packed_weight"
             scales_key = f"{module_name}.scales"
@@ -97,4 +105,5 @@ class OrbitQuantWeightQuantize(ConversionOps):
                 f"expected OrbitQuantLinear or RTNInt4Linear at {module_name}, "
                 f"got {type(module).__name__}"
             )
+        self.hf_quantizer.release_source_tensor(source_weight)
         return results

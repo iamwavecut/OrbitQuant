@@ -85,6 +85,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     packed_matmul_block_n: int = 64
     packed_matmul_block_k: int = 128
     packed_matmul_num_warps: int = 4
+    weight_row_tile_size: int = 256
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
@@ -122,6 +123,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             "packed_matmul_block_n",
             "packed_matmul_block_k",
             "packed_matmul_num_warps",
+            "weight_row_tile_size",
         ):
             if getattr(self, field_name) <= 0:
                 raise ValueError(f"{field_name} must be positive")

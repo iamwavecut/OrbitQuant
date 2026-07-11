@@ -66,7 +66,7 @@ def _install_snippet() -> str:
     return "\n".join(
         [
             "```bash",
-            "pip install \"orbitquant[hf,kernels]>=0.2.0\"",
+            "pip install \"orbitquant[hf,kernels]>=0.4.0\"",
             "```",
         ]
     )
@@ -146,6 +146,33 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _on_the_fly_conversion_snippet(source_model_id: str) -> str:
+    return "\n".join(
+        [
+            "```python",
+            "import torch",
+            "import orbitquant",
+            "from diffusers import DiffusionPipeline",
+            "from orbitquant import (",
+            "    OrbitQuantConfig,",
+            "    build_diffusers_pipeline_quantization_config,",
+            ")",
+            "",
+            "qconfig = build_diffusers_pipeline_quantization_config(",
+            "    OrbitQuantConfig(target_policy=\"auto\"),",
+            "    components=\"transformer\",",
+            ")",
+            "pipe = DiffusionPipeline.from_pretrained(",
+            f'    "{source_model_id}",',
+            "    quantization_config=qconfig,",
+            "    torch_dtype=torch.bfloat16,",
+            ")",
+            "pipe.enable_model_cpu_offload()",
+            "```",
+        ]
+    )
 
 
 def _native_settings_section(source_model_id: str) -> list[str]:
@@ -509,6 +536,15 @@ def render_model_card(
             "",
             _usage_snippet(data["source_model_id"], bits),
             "",
+            "### Convert the source checkpoint on load",
+            "",
+            "For a safetensors source checkpoint, OrbitQuant can row-stream the "
+            "denoiser into packed weights through the normal Diffusers loader. "
+            "Use sequential offload by replacing the final call with "
+            "`pipe.enable_sequential_cpu_offload()`.",
+            "",
+            _on_the_fly_conversion_snippet(data["source_model_id"]),
+            "",
             "`runtime_mode=\"auto_fused\"` is the default optimized runtime. On "
             "CUDA, the `kernels` extra provides the Triton packed fallback; a "
             "locally built native CUDA package is preferred automatically when "
@@ -570,6 +606,9 @@ def render_model_card(
             "",
             "- This is a transformer-component artifact; load it into the source "
             "pipeline as shown above.",
+            "- Guaranteed on-the-fly bounded-memory conversion requires a "
+            "safetensors source checkpoint. Unknown architectures have structural "
+            "coverage only and require policy inspection plus quality validation.",
             "- CUDA and MPS `auto_fused` inference requires a packed matmul kernel "
             "and fails loudly when the required kernel is unavailable. The explicit "
             "`dequant_bf16` reference mode materializes dequantized weights before "

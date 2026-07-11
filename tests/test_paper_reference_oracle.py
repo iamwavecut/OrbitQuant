@@ -119,20 +119,30 @@ def test_rpbh_matches_independent_dense_equation_9_oracle():
 
 
 @pytest.mark.parametrize(
-    ("weight_bits", "activation_bits", "with_bias"),
+    ("weight_bits", "activation_bits", "with_bias", "runtime_mode"),
     [
-        (4, 4, True),
-        (3, 3, False),
-        (2, 4, True),
-        (2, 3, False),
-        (4, 6, True),
+        (4, 4, True, "dequant_bf16"),
+        (3, 3, False, "dequant_bf16"),
+        (2, 4, True, "dequant_bf16"),
+        (2, 3, False, "dequant_bf16"),
+        (4, 6, True, "dequant_bf16"),
+        (4, 4, True, "native_packed_matmul"),
     ],
 )
 def test_reference_runtime_matches_independent_algorithm_1_oracle(
     weight_bits: int,
     activation_bits: int,
     with_bias: bool,
+    runtime_mode: str,
 ):
+    if runtime_mode == "native_packed_matmul":
+        try:
+            import orbitquant_packed_matmul
+        except Exception:
+            pytest.skip("native packed matmul kernel package is not importable")
+        if not orbitquant_packed_matmul.supports_device("cpu"):
+            pytest.skip("the importable native packed matmul variant has no CPU backend")
+
     torch.manual_seed(202)
     source = torch.nn.Linear(24, 5, bias=with_bias)
     with torch.no_grad():
@@ -144,7 +154,7 @@ def test_reference_runtime_matches_independent_algorithm_1_oracle(
         activation_bits=activation_bits,
         rotation_seed=29,
         block_size="paper",
-        runtime_mode="dequant_bf16",
+        runtime_mode=runtime_mode,
         activation_kernel_backend="cpu",
     )
     layer = OrbitQuantLinear.from_linear(
@@ -229,7 +239,7 @@ def test_adaln_group64_rtn_matches_independent_weight_only_contract():
         source.bias.copy_(torch.tensor([-0.25, 0.0, 0.5]))
     layer = RTNInt4Linear.from_linear(
         source,
-        config=OrbitQuantConfig(),
+        config=OrbitQuantConfig(runtime_mode="dequant_bf16"),
         module_name="transformer_blocks.0.norm1.linear",
     )
 

@@ -85,6 +85,94 @@ def load_native_packed_matmul_kernel() -> Any:
     return _load_native_packed_matmul_kernel()
 
 
+def native_packed_matmul_device_available(device_type: str) -> bool:
+    if device_type not in {"cpu", "cuda", "mps"}:
+        raise ValueError(f"unknown device type {device_type!r}")
+    kernel = _load_native_packed_matmul_kernel()
+    supports_device = getattr(kernel, "supports_device", None)
+    if callable(supports_device):
+        return bool(supports_device(device_type))
+    # Kernel variants built before CPU support did not expose capability
+    # introspection. They were CUDA- or Metal-only, never CPU variants.
+    return device_type in {"cuda", "mps"}
+
+
+def native_cpu_activation_available() -> bool:
+    kernel = _load_native_packed_matmul_kernel()
+    supports_cpu_activation = getattr(kernel, "supports_cpu_activation", None)
+    return callable(supports_cpu_activation) and bool(supports_cpu_activation())
+
+
+def native_cpu_adaln_available() -> bool:
+    kernel = _load_native_packed_matmul_kernel()
+    supports_cpu_adaln = getattr(kernel, "supports_cpu_adaln", None)
+    return callable(supports_cpu_adaln) and bool(supports_cpu_adaln())
+
+
+def quantize_activations_with_native_cpu_kernel(
+    x: torch.Tensor,
+    permutation: torch.Tensor,
+    signs: torch.Tensor,
+    centroids: torch.Tensor,
+    boundaries: torch.Tensor,
+    *,
+    eps: float,
+    inv_sqrt_block: float,
+    block_size: int,
+) -> torch.Tensor:
+    if x.device.type != "cpu":
+        raise RuntimeError("native CPU activation quantization requires CPU tensors")
+    kernel = _load_native_packed_matmul_kernel()
+    operation = getattr(kernel, "quantize_activations_cpu", None)
+    if not callable(operation) or not native_cpu_activation_available():
+        raise RuntimeError(
+            "the loaded native packed matmul package does not provide the CPU "
+            "activation pipeline. Build a current CPU variant or use the reference "
+            "activation backend."
+        )
+    return operation(
+        x,
+        permutation,
+        signs,
+        centroids,
+        boundaries,
+        eps=eps,
+        inv_sqrt_block=inv_sqrt_block,
+        block_size=block_size,
+    )
+
+
+def matmul_packed_adaln_int4_with_native_cpu_kernel(
+    x: torch.Tensor,
+    packed_weight: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    out_features: int,
+    in_features: int,
+    group_size: int,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if x.device.type != "cpu":
+        raise RuntimeError("native packed AdaLN requires CPU tensors")
+    kernel = _load_native_packed_matmul_kernel()
+    operation = getattr(kernel, "matmul_packed_adaln_int4_cpu", None)
+    if not callable(operation) or not native_cpu_adaln_available():
+        raise RuntimeError(
+            "the loaded native packed matmul package does not provide the CPU "
+            "AdaLN INT4 group kernel. Build a current CPU variant or use "
+            "runtime_mode='dequant_bf16'."
+        )
+    return operation(
+        x,
+        packed_weight,
+        scales,
+        out_features=out_features,
+        in_features=in_features,
+        group_size=group_size,
+        bias=bias,
+    )
+
+
 def native_packed_w4a4_available() -> bool:
     kernel = _load_native_packed_matmul_kernel()
     return callable(getattr(kernel, "matmul_packed_w4a4_int8", None))
@@ -114,14 +202,22 @@ def matmul_packed_weight_with_native_kernel(
     block_n: int = 64,
     block_k: int = 128,
 ) -> torch.Tensor:
-    if x.device.type not in {"cuda", "mps"}:
+    if x.device.type not in {"cpu", "cuda", "mps"}:
         raise RuntimeError(
-            f"native_packed_matmul runtime requires CUDA or MPS input tensors; got {x.device.type}."
+            "native_packed_matmul runtime requires CPU, CUDA, or MPS input tensors; "
+            f"got {x.device.type}."
         )
     if x.shape[-1] != in_features:
         raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
 
     kernel = _load_native_packed_matmul_kernel()
+    if not native_packed_matmul_device_available(x.device.type):
+        raise RuntimeError(
+            "the loaded native packed matmul package does not contain a "
+            f"{x.device.type.upper()} backend. Install or build a compatible variant, "
+            "or use runtime_mode='dequant_bf16'. "
+            f"{_runtime_variant_hint()}"
+        )
     centroids = codebook if isinstance(codebook, torch.Tensor) else codebook.centroids
     return kernel.matmul_packed_weight(
         x,

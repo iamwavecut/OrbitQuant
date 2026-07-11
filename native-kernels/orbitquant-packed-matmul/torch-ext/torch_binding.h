@@ -1,14 +1,20 @@
 #pragma once
 
+#if defined(CPU_KERNEL)
+#include <torch/csrc/stable/tensor.h>
+using OrbitQuantTensor = torch::stable::Tensor;
+#else
 #include <torch/torch.h>
+using OrbitQuantTensor = torch::Tensor;
+#endif
 
 void matmul_packed_weight(
-    torch::Tensor &out,
-    torch::Tensor const &x,
-    torch::Tensor const &packed_weight_indices,
-    torch::Tensor const &row_norms,
-    torch::Tensor const &centroids,
-    torch::Tensor const &bias,
+    OrbitQuantTensor &out,
+    OrbitQuantTensor const &x,
+    OrbitQuantTensor const &packed_weight_indices,
+    OrbitQuantTensor const &row_norms,
+    OrbitQuantTensor const &centroids,
+    OrbitQuantTensor const &bias,
     bool has_bias,
     int64_t bits,
     int64_t out_features,
@@ -16,6 +22,30 @@ void matmul_packed_weight(
     int64_t block_m,
     int64_t block_n,
     int64_t block_k);
+
+#if defined(CPU_KERNEL)
+void quantize_activations_cpu(
+    OrbitQuantTensor &out,
+    OrbitQuantTensor const &x,
+    OrbitQuantTensor const &permutation,
+    OrbitQuantTensor const &signs,
+    OrbitQuantTensor const &centroids,
+    OrbitQuantTensor const &boundaries,
+    double eps,
+    double inv_sqrt_block,
+    int64_t block_size);
+
+void matmul_packed_adaln_int4_cpu(
+    OrbitQuantTensor &out,
+    OrbitQuantTensor const &x,
+    OrbitQuantTensor const &packed_weight,
+    OrbitQuantTensor const &scales,
+    OrbitQuantTensor const &bias,
+    bool has_bias,
+    int64_t out_features,
+    int64_t in_features,
+    int64_t group_size);
+#endif
 
 #if defined(CUDA_KERNEL)
 void matmul_packed_w4a4_int8(

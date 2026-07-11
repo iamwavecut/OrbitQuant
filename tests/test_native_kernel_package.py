@@ -17,19 +17,44 @@ def _kernel_source_files() -> list[Path]:
     ]
 
 
-def test_kernel_builder_manifest_targets_cuda_and_metal() -> None:
+def test_kernel_builder_manifest_targets_cpu_cuda_and_metal() -> None:
     config = tomllib.loads((KERNEL_ROOT / "build.toml").read_text(encoding="utf-8"))
 
     assert config["general"]["name"] == "orbitquant-packed-matmul"
     assert config["general"]["edition"] == 5
     assert config["general"]["license"] == "Apache-2.0"
-    assert config["general"]["backends"] == ["cuda", "metal"]
+    assert config["general"]["backends"] == ["cpu", "cuda", "metal"]
     assert config["general"]["hub"]["repo-id"] == "WaveCut/orbitquant-packed-matmul"
     assert config["torch"]["src"] == [
         "torch-ext/torch_binding.cpp",
         "torch-ext/torch_binding.h",
     ]
     kernels = config["kernel"]
+    assert config["torch"]["stable-abi"] == {"cpu": "2.11"}
+    assert kernels["packed_matmul_cpu"]["backend"] == "cpu"
+    assert kernels["packed_matmul_cpu"]["depends"] == ["torch"]
+    assert kernels["packed_matmul_cpu"]["src"] == [
+        "orbitquant_packed_matmul_cpu/cpu_isa.cpp",
+        "orbitquant_packed_matmul_cpu/cpu_kernel_args.h",
+        "orbitquant_packed_matmul_cpu/cpu_threads.cpp",
+        "orbitquant_packed_matmul_cpu/cpu_threads.h",
+        "orbitquant_packed_matmul_cpu/packed_adaln_cpu.cpp",
+        "orbitquant_packed_matmul_cpu/packed_matmul_cpu.cpp",
+        "orbitquant_packed_matmul_cpu/packed_matmul_cpu.h",
+        "orbitquant_packed_matmul_cpu/packed_matmul_scalar.cpp",
+        "orbitquant_packed_matmul_cpu/packed_matmul_neon.cpp",
+        "orbitquant_packed_matmul_cpu/packed_matmul_x86_avx512.cpp",
+        "orbitquant_packed_matmul_cpu/quantize_activations_cpu.cpp",
+    ]
+    assert kernels["packed_matmul_cpu_x86_avx2"]["backend"] == "cpu"
+    assert kernels["packed_matmul_cpu_x86_avx2"]["depends"] == ["torch"]
+    assert kernels["packed_matmul_cpu_x86_avx2"]["cxx-flags"] == [
+        "$<$<CXX_COMPILER_ID:MSVC>:/arch:AVX2>"
+    ]
+    assert kernels["packed_matmul_cpu_x86_avx2"]["src"] == [
+        "orbitquant_packed_matmul_cpu/cpu_msvc_avx2.cpp",
+        "orbitquant_packed_matmul_cpu/packed_matmul_x86.cpp",
+    ]
     assert kernels["packed_matmul_cuda"]["backend"] == "cuda"
     assert kernels["packed_matmul_cuda"]["depends"] == ["torch"]
     assert kernels["packed_matmul_metal"]["backend"] == "metal"
@@ -41,8 +66,13 @@ def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
     header = (KERNEL_ROOT / "torch-ext/torch_binding.h").read_text(encoding="utf-8")
 
     assert "TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in binding
+    assert "STABLE_TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops)" in binding
+    assert "STABLE_TORCH_LIBRARY_IMPL_EXPAND" in binding
+    assert "TORCH_BOX(&matmul_packed_weight)" in binding
+    assert "TORCH_BOX(&matmul_packed_adaln_int4_cpu)" in binding
     assert "REGISTER_EXTENSION(TORCH_EXTENSION_NAME)" in binding
     assert "torch/torch.h" in header
+    assert "torch/csrc/stable/tensor.h" in header
 
     combined = "\n".join(
         path.read_text(encoding="utf-8")
@@ -57,7 +87,7 @@ def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
         "py::",
         "TORCH_LIBRARY(",
         "TORCH_LIBRARY_FRAGMENT",
-        "TORCH_LIBRARY_IMPL",
+        "TORCH_LIBRARY_IMPL(",
         "PyInit",
         "torch.ops.",
         "import orbitquant",
@@ -109,6 +139,33 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     metal_source = (KERNEL_ROOT / "orbitquant_packed_matmul_metal/packed_matmul.metal").read_text(
         encoding="utf-8"
     )
+    cpu_source = (KERNEL_ROOT / "orbitquant_packed_matmul_cpu/packed_matmul_cpu.cpp").read_text(
+        encoding="utf-8"
+    )
+    cpu_isa_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/cpu_isa.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_msvc_avx2_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/cpu_msvc_avx2.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_threads_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/cpu_threads.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_neon_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/packed_matmul_neon.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_avx2_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/packed_matmul_x86.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_avx512_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/packed_matmul_x86_avx512.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_activation_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/quantize_activations_cpu.cpp"
+    ).read_text(encoding="utf-8")
+    cpu_adaln_source = (
+        KERNEL_ROOT / "orbitquant_packed_matmul_cpu/packed_adaln_cpu.cpp"
+    ).read_text(encoding="utf-8")
 
     for token in (
         "packed_weight_indices",
@@ -137,6 +194,34 @@ def test_kernel_sources_expose_the_current_runtime_contract() -> None:
     assert "threadgroup float *shared" in metal_source
     assert "threadgroup_barrier(mem_flags::mem_threadgroup)" in metal_source
     assert "params.block_k" in metal_source
+    assert "torch::headeronly::ScalarType" in cpu_source
+    assert "packed_matmul_neon_available" in cpu_source
+    assert "vfmaq_f32" in cpu_neon_source
+    assert "packed_matmul_scalar_range" in cpu_neon_source
+    assert "ORBITQUANT_CPU_ISA" in cpu_source
+    assert "packed_matmul_x86_avx2_available" in cpu_source
+    assert "_mm256_permutevar8x32_ps" in cpu_avx2_source
+    assert "runtime_has_avx2_fma_f16c" in cpu_isa_source
+    assert "__cpuidex" in cpu_isa_source
+    assert "activation_fwht_msvc_avx2" in cpu_msvc_avx2_source
+    assert "packed_adaln_msvc_avx2_range" in cpu_msvc_avx2_source
+    assert "_mm512_permutexvar_ps" in cpu_avx512_source
+    assert "_mm512_permutexvar_epi16" in cpu_avx512_source
+    assert "_mm512_dpbf16_ps" in cpu_avx512_source
+    assert '__builtin_cpu_supports("avx512bf16")' in cpu_avx512_source
+    assert "kPrimaryRowTile = 8" in cpu_avx512_source
+    assert "quantize_lookup_avx2" in cpu_activation_source
+    assert "quantize_lookup_avx512" in cpu_activation_source
+    assert "_mm512_mask_add_epi32" in cpu_activation_source
+    assert "select_activation_isa" in cpu_activation_source
+    assert "packed_adaln_scalar_range" in cpu_adaln_source
+    assert "packed_adaln_neon_range" in cpu_adaln_source
+    assert "packed_adaln_avx2_range" in cpu_adaln_source
+    assert "packed_adaln_avx512_range" in cpu_adaln_source
+    assert "_mm512_dpbf16_ps" in cpu_adaln_source
+    assert "sched_getaffinity" in cpu_threads_source
+    assert "physical_package_id" in cpu_threads_source
+    assert "hw.perflevel0.physicalcpu" in cpu_threads_source
 
 
 def test_cuda_kernel_uses_wmma_for_supported_bf16_and_fp16_low_bit_modes() -> None:
@@ -183,8 +268,16 @@ def test_kernel_benchmark_reports_reference_comparison() -> None:
     assert "reference_weight" in benchmark_source
     assert "materialize_reference_weight" in benchmark_source
     assert "packed_seconds_per_iter" in benchmark_source
+    assert 'choices=["cpu", "cuda", "mps"]' in benchmark_source
+    assert "packed_first_call_seconds" in benchmark_source
+    assert "packed_hot_median_seconds" in benchmark_source
+    assert "packed_hot_p95_seconds" in benchmark_source
     assert "predequantized_f_linear_seconds_per_iter" in benchmark_source
+    assert "predequantized_hot_median_seconds" in benchmark_source
+    assert "predequantized_hot_p95_seconds" in benchmark_source
     assert "dequantize_then_f_linear_seconds_per_iter" in benchmark_source
+    assert "dequantize_then_hot_median_seconds" in benchmark_source
+    assert "dequantize_then_hot_p95_seconds" in benchmark_source
     assert "packed_weight_indices_bytes" in benchmark_source
     assert "row_norms_bytes" in benchmark_source
     assert "centroid_bytes" in benchmark_source
@@ -196,3 +289,4 @@ def test_kernel_benchmark_reports_reference_comparison() -> None:
     assert "reference_seconds_per_iter" in benchmark_source
     assert "packed_vs_reference_speedup" in benchmark_source
     assert "max_abs_error" in benchmark_source
+    assert "relative_rmse" in benchmark_source

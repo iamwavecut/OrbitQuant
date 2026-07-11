@@ -59,6 +59,10 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     assert "snapshot_download" in card
     assert "load_quantized_pipeline_from_artifact" in card
     assert "pipe.enable_model_cpu_offload(device=\"cuda\")" in card
+    assert "### Convert the source checkpoint on load" in card
+    assert "build_diffusers_pipeline_quantization_config" in card
+    assert "pipe.enable_sequential_cpu_offload()" in card
+    assert "requires a safetensors source checkpoint" in card
     assert "    device=\"cuda\"," not in card
     assert "load_quantized_pipeline_component" not in card
     assert "component=\"transformer\"" not in card
@@ -217,7 +221,7 @@ def test_model_card_renders_imported_vbench_release_metrics():
 def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    assert 'pip install "orbitquant[hf,kernels]>=0.2.0"' in card
+    assert 'pip install "orbitquant[hf,kernels]>=0.4.0"' in card
     assert "git+https://github.com/iamwavecut/OrbitQuant.git" not in card
     for forbidden in (
         "reports/",

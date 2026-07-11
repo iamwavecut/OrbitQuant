@@ -118,6 +118,7 @@ def test_gpt2_conv1d_quantize_save_and_prequantized_restore(tmp_path):
     assert isinstance(quantized.transformer.h[0].attn.c_attn, OrbitQuantLinear)
     assert quantized.transformer.h[0].attn.c_attn.source_weight_layout == "in_out"
     assert isinstance(quantized.lm_head, torch.nn.Linear)
+    assert quantized.lm_head.weight is quantized.transformer.wte.weight
     assert torch.isfinite(logits).all()
 
     quantized.save_pretrained(quantized_dir)

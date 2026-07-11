@@ -1,7 +1,7 @@
 # OrbitQuant Paper Methodology Audit
 
 Paper revision: arXiv 2607.02461v1.
-Implementation baseline: OrbitQuant 0.3.1.
+Implementation baseline: OrbitQuant 0.4.0.
 
 This audit defines the method-conformance and claim boundaries for OrbitQuant.
 Run `scripts/run_paper_methodology_checks.sh` to verify the independent
