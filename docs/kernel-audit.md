@@ -36,9 +36,9 @@ Other explicit modes are `native_packed_matmul`, `triton_packed_matmul`,
 | CUDA | Optimized packed inference | Native RPBH/quantization, chunked packed-weight decode plus CUTLASS INT8 matmul, direct packed CUDA MMA fallback, and generic Triton packed fallback |
 | MPS/Metal | Optimized packed inference | Native Metal packed matmul and Metal activation quantization stages |
 | CPU | Hardware-verified native source and CI wheel builds; wheel publication pending | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
-| Vulkan | Unverified | No runtime backend |
-| ROCm | Unsupported | No release backend |
-| XPU | Unsupported | No release backend |
+| Vulkan | Experimental source path; hardware-verified on AMD Cezanne/RADV Linux, Windows unverified | ExecuTorch whole-graph delegate adapter with exact packed W4A4 activation and matmul shaders |
+| ROCm | Experimental source candidate; supported-hardware proof pending | Exact Triton activation, low-bit pack/unpack, packed matmul, weight quantization, and packed INT4 AdaLN; explicit-only |
+| XPU | Experimental source candidate; Intel hardware proof pending | Exact Triton activation, low-bit pack/unpack, packed matmul, weight quantization, and packed INT4 AdaLN on `torch.xpu`; explicit-only |
 
 ## Local Native Package
 
@@ -107,17 +107,261 @@ export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$PWD/build/<matching-vari
 The variant must match the active Torch, CUDA or Metal, platform, and C++ ABI
 tuple. OrbitQuant rejects incompatible packages instead of loading them.
 
+### Experimental Vulkan source build
+
+The Vulkan path targets the ExecuTorch whole-graph delegate because desktop
+PyTorch does not expose a Vulkan tensor backend. It accepts exported FP16 or
+FP32 activations, keeps W4 weights and activation indices packed, and uses a
+256-entry exact pair-product LUT. It does not create an FP16/BF16 weight
+matrix. The source path currently implements W4A4 only and is not selected by
+`auto_fused`.
+
+Desktop Vulkan support requires an ExecuTorch source revision containing the
+June/July 2026 desktop delegate changes. The source below was verified at
+`a6d812a082df57898b8608f56c867140cc9da32c`. Build it with a current LunarG
+Vulkan SDK; the system `glslc` shipped by older Linux distributions may not
+compile the upstream shaders.
+
+```bash
+export EXECUTORCH_SRC=/path/to/executorch
+export EXECUTORCH_BUILD=/path/to/executorch-build
+export EXECUTORCH_INSTALL=/path/to/executorch-install
+export GLSLC=/path/to/vulkan-sdk/bin/glslc
+
+cmake -S "$EXECUTORCH_SRC" -B "$EXECUTORCH_BUILD" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$EXECUTORCH_INSTALL" \
+  -DPYTHON_EXECUTABLE="$(command -v python3)" \
+  -DEXECUTORCH_BUILD_VULKAN=ON \
+  -DEXECUTORCH_BUILD_PORTABLE_OPS=ON \
+  -DEXECUTORCH_BUILD_EXECUTOR_RUNNER=OFF \
+  -DEXECUTORCH_BUILD_TESTS=OFF \
+  -DEXECUTORCH_BUILD_PYBIND=OFF \
+  -DEXECUTORCH_BUILD_XNNPACK=OFF \
+  -DGLSLC_PATH="$GLSLC"
+cmake --build "$EXECUTORCH_BUILD" --target install --parallel
+
+cmake -S native-kernels/orbitquant-vulkan \
+  -B .local-artifacts/orbitquant-vulkan-build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$EXECUTORCH_INSTALL" \
+  -DPYTHON_EXECUTABLE="$(command -v python3)" \
+  -DORBITQUANT_EXECUTORCH_ROOT="$EXECUTORCH_SRC" \
+  -DGLSLC_PATH="$GLSLC" \
+  -DORBITQUANT_VULKAN_BUILD_TESTS=ON \
+  -DORBITQUANT_VULKAN_BUILD_PTE_RUNNER=ON
+cmake --build .local-artifacts/orbitquant-vulkan-build \
+  --target orbitquant_vulkan_test orbitquant_vulkan_pte_runner --parallel
+.local-artifacts/orbitquant-vulkan-build/orbitquant_vulkan_test
+```
+
+`prepare_executorch_vulkan_w4a4_model()` converts already-loaded
+`OrbitQuantLinear` modules without requantizing or changing the artifact.
+`ExecuTorchVulkanW4A4Linear` and
+`register_executorch_vulkan_w4a4()` in
+`orbitquant.kernels.executorch_vulkan` provide the Python export boundary. The
+native package supplies token norm, RPBH/FWHT plus exact code assignment, and
+direct packed pair-LUT matmul dispatches.
+
+The same build and an exported `.pte` were executed on an AMD Ryzen 5 5600G
+Cezanne integrated Radeon through Mesa 25.2.8 RADV, Vulkan 1.4.318, ExecuTorch
+1.4.0 source commit `a6d812a082df57898b8608f56c867140cc9da32c`, and Vulkan
+SDK 1.4.350.1. The device uses wave64. It exposes
+`VK_KHR_shader_integer_dot_product`, but reports no accelerated integer-dot
+properties and no cooperative-matrix support, so the selected exact path uses
+a shared 256-entry pair-product LUT rather than claiming unavailable matrix
+hardware.
+
+The finite shader search compared scalar output decode, transposed packed
+weights, 4x4, 8x1, 8x2, and 16x1 tiles, shared versus global LUTs, and K tiles
+of 4 through 32. The selected prefill shader uses an 8x2 output tile, a 16x4
+workgroup, an eight-coordinate K tile, coalesced transposed packed loads, and
+3,072 bytes of LDS. RADV reported 32 SGPRs, 48 VGPRs, and no register spills.
+Matmul accounts for 92.6% of the 1536 prefill median and 95.8% of the 3072
+prefill median; token norm and RPBH/FWHT are not the remaining performance
+bottleneck.
+
+A same-host ABBA control also compared wave64 subgroup shuffle against the
+selected LDS tile. Each process used 10 warmups and 31 timed iterations. The
+subgroup matmul medians were 583.48 versus 532.08 µs at 32x1536 and 2072.44
+versus 1859.50 µs at 32x3072, 9.66% and 11.45% slower respectively. RADV
+reported 48 VGPRs and no spills for both variants; the subgroup shader reduced
+code size and static instruction count but not measured latency, so runtime
+dispatch retains the LDS path.
+
+| Rows | Projection | Exact packed median | Exact packed p95 | Resident FP16 median | Packed versus resident FP16 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1536x1536 | 0.1598 ms | 0.1634 ms | 0.2660 ms | 1.66x faster |
+| 32 | 1536x1536 | 0.5782 ms | 0.5818 ms | 0.5084 ms | 1.14x slower |
+| 32 | 3072x3072 | 1.9480 ms | 1.9659 ms | 1.5318 ms | 1.27x slower |
+
+Relative to the initial direct-LUT implementation, the selected shader reduced
+the corresponding medians from 0.3174, 3.0317, and 12.0223 ms. The packed
+path is therefore useful for decode on this device, while its prefill path
+remains experimental rather than being presented as a universal speedup.
+
+Seven FP32/FP16, bias/no-bias, partial-tile, and realistic-shape C++ cases
+passed an independent host reference with a matching Khronos validation layer.
+The realistic exported graph contained one Vulkan delegate and produced 12,288
+values with maximum absolute error `2.682e-6` and relative RMSE `7.588e-7`.
+Its `.pte` was 1,208,960 bytes and ran through the standalone ExecuTorch runner
+on the Radeon device.
+
+For a 3072x3072 projection, packed W4 indices occupy 4,718,592 bytes versus
+18,874,368 bytes for FP16 weights. Separate clean processes reached 72,920 KiB
+and 92,060 KiB maximum RSS respectively; measured GTT growth was 14,770,176
+bytes for packed execution and 43,327,488 bytes for resident FP16. First/cached
+packed prepack times were 2.925/0.725 ms at 1536 and 10.454/2.273 ms at 3072,
+versus 5.645/2.101 ms and 17.969/8.692 ms for FP16 upload. No full floating
+weight is created by the packed delegate.
+
+The earlier llvmpipe run remains build and validation evidence only. Windows
+Vulkan and other AMD architectures are unverified, the path is W4A4-only, and
+it is not selected by `auto_fused`; these limitations keep Vulkan experimental.
+
+### Experimental ROCm and XPU source candidates
+
+ROCm and Intel XPU share the exact Triton kernel surface with CUDA where the
+upstream compiler supports the operations. PyTorch exposes HIP tensors through
+the `cuda` device type, so OrbitQuant checks `torch.version.hip` before loading
+or dispatching CUDA-only native kernels. Intel uses the `xpu` device type. Both
+candidates remain explicit-only and report `experimental_unverified`; neither
+is selected by `auto_fused`.
+
+Use `runtime_mode="triton_packed_matmul"` with
+`activation_kernel_backend="triton_rocm"` or `"triton_xpu"` only for validation
+with a matching official PyTorch and Triton stack. The optimized call consumes
+packed weights directly; `runtime_mode="dequant_bf16"` remains the explicit
+floating-point reference. Missing compiler or device support raises an
+actionable error instead of silently materializing a full floating-point
+weight.
+
+The Cezanne Radeon used for the Vulkan measurements is not ROCm release
+evidence: `gfx90c` is outside the current official PyTorch/ROCm support matrix.
+ROCm status therefore requires a repeat of the independent oracle, memory
+probe, profiler, and realistic-shape benchmark on supported AMD hardware. XPU
+requires the same evidence on a real Intel GPU before its status can change.
+
 ## Verified Devices And Shapes
 
-The native CPU package was built and executed on an AMD EPYC 4564P (Zen 4)
-with GCC 13.3 and Torch 2.13.0+cpu. The hosted cpuset exposed logical CPUs
-`13,29`, which are the two SMT threads of one physical core. These results are
-single-physical-core ISA and latency evidence, not a multi-core scaling claim.
-Runtime dispatch exercised scalar, AVX2/FMA, and AVX-512 paths against the same
-independent BF16 reference. The AVX-512 group-64 path uses `vpermw` for INT4
-lookup and `vdpbf16ps` accumulation; annotated disassembly confirmed that the
-hot rows=4 and rows=8 loops retain accumulators in ZMM registers without a full
-weight decode buffer or stack-spilled accumulator tile.
+The native CPU package was built and executed on two independent Secure Cloud
+placements of an AMD EPYC 4564P (Zen 4), using GCC 13.x and Torch 2.12.1 or
+2.13.0+cpu. Each hosted cpuset exposed the two SMT threads of one physical
+core. These results are single-physical-core ISA and latency evidence, not a
+multi-core scaling claim. Runtime dispatch exercised scalar, AVX2/FMA, and
+AVX-512/BF16 paths against the same independent reference.
+
+The repeat ISA comparison below pins one hardware thread, leaves its SMT
+sibling idle, uses 10 warmups and 31 timed iterations, and reports the packed
+matmul portion for 32 BF16 rows. It demonstrates the benefit of the dispatched
+hardware primitive rather than treating the scalar fallback as the optimized
+implementation.
+
+| Dimension | Scalar | AVX2/FMA | AVX-512/BF16 | AVX-512 versus AVX2 |
+| ---: | ---: | ---: | ---: | ---: |
+| 1536 | 62.4821 ms | 2.5246 ms | 0.9792 ms | 2.58x |
+| 3072 | 249.2694 ms | 9.9002 ms | 3.8213 ms | 2.59x |
+
+For BF16 W4 projections with at least 16 rows, runtime dispatch uses a four-row
+accumulator tile and a two-chunk K-loop unroll on the verified AMD family
+19h/model 61h processor for input dimensions 1536, 1920, and 3072. Other
+processors, shorter row counts, unaligned dimensions, and larger projections
+retain the eight-row non-unrolled path. The finite search compared 4, 8, 12,
+and 16 row tiles plus unrolled and non-unrolled K loops with one physical core
+pinned. The final same-host ABBA repeat below uses Torch 2.12.1+cpu, GCC 13.3,
+20 warmups, two seconds of frequency stabilization, one hardware thread pinned
+with its SMT sibling idle, and 101 timed iterations per leg.
+
+| Rows | Dimension | Eight-row median | Selected median | Selected p95 | Median improvement |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 1536 | 1.0372 ms | 0.9864 ms | 0.9935 ms | 5.15% |
+| 32 | 1920 | 1.6140 ms | 1.5278 ms | 1.5340 ms | 5.64% |
+| 32 | 3072 | 4.0210 ms | 3.8480 ms | 3.8631 ms | 4.50% |
+
+Dimension 3840 selected the unchanged eight-row path and repeated within 0.24%
+of the baseline. No 9216 speedup is claimed because the repeated distributions
+were noisier and dispatch remains on the generic path. At dimension 1536, the
+complete activation-plus-matmul path measured 1.1230 ms median: 0.1463 ms for
+activation norm, RPBH/FWHT, and code assignment, and 0.9737 ms for packed
+matmul. At dimension 3072, the corresponding medians were 4.1220, 0.2764, and
+3.8332 ms. A resident BF16 linear measured 0.5400 and 2.1544 ms respectively;
+packed dispatch preserves the 4x weight-memory reduction rather than claiming
+to beat a permanently dense weight at this row count.
+
+Native sampling put 88.3% of hot-loop samples in the selected
+`<4, true, true>` specialization. Against the generic eight-row baseline,
+annotated disassembly reduced the hot body from 896 to 703 instructions,
+increased `vdpbf16ps` sites from 8 to 30, and reduced ZMM stack references from
+37 to zero. The provider exposed `perf_event_paranoid=4`, so hardware PMU
+counters were unavailable; the evidence uses wall-clock distributions, native
+stack sampling, and ISA disassembly instead. Two threads pinned to the same
+physical core were 6.8% and 8.3% slower at dimensions 1536 and 3072, so one
+worker per physical core is selected. This does not establish multi-core or
+NUMA scaling.
+
+A native-only 32x9216 memory probe constructed the 42,467,328-byte packed
+payload directly, without an unpacked index tensor or reference weight. The
+first packed call increased process peak RSS by 2,129,920 bytes and 20 calls
+increased it by 3,440,640 bytes; a materialized BF16 weight for the same
+projection would require 169,869,312 bytes. The optimized call therefore
+retained bounded output and allocator scratch instead of a full floating-point
+weight.
+
+The AVX2-only tier was separately profiled on an AMD Ryzen 5 5600G Cezanne
+(family 19h/model 50h), GCC 13.3, and Torch 2.11.0. Runtime dispatch uses a
+16-row primary accumulator tile with 8-row and 4-row tails only for BF16 W4,
+at least 16 rows, dimensions 1536, 1920, or 3072, and that exact verified
+CPUID. Every other AVX2 processor and shape retains the generic eight-row
+path. The exact Cezanne guard prevents a machine-specific result from changing
+the portable AVX2 default.
+
+The finite same-host search compared 4, 8, 10, 12, and 16-row tiles,
+`vgatherdps` versus two-register `vpermps` lookup, K-loop unrolling, software
+prefetch, LTO, and `-mtune=znver3`. Gather lookup, four-row tiling, and software
+prefetch were materially slower; unrolling and LTO did not improve both tested
+dimensions. The selected 16/8/4 topology amortizes packed decode across more
+activation rows without changing the artifact or numerical path. Disassembly
+confirmed AVX2 `vpermps` lookup and FMA accumulation. PMU counters were
+unavailable because the host sets `perf_event_paranoid=4`.
+
+The final ABBA repeat pinned one logical CPU with its SMT sibling idle and used
+10 warmups plus 101 timed calls per leg. Values below average the two medians;
+the selected p95 is the slower of its two legs.
+
+| Rows | Dimension | Eight-row median | Selected median | Selected p95 | Resident BF16 median | Median improvement |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 1536 | 3.9535 ms | 3.5735 ms | 3.6396 ms | 10.1302 ms | 9.61% |
+| 32 | 1920 | 6.1341 ms | 5.5369 ms | 5.6402 ms | 15.6631 ms | 9.73% |
+| 32 | 3072 | 15.5206 ms | 14.8918 ms | 15.4647 ms | 39.7343 ms | 4.05% |
+
+Activation plus matmul measured 3.7806, 5.7961, and 15.2280 ms at those
+dimensions, improvements of 9.24%, 9.74%, and 4.91%. Matmul accounted for
+94.5%, 95.5%, and 97.8% of the selected full-pipeline medians, identifying
+packed decode/LUT/FMA as the remaining bottleneck rather than activation norm
+or RPBH/FWHT. Relative RMSE against the independently materialized BF16
+reference was 0.002315, 0.002292, and 0.002250; the optimized and baseline
+AVX2 paths had the same error.
+
+Using the six physical cores, with the container cpuset restricted to one
+hardware thread per core, improved packed-matmul medians by 4.43x, 4.87x, and
+5.33x. Twelve SMT workers were slower than six physical-core workers on every
+shape. The host also serves production workloads, so the measured p95 includes
+their scheduling interference rather than representing an isolated-server
+tail-latency claim.
+
+| Dimension | One thread | Six physical cores | Six-core p95 | Twelve SMT threads |
+| ---: | ---: | ---: | ---: | ---: |
+| 1536 | 3.5735 ms | 0.8063 ms | 1.4194 ms | 1.0395 ms |
+| 1920 | 5.5369 ms | 1.1366 ms | 2.1565 ms | 1.2310 ms |
+| 3072 | 14.8918 ms | 2.7934 ms | 5.5808 ms | 3.9207 ms |
+
+Independent hardware checks covered exact activation RPBH/FWHT and exhaustive
+centroid assignment, packed W2/W3/W4/W6 with bias, realistic 16/24/32/33-row
+W4 shapes, and packed INT4 group-64 AdaLN. A native-only 32x9216 probe used a
+42,467,328-byte packed payload and 18,432 bytes of row norms. Its peak RSS grew
+by 3,796,992 bytes across 20 calls, versus 169,869,312 bytes for a full BF16
+weight, so the Cezanne specialization retains bounded scratch and does not
+materialize a floating-point weight matrix.
 
 For an exact W4A4 projection with 32 activation rows and dimension 1536, the
 native activation stage measured 0.1484 ms median, packed matmul measured
@@ -164,17 +408,17 @@ under Torch 2.12.1. This verifies the current LibTorch Stable ABI boundary for
 those two runtimes; it does not make the wheel independent of the platform
 GLIBC, C++ runtime, or CPU ISA.
 
-CI run `29162193254` separately verified installable Python 3.9 ABI3 wheels on
-Linux and Windows. The 101,453-byte Linux wheel has both
-`manylinux_2_24_x86_64` and `manylinux_2_28_x86_64` tags, passed strict
+CI run `29162460269` separately verified installable Python 3.9 ABI3 wheels on
+Linux and Windows at source commit `769c9b8`. The 101,455-byte Linux wheel has
+both `manylinux_2_24_x86_64` and `manylinux_2_28_x86_64` tags, passed strict
 `abi3audit` with a computed Python 3.9 baseline, and has SHA-256
-`5cd19321e11281e03b9b1126f40571ad2c1e956060fc0bc5173c90628045d4df`.
+`5458d49de7cb6b15db7f88313d96cb34827dea2b3d4cc21a39c9574f3c928b16`.
 Inside the manylinux container, 73 native tests passed and 33 CUDA/MPS tests
 were skipped; a separate clean environment with OrbitQuant 0.4.0 and Torch
 2.12.1+cpu passed 33 integration/oracle tests with two CUDA/Triton skips.
 
-The 53,178-byte Windows wheel has the `cp39-abi3-win_amd64` tag and SHA-256
-`cf200774d7388496ce3b7f554dd3e757eca470d99ef9986fe7a7bb0ea1e0e297`.
+The 52,805-byte Windows wheel has the `cp39-abi3-win_amd64` tag and SHA-256
+`832aa3e89836c3ec8de44a0ec3bd160fe90e162d8a89c7cdca76c657df2e6728`.
 It was built with MSVC 14.51 on Windows Server 2025 and executed on an AMD EPYC
 9V74 runner with two cores and four logical processors. Its clean native suite
 passed 73 tests with 33 CUDA/MPS skips, and the OrbitQuant integration/oracle

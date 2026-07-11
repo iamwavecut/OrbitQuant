@@ -93,6 +93,18 @@ def test_orbit_quant_config_accepts_triton_packed_matmul_runtime_mode():
     assert config.runtime_mode == "triton_packed_matmul"
 
 
+def test_orbit_quant_config_accepts_explicit_triton_rocm_activation_backend():
+    config = OrbitQuantConfig(activation_kernel_backend="triton_rocm")
+
+    assert config.activation_kernel_backend == "triton_rocm"
+
+
+def test_orbit_quant_config_accepts_explicit_triton_xpu_activation_backend():
+    config = OrbitQuantConfig(activation_kernel_backend="triton_xpu")
+
+    assert config.activation_kernel_backend == "triton_xpu"
+
+
 def test_orbit_quant_config_accepts_native_packed_matmul_runtime_mode():
     config = OrbitQuantConfig(runtime_mode="native_packed_matmul")
 

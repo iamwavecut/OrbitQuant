@@ -40,7 +40,16 @@ def _quantize_adaln_weight(
     *,
     group_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if weight.is_cuda:
+    if weight.device.type == "xpu":
+        try:
+            from orbitquant.kernels.triton_cuda import quantize_adaln_weight_with_triton
+        except Exception as exc:
+            raise RuntimeError(
+                "XPU AdaLN quantization requires the Intel XPU Triton backend; "
+                "use CPU quantization for the reference path"
+            ) from exc
+        return quantize_adaln_weight_with_triton(weight, group_size=group_size)
+    if weight.device.type == "cuda":
         try:
             from orbitquant.kernels.triton_cuda import quantize_adaln_weight_with_triton
         except Exception:
@@ -255,7 +264,7 @@ class RTNInt4Linear(nn.Module):
         ):
             return self._dequantized_weight_cache
 
-        if device.type == "cuda":
+        if device.type in {"cuda", "xpu"}:
             try:
                 from orbitquant.kernels.triton_cuda import dequantize_adaln_weight_with_triton
             except Exception:
@@ -286,6 +295,71 @@ class RTNInt4Linear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         activation = x.to(torch.bfloat16)
+        uses_hip = bool(getattr(torch.version, "hip", None))
+        if x.device.type == "xpu":
+            if self.runtime_mode == "auto_fused":
+                raise RuntimeError(
+                    "auto_fused XPU AdaLN dispatch remains experimental until real "
+                    "Intel GPU correctness, memory, profiler, and performance proof is "
+                    "recorded. For explicit validation, set "
+                    "runtime_mode='triton_packed_matmul'. Set "
+                    "runtime_mode='dequant_bf16' for the reference/debug path."
+                )
+            if self.runtime_mode == "native_packed_matmul":
+                raise RuntimeError(
+                    "native_packed_matmul AdaLN has no XPU kernel. Use "
+                    "runtime_mode='triton_packed_matmul' for explicit XPU validation "
+                    "or runtime_mode='dequant_bf16' for the reference/debug path."
+                )
+        if x.device.type == "cuda" and uses_hip:
+            if self.runtime_mode == "auto_fused":
+                raise RuntimeError(
+                    "auto_fused ROCm AdaLN dispatch remains experimental until real "
+                    "supported AMD hardware correctness, memory, and performance proof "
+                    "is recorded. For explicit validation, set "
+                    "runtime_mode='triton_packed_matmul'. Set "
+                    "runtime_mode='dequant_bf16' for the reference/debug path."
+                )
+            if self.runtime_mode == "native_packed_matmul":
+                raise RuntimeError(
+                    "native_packed_matmul AdaLN currently provides CUDA, not HIP, "
+                    "accelerator kernels. Use runtime_mode='triton_packed_matmul' for "
+                    "explicit ROCm validation or runtime_mode='dequant_bf16' for the "
+                    "reference/debug path."
+                )
+        if x.device.type in {"cuda", "xpu"} and self.runtime_mode in {
+            "auto_fused",
+            "native_packed_matmul",
+            "triton_packed_matmul",
+        }:
+            try:
+                from orbitquant.kernels.triton_cuda import (
+                    matmul_packed_adaln_int4_with_triton,
+                )
+            except Exception as exc:
+                backend = (
+                    "XPU"
+                    if x.device.type == "xpu"
+                    else "ROCm"
+                    if getattr(torch.version, "hip", None)
+                    else "CUDA"
+                )
+                raise RuntimeError(
+                    f"{self.runtime_mode} AdaLN on {backend} requires the Triton "
+                    "packed INT4 group kernel and will not materialize a full BF16 "
+                    "weight. Install the matching PyTorch Triton package or use "
+                    "runtime_mode='dequant_bf16'."
+                ) from exc
+            self.last_effective_runtime_mode = "triton_packed_adaln_int4"
+            return matmul_packed_adaln_int4_with_triton(
+                activation,
+                self.packed_weight,
+                self.scales,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                group_size=self.group_size,
+                bias=self.bias,
+            )
         if x.device.type == "cpu" and self.runtime_mode in {
             "auto_fused",
             "native_packed_matmul",

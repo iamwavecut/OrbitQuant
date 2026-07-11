@@ -7,6 +7,7 @@ from torch.nn import functional as F
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.kernels.executorch_vulkan import ExecuTorchVulkanW4A4Linear
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.rotations import RPBHRotation
 
@@ -200,6 +201,199 @@ def test_reference_runtime_matches_independent_algorithm_1_oracle(
     torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
     expected_zero_token = torch.zeros(source.out_features) if bias is None else bias
     torch.testing.assert_close(actual[0, 0], expected_zero_token, atol=0, rtol=0)
+
+
+def test_executorch_vulkan_w4a4_export_op_matches_independent_algorithm_1_oracle():
+    torch.manual_seed(211)
+    source = torch.nn.Linear(24, 7, bias=True)
+    activations = torch.randn(2, 3, 24, dtype=torch.float32)
+    activations[0, 0].zero_()
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=31,
+        block_size="paper",
+        runtime_mode="dequant_bf16",
+    )
+    layer = OrbitQuantLinear.from_linear(
+        source,
+        config=config,
+        module_name="transformer_blocks.0.attn.to_q",
+    )
+    export_layer = ExecuTorchVulkanW4A4Linear(layer)
+
+    row_rotation = _dense_paper_row_rotation(layer.rotation)
+    rotated_activations = activations @ row_rotation
+    token_norms = rotated_activations.norm(dim=-1, keepdim=True)
+    activation_directions = rotated_activations / (token_norms + config.activation_eps)
+    _, quantized_activation_directions = _nearest_centroid(
+        activation_directions,
+        layer.activation_codebook.centroids.to(torch.float32),
+    )
+    quantized_activations = token_norms * quantized_activation_directions
+
+    weight_indices = _unpack_little_endian_indices(
+        layer.packed_weight_indices,
+        bits=4,
+        count=source.out_features * source.in_features,
+    ).reshape(source.out_features, source.in_features)
+    weight_centroids = layer.weight_codebook.centroids.to(torch.float32)
+    quantized_weight = layer.row_norms.to(torch.float32)[:, None] * weight_centroids[weight_indices]
+    expected = F.linear(
+        quantized_activations,
+        quantized_weight,
+        source.bias.detach().to(torch.float32),
+    )
+
+    actual = export_layer(activations)
+
+    torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
+    torch.testing.assert_close(actual[0, 0], source.bias.detach().to(torch.float32), atol=0, rtol=0)
+    full_weight_numel = source.in_features * source.out_features
+    assert export_layer.packed_weight.numel() == full_weight_numel // 2
+    assert not any(
+        tensor.is_floating_point() and tensor.numel() == full_weight_numel
+        for tensor in export_layer.state_dict().values()
+    )
+
+
+def test_triton_rocm_w4a4_matches_independent_algorithm_1_oracle():
+    if not torch.cuda.is_available() or not getattr(torch.version, "hip", None):
+        pytest.skip("a PyTorch ROCm runtime is required")
+    from orbitquant.kernels import available_backends
+
+    if not available_backends()["triton_rocm"]:
+        pytest.skip("the ROCm-compatible Triton package is not importable")
+
+    torch.manual_seed(223)
+    source = torch.nn.Linear(24, 7, bias=True)
+    activations = torch.randn(2, 3, 24, dtype=torch.bfloat16)
+    activations[0, 0].zero_()
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=37,
+        block_size="paper",
+        runtime_mode="triton_packed_matmul",
+        activation_kernel_backend="triton_rocm",
+    )
+    layer = OrbitQuantLinear.from_linear(
+        source,
+        config=config,
+        module_name="transformer_blocks.0.attn.to_q",
+    )
+
+    row_rotation = _dense_paper_row_rotation(layer.rotation)
+    rotated_weight = source.weight.detach().to(torch.float32) @ row_rotation
+    raw_row_norms = rotated_weight.norm(dim=-1)
+    weight_directions = rotated_weight / raw_row_norms.clamp_min(config.activation_eps)[:, None]
+    _, quantized_weight_directions = _nearest_centroid(
+        weight_directions,
+        layer.weight_codebook.centroids.to(torch.float32),
+    )
+    quantized_weight = (
+        raw_row_norms.to(torch.bfloat16).float()[:, None] * quantized_weight_directions
+    ).to(torch.bfloat16)
+
+    rotated_activations = activations.float() @ row_rotation
+    token_norms = rotated_activations.norm(dim=-1, keepdim=True)
+    activation_directions = rotated_activations / (token_norms + config.activation_eps)
+    _, quantized_activation_directions = _nearest_centroid(
+        activation_directions,
+        layer.activation_codebook.centroids.to(torch.float32),
+    )
+    quantized_activations = (token_norms * quantized_activation_directions).to(torch.bfloat16)
+    expected = F.linear(
+        quantized_activations,
+        quantized_weight,
+        source.bias.detach().to(torch.bfloat16),
+    )
+
+    layer = layer.to("cuda")
+    actual = layer(activations.to("cuda")).cpu()
+    error = actual.float() - expected.float()
+    relative_rmse = error.square().mean().sqrt() / expected.float().square().mean().sqrt()
+
+    torch.testing.assert_close(actual, expected, atol=0.125, rtol=3e-2)
+    assert float(relative_rmse) < 1e-2
+    assert layer.last_effective_runtime_mode == "triton_packed_matmul"
+    assert layer.last_activation_kernel_backend == "triton_rocm"
+    assert layer._dequantized_weight_cache is None
+    full_weight_numel = source.in_features * source.out_features
+    assert not any(
+        tensor.is_floating_point() and tensor.numel() == full_weight_numel
+        for tensor in layer.state_dict().values()
+    )
+
+
+def test_triton_xpu_w4a4_matches_independent_algorithm_1_oracle():
+    xpu = getattr(torch, "xpu", None)
+    if xpu is None or not xpu.is_available():
+        pytest.skip("a PyTorch XPU runtime is required")
+    from orbitquant.kernels import available_backends
+
+    if not available_backends()["triton_xpu"]:
+        pytest.skip("the Intel XPU Triton package is not importable")
+
+    torch.manual_seed(227)
+    source = torch.nn.Linear(24, 7, bias=True)
+    activations = torch.randn(2, 3, 24, dtype=torch.bfloat16)
+    activations[0, 0].zero_()
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=41,
+        block_size="paper",
+        runtime_mode="triton_packed_matmul",
+        activation_kernel_backend="triton_xpu",
+    )
+    layer = OrbitQuantLinear.from_linear(
+        source,
+        config=config,
+        module_name="transformer_blocks.0.attn.to_q",
+    )
+
+    row_rotation = _dense_paper_row_rotation(layer.rotation)
+    rotated_weight = source.weight.detach().to(torch.float32) @ row_rotation
+    raw_row_norms = rotated_weight.norm(dim=-1)
+    weight_directions = rotated_weight / raw_row_norms.clamp_min(config.activation_eps)[:, None]
+    _, quantized_weight_directions = _nearest_centroid(
+        weight_directions,
+        layer.weight_codebook.centroids.to(torch.float32),
+    )
+    quantized_weight = (
+        raw_row_norms.to(torch.bfloat16).float()[:, None] * quantized_weight_directions
+    ).to(torch.bfloat16)
+
+    rotated_activations = activations.float() @ row_rotation
+    token_norms = rotated_activations.norm(dim=-1, keepdim=True)
+    activation_directions = rotated_activations / (token_norms + config.activation_eps)
+    _, quantized_activation_directions = _nearest_centroid(
+        activation_directions,
+        layer.activation_codebook.centroids.to(torch.float32),
+    )
+    quantized_activations = (token_norms * quantized_activation_directions).to(torch.bfloat16)
+    expected = F.linear(
+        quantized_activations,
+        quantized_weight,
+        source.bias.detach().to(torch.bfloat16),
+    )
+
+    layer = layer.to("xpu")
+    actual = layer(activations.to("xpu")).cpu()
+    error = actual.float() - expected.float()
+    relative_rmse = error.square().mean().sqrt() / expected.float().square().mean().sqrt()
+
+    torch.testing.assert_close(actual, expected, atol=0.125, rtol=3e-2)
+    assert float(relative_rmse) < 1e-2
+    assert layer.last_effective_runtime_mode == "triton_packed_matmul"
+    assert layer.last_activation_kernel_backend == "triton_xpu"
+    assert layer._dequantized_weight_cache is None
+    full_weight_numel = source.in_features * source.out_features
+    assert not any(
+        tensor.is_floating_point() and tensor.numel() == full_weight_numel
+        for tensor in layer.state_dict().values()
+    )
 
 
 @pytest.mark.parametrize("bits", [2, 3, 4, 6])

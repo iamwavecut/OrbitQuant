@@ -11,10 +11,44 @@ from orbitquant.kernels import (
     quantize_activations_kernel,
     select_backend,
 )
+from orbitquant.kernels.executorch_vulkan import ExecuTorchVulkanW4A4Linear
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import quantize_linear_modules
 from orbitquant.packing import pack_lowbit, unpack_lowbit
 from orbitquant.rotations import RPBHRotation
+
+
+def _make_executorch_vulkan_export_layer() -> ExecuTorchVulkanW4A4Linear:
+    source = torch.nn.Linear(24, 7, bias=True)
+    layer = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(
+            weight_bits=4,
+            activation_bits=4,
+            block_size="paper",
+            runtime_mode="dequant_bf16",
+        ),
+        module_name="probe",
+    )
+    return ExecuTorchVulkanW4A4Linear(layer)
+
+
+def test_executorch_vulkan_export_keeps_exact_w4a4_as_one_custom_op():
+    exported = torch.export.export(
+        _make_executorch_vulkan_export_layer(),
+        (torch.randn(2, 3, 24, dtype=torch.float32),),
+        strict=True,
+    )
+
+    call_targets = {node.target for node in exported.graph.nodes if node.op == "call_function"}
+    assert torch.ops.orbitquant_vulkan.linear_w4a4_exact.default in call_targets
+
+
+def test_executorch_vulkan_export_rejects_unsupported_bfloat16_activations():
+    layer = _make_executorch_vulkan_export_layer()
+
+    with pytest.raises(TypeError, match="float16 or float32"):
+        layer(torch.randn(2, 24, dtype=torch.bfloat16))
 
 
 def test_cpu_activation_kernel_matches_reference_functional_path():
@@ -42,9 +76,7 @@ def test_activation_quantization_is_per_token_scale_equivariant_and_batch_indepe
     codebook = get_codebook(dim=16, bits=4)
 
     baseline = quantize_activations(x, rotation=rotation, codebook=codebook, eps=1e-12)
-    scaled = quantize_activations(
-        x * scales, rotation=rotation, codebook=codebook, eps=1e-12
-    )
+    scaled = quantize_activations(x * scales, rotation=rotation, codebook=codebook, eps=1e-12)
 
     assert torch.allclose(scaled, baseline * scales, atol=1e-6, rtol=1e-6)
 
@@ -117,16 +149,13 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     monkeypatch.setattr(dispatch_module, "_native_cpu_packed_matmul_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": True, "triton_cuda": True}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": True, "triton_cuda": True})
 
     assert capabilities["cpu"]["available"] is True
     assert capabilities["cpu"]["claim_status"] == "reference_only"
     assert capabilities["cpu"]["optimized"] is False
     assert capabilities["cpu"]["implemented_stage"] == (
-        "activation_norm_rpbh_quant_rescale,packed_weight_matmul,"
-        "adaln_rtn_packed_matmul"
+        "activation_norm_rpbh_quant_rescale,packed_weight_matmul,adaln_rtn_packed_matmul"
     )
     assert capabilities["cpu"]["optimized_stage"] is None
     assert capabilities["cpu"]["weight_dequant_optimized"] is False
@@ -160,7 +189,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     expected_triton_stage = (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
         "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
-        "adaln_rtn_quant_pack,adaln_rtn_dequant"
+        "adaln_rtn_quant_pack,adaln_rtn_dequant,adaln_rtn_packed_matmul"
     )
     assert capabilities["triton_cuda"]["implemented_stage"] == expected_triton_stage
     assert capabilities["triton_cuda"]["optimized_stage"] == expected_triton_stage
@@ -170,6 +199,7 @@ def test_backend_capabilities_report_partial_and_fallback_kernel_status(monkeypa
     assert capabilities["triton_cuda"]["weight_quant_optimized"] is True
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is True
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is True
+    assert capabilities["triton_cuda"]["adaln_packed_matmul_optimized"] is True
     assert capabilities["triton_cuda"]["full_fusion"] is False
     assert capabilities["triton_cuda"]["implementation"] == "python_triton_orbitquant_pipeline"
     assert capabilities["triton_cuda"]["package_format"] == "python_triton"
@@ -183,9 +213,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": True, "triton_cuda": False}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": True, "triton_cuda": False})
 
     assert capabilities["mps"]["available"] is True
     assert capabilities["mps"]["claim_status"] == "partial_optimized"
@@ -194,10 +222,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
         capabilities["mps"]["implementation"]
         == "torch_mps_compile_shader_fused_activation+native_packed_matmul"
     )
-    assert (
-        capabilities["mps"]["package_format"]
-        == "torch.mps.compile_shader,native_kernel_package"
-    )
+    assert capabilities["mps"]["package_format"] == "torch.mps.compile_shader,native_kernel_package"
     assert (
         capabilities["mps"]["optimized_stage"]
         == "activation_norm_rpbh_quant_rescale,packed_weight_dequant,packed_weight_matmul"
@@ -221,7 +246,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["triton_cuda"]["implemented_stage"] == (
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
         "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
-        "adaln_rtn_quant_pack,adaln_rtn_dequant"
+        "adaln_rtn_quant_pack,adaln_rtn_dequant,adaln_rtn_packed_matmul"
     )
     assert capabilities["triton_cuda"]["optimized_stage"] is None
     assert capabilities["triton_cuda"]["weight_dequant_optimized"] is False
@@ -230,6 +255,7 @@ def test_backend_capabilities_report_mps_metal_partial_kernel(monkeypatch):
     assert capabilities["triton_cuda"]["weight_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_quant_optimized"] is False
     assert capabilities["triton_cuda"]["adaln_dequant_optimized"] is False
+    assert capabilities["triton_cuda"]["adaln_packed_matmul_optimized"] is False
     assert capabilities["triton_cuda"]["hf_kernel_builder_compliant"] is False
 
 
@@ -240,16 +266,11 @@ def test_backend_capabilities_report_mps_shader_without_native_matmul(monkeypatc
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": True, "triton_cuda": False}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": True, "triton_cuda": False})
 
     assert capabilities["mps"]["claim_status"] == "partial_optimized"
     assert capabilities["mps"]["optimized"] is True
-    assert (
-        capabilities["mps"]["implementation"]
-        == "torch_mps_compile_shader_fused_activation"
-    )
+    assert capabilities["mps"]["implementation"] == "torch_mps_compile_shader_fused_activation"
     assert capabilities["mps"]["package_format"] == "torch.mps.compile_shader"
     assert (
         capabilities["mps"]["optimized_stage"]
@@ -269,9 +290,7 @@ def test_backend_capabilities_report_mps_native_matmul_without_shader(monkeypatc
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": True, "triton_cuda": False}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": True, "triton_cuda": False})
 
     assert capabilities["mps"]["claim_status"] == "partial_optimized"
     assert capabilities["mps"]["optimized"] is True
@@ -288,9 +307,7 @@ def test_backend_capabilities_label_cpu_native_matmul_as_partial_not_fused(monke
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: False)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": False, "triton_cuda": False}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": False, "triton_cuda": False})
 
     assert capabilities["cpu"]["claim_status"] == "partial_optimized"
     assert capabilities["cpu"]["optimized"] is True
@@ -309,9 +326,7 @@ def test_backend_capabilities_report_native_cpu_activation_and_matmul(monkeypatc
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: True)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: False)
 
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": False, "triton_cuda": False}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": False, "triton_cuda": False})
 
     assert capabilities["cpu"]["claim_status"] == "partial_optimized"
     assert capabilities["cpu"]["optimized"] is True
@@ -332,13 +347,10 @@ def test_backend_capabilities_report_complete_native_cpu_kernel_surface(monkeypa
     monkeypatch.setattr(dispatch_module, "_native_cpu_activation_available", lambda: True)
     monkeypatch.setattr(dispatch_module, "_native_cpu_adaln_available", lambda: True)
 
-    capabilities = backend_capabilities(
-        backends={"cpu": True, "mps": False, "triton_cuda": False}
-    )
+    capabilities = backend_capabilities(backends={"cpu": True, "mps": False, "triton_cuda": False})
 
     assert capabilities["cpu"]["optimized_stage"] == (
-        "activation_norm_rpbh_quant_rescale,packed_weight_matmul,"
-        "adaln_rtn_packed_matmul"
+        "activation_norm_rpbh_quant_rescale,packed_weight_matmul,adaln_rtn_packed_matmul"
     )
     assert capabilities["cpu"]["adaln_quant_optimized"] is False
     assert capabilities["cpu"]["adaln_dequant_optimized"] is True
@@ -348,14 +360,157 @@ def test_backend_capabilities_report_complete_native_cpu_kernel_surface(monkeypa
     assert "without a full floating-point cache" in capabilities["cpu"]["notes"]
 
 
-def test_backend_selection_accepts_injected_availability_for_gpu_paths():
+def test_backend_selection_accepts_injected_availability_for_gpu_paths(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_torch_uses_hip", lambda: False)
     backends = {"cpu": True, "mps": False, "triton_cuda": True}
 
     assert (
-        select_backend(torch.device("cuda"), requested="auto", backends=backends)
-        == "triton_cuda"
+        select_backend(torch.device("cuda"), requested="auto", backends=backends) == "triton_cuda"
     )
     assert select_backend(torch.device("mps"), requested="auto", backends=backends) == "cpu"
+
+
+def test_backend_selection_separates_hip_from_cuda(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_torch_uses_hip", lambda: True)
+    backends = {
+        "cpu": True,
+        "mps": False,
+        "triton_cuda": False,
+        "triton_rocm": True,
+    }
+
+    assert select_backend(torch.device("cuda"), requested="auto", backends=backends) == "cpu"
+    assert (
+        select_backend(torch.device("cuda"), requested="triton_rocm", backends=backends)
+        == "triton_rocm"
+    )
+
+
+def test_backend_selection_keeps_xpu_explicit_until_hardware_proof():
+    backends = {
+        "cpu": True,
+        "mps": False,
+        "triton_cuda": False,
+        "triton_rocm": False,
+        "triton_xpu": True,
+    }
+
+    assert select_backend(torch.device("xpu"), requested="auto", backends=backends) == "cpu"
+    assert (
+        select_backend(torch.device("xpu"), requested="triton_xpu", backends=backends)
+        == "triton_xpu"
+    )
+
+
+def test_available_backends_reports_xpu_only_with_device_and_triton(monkeypatch):
+    monkeypatch.setattr(dispatch_module, "_xpu_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_triton_available", lambda: True)
+
+    assert available_backends()["triton_xpu"] is True
+
+
+def test_available_backends_does_not_report_cuda_triton_on_hip(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_triton_available", lambda: True)
+    monkeypatch.setattr(dispatch_module, "_torch_uses_hip", lambda: True)
+
+    backends = available_backends()
+
+    assert backends["triton_cuda"] is False
+    assert backends["triton_rocm"] is True
+
+
+def test_rocm_capability_remains_experimental_until_hardware_proof():
+    capabilities = backend_capabilities(
+        backends={
+            "cpu": True,
+            "mps": False,
+            "triton_cuda": False,
+            "triton_rocm": True,
+        }
+    )
+
+    rocm = capabilities["triton_rocm"]
+    assert rocm["available"] is True
+    assert rocm["claim_status"] == "experimental_unverified"
+    assert rocm["optimized"] is False
+    assert rocm["optimized_stage"] is None
+    assert rocm["weight_dequant_optimized"] is False
+    assert rocm["adaln_packed_matmul_optimized"] is False
+    assert "without loading CUDA-native extensions" in rocm["notes"]
+
+
+def test_xpu_capability_remains_experimental_until_hardware_proof():
+    capabilities = backend_capabilities(
+        backends={
+            "cpu": True,
+            "mps": False,
+            "triton_cuda": False,
+            "triton_rocm": False,
+            "triton_xpu": True,
+        }
+    )
+
+    xpu = capabilities["triton_xpu"]
+    assert xpu["available"] is True
+    assert xpu["claim_status"] == "experimental_unverified"
+    assert xpu["optimized"] is False
+    assert xpu["optimized_stage"] is None
+    assert xpu["weight_dequant_optimized"] is False
+    assert xpu["adaln_packed_matmul_optimized"] is False
+    assert xpu["device_types"] == ["xpu"]
+    assert "explicit-only" in xpu["notes"]
+
+
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+def test_triton_rocm_lowbit_pack_unpack_matches_reference(bits):
+    if not torch.cuda.is_available() or not getattr(torch.version, "hip", None):
+        pytest.skip("a PyTorch ROCm runtime is required")
+    if not available_backends().get("triton_rocm", False):
+        pytest.skip("the ROCm-compatible Triton package is not importable")
+
+    from orbitquant.kernels.triton_cuda import (
+        pack_lowbit_with_triton,
+        unpack_lowbit_with_triton,
+    )
+
+    values = torch.arange(0, 1 << bits, dtype=torch.uint8).repeat(5)[:37]
+    expected_packed = pack_lowbit(values, bits=bits)
+    actual_packed = pack_lowbit_with_triton(values.to("cuda"), bits=bits)
+    actual_values = unpack_lowbit_with_triton(
+        actual_packed,
+        bits=bits,
+        length=values.numel(),
+    )
+
+    assert torch.equal(actual_packed.cpu(), expected_packed)
+    assert torch.equal(actual_values.cpu(), values)
+
+
+@pytest.mark.parametrize("bits", [2, 3, 4, 6])
+def test_triton_xpu_lowbit_pack_unpack_matches_reference(bits):
+    xpu = getattr(torch, "xpu", None)
+    if xpu is None or not xpu.is_available():
+        pytest.skip("a PyTorch XPU runtime is required")
+    if not available_backends().get("triton_xpu", False):
+        pytest.skip("the Intel XPU Triton package is not importable")
+
+    from orbitquant.kernels.triton_cuda import (
+        pack_lowbit_with_triton,
+        unpack_lowbit_with_triton,
+    )
+
+    values = torch.arange(0, 1 << bits, dtype=torch.uint8).repeat(5)[:37]
+    expected_packed = pack_lowbit(values, bits=bits)
+    actual_packed = pack_lowbit_with_triton(values.to("xpu"), bits=bits)
+    actual_values = unpack_lowbit_with_triton(
+        actual_packed,
+        bits=bits,
+        length=values.numel(),
+    )
+
+    assert torch.equal(actual_packed.cpu(), expected_packed)
+    assert torch.equal(actual_values.cpu(), values)
 
 
 def test_triton_availability_requires_importable_triton_modules(monkeypatch):
@@ -389,7 +544,7 @@ def test_mps_shader_source_declares_fused_activation_and_dequant_kernels():
     assert "linear" not in source.lower()
 
 
-def test_triton_cuda_dispatch_uses_backend_function_with_reference_equivalent_output(monkeypatch):
+def test_triton_dispatch_uses_backend_function_with_reference_equivalent_output(monkeypatch):
     torch.manual_seed(0)
     x = torch.randn(2, 3, 16)
     rotation = RPBHRotation(dim=16, seed=3, block_size=8)
@@ -401,7 +556,7 @@ def test_triton_cuda_dispatch_uses_backend_function_with_reference_equivalent_ou
         assert constant_tensors is None
         return quantize_activations(input_tensor, rotation=rotation, codebook=codebook, eps=eps)
 
-    monkeypatch.setattr(dispatch_module, "_triton_cuda_quantize_activations", fake_triton_backend)
+    monkeypatch.setattr(dispatch_module, "_triton_quantize_activations", fake_triton_backend)
     monkeypatch.setattr(
         dispatch_module,
         "available_backends",
@@ -506,9 +661,7 @@ def test_mps_backend_matches_reference_without_full_reference_fallback(monkeypat
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize(
-    "dim,block_size", [(16, 8), (3072, "paper"), (4096, "paper")]
-)
+@pytest.mark.parametrize("dim,block_size", [(16, 8), (3072, "paper"), (4096, "paper")])
 def test_mps_fused_activation_matches_reference_without_torch_rotation(
     monkeypatch, dtype, dim, block_size
 ):
@@ -940,11 +1093,7 @@ def test_cuda_quantize_linear_modules_keeps_packed_buffers_on_gpu_until_serializ
     torch.manual_seed(3)
     model = torch.nn.Module()
     model.transformer_blocks = torch.nn.ModuleList(
-        [
-            torch.nn.ModuleDict(
-                {"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(32, 32)})}
-            )
-        ]
+        [torch.nn.ModuleDict({"attn": torch.nn.ModuleDict({"to_q": torch.nn.Linear(32, 32)})})]
     )
     config = OrbitQuantConfig(block_size=8, target_policy="generic_dit")
 

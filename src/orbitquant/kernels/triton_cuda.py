@@ -5,13 +5,62 @@ import torch
 from orbitquant.codebooks import LloydMaxCodebook
 from orbitquant.rotations import RPBHRotation
 
+_TRITON_DEVICE_TYPES = {"cuda", "xpu"}
+
+
+def _xpu_available() -> bool:
+    xpu = getattr(torch, "xpu", None)
+    return bool(xpu is not None and xpu.is_available())
+
+
+def _triton_backend_label(device: torch.device | None = None) -> str:
+    if device is not None and device.type == "xpu":
+        return "triton_xpu"
+    if getattr(torch.version, "hip", None):
+        return "triton_rocm"
+    return "triton_cuda"
+
+
+def _is_triton_device_tensor(tensor: torch.Tensor) -> bool:
+    return tensor.device.type in _TRITON_DEVICE_TYPES
+
+
+def _triton_device_available(device: torch.device) -> bool:
+    if device.type == "cuda":
+        return torch.cuda.is_available()
+    if device.type == "xpu":
+        return _xpu_available()
+    return False
+
+
+def _require_triton_tensor(tensor: torch.Tensor, operation: str) -> None:
+    if not _is_triton_device_tensor(tensor):
+        backend = _triton_backend_label(tensor.device)
+        raise RuntimeError(
+            f"{backend} {operation} requires a CUDA, HIP, or XPU tensor"
+        )
+
+
+def _require_triton_device(device: torch.device | str, operation: str) -> torch.device:
+    target_device = torch.device(device)
+    if target_device.type not in _TRITON_DEVICE_TYPES:
+        backend = _triton_backend_label(target_device)
+        raise RuntimeError(
+            f"{backend} {operation} requires a CUDA, HIP, or XPU device"
+        )
+    if not _triton_device_available(target_device):
+        backend = _triton_backend_label(target_device)
+        raise RuntimeError(f"{backend} device {target_device} is not available")
+    return _normalize_triton_device(target_device)
+
 
 def _load_triton():
     try:
         import triton
         import triton.language as tl
     except Exception as exc:  # pragma: no cover - environment dependent
-        raise RuntimeError("Triton is required for the triton_cuda backend") from exc
+        backend = "triton_xpu" if _xpu_available() else _triton_backend_label()
+        raise RuntimeError(f"Triton is required for the {backend} backend") from exc
     return triton, tl
 
 
@@ -21,10 +70,12 @@ _WEIGHT_QUANT_CONSTANT_CACHE: dict[tuple[object, ...], torch.Tensor] = {}
 _INT8_CENTROID_SURROGATE_CACHE: dict[tuple[float, ...], tuple[torch.Tensor, float]] = {}
 
 
-def _normalize_cuda_device(device: torch.device | str) -> torch.device:
+def _normalize_triton_device(device: torch.device | str) -> torch.device:
     torch_device = torch.device(device)
     if torch_device.type == "cuda" and torch_device.index is None:
         return torch.device("cuda", torch.cuda.current_device())
+    if torch_device.type == "xpu" and torch_device.index is None:
+        return torch.device("xpu", torch.xpu.current_device())
     return torch_device
 
 
@@ -32,14 +83,14 @@ def clear_triton_constant_cache() -> None:
     _WEIGHT_QUANT_CONSTANT_CACHE.clear()
 
 
-def _cached_cuda_tensor(
+def _cached_triton_tensor(
     key: tuple[object, ...],
     source: torch.Tensor,
     *,
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    device = _normalize_cuda_device(device)
+    device = _normalize_triton_device(device)
     cached = _WEIGHT_QUANT_CONSTANT_CACHE.get(key)
     if cached is not None and cached.device == device and cached.dtype == dtype:
         return cached
@@ -54,7 +105,7 @@ def _weight_quantization_constants(
     codebook: LloydMaxCodebook,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    device = _normalize_cuda_device(device)
+    device = _normalize_triton_device(device)
     device_key = str(device)
     rotation_key = (int(rotation.dim), int(rotation.seed), int(rotation.block_size), device_key)
     codebook_key = (
@@ -63,19 +114,19 @@ def _weight_quantization_constants(
         int(codebook.algorithm_version),
         device_key,
     )
-    permutation = _cached_cuda_tensor(
+    permutation = _cached_triton_tensor(
         ("rotation_permutation", *rotation_key),
         rotation.permutation,
         device=device,
         dtype=torch.int64,
     )
-    signs = _cached_cuda_tensor(
+    signs = _cached_triton_tensor(
         ("rotation_signs", *rotation_key),
         rotation.signs,
         device=device,
         dtype=torch.int8,
     )
-    boundaries = _cached_cuda_tensor(
+    boundaries = _cached_triton_tensor(
         ("codebook_boundaries", *codebook_key),
         codebook.boundaries,
         device=device,
@@ -122,9 +173,7 @@ def _permute_sign_normalize_activation_kernel(
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norms = tl.load(norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
     denom = norms + eps
-    values = tl.load(input_ptr + rows * dim + source_cols, mask=mask, other=0.0).to(
-        tl.float32
-    )
+    values = tl.load(input_ptr + rows * dim + source_cols, mask=mask, other=0.0).to(tl.float32)
     tl.store(work_ptr + offsets, values * signs / denom, mask=mask)
 
 
@@ -300,11 +349,7 @@ def _fused_rpbh_quantize_activation_pack_w4_kernel(
     low, high = tl.split(pairs)
     packed = low | (high << 4)
     local_bytes = tl.arange(0, orbit_block_size // 2)
-    output_offsets = (
-        row * (dim // 2)
-        + orbit_block * (orbit_block_size // 2)
-        + local_bytes
-    )
+    output_offsets = row * (dim // 2) + orbit_block * (orbit_block_size // 2) + local_bytes
     tl.store(output_ptr + output_offsets, packed.to(tl.uint8), mask=row < rows)
 
 
@@ -391,9 +436,7 @@ def _quantize_activation_work_pack_w4_kernel(
     mask = byte_offsets < packed_total
     value_offsets = byte_offsets * 2
     low_values = tl.load(work_ptr + value_offsets, mask=mask, other=0.0).to(tl.float32)
-    high_values = tl.load(work_ptr + value_offsets + 1, mask=mask, other=0.0).to(
-        tl.float32
-    )
+    high_values = tl.load(work_ptr + value_offsets + 1, mask=mask, other=0.0).to(tl.float32)
     low_values *= inv_sqrt_block
     high_values *= inv_sqrt_block
     low_indices = tl.zeros((block_size,), dtype=tl.int32)
@@ -491,9 +534,7 @@ def _dequantize_packed_weight_kernel(
     bit_offsets = bit_starts % 8
     low = tl.load(packed_ptr + byte_indices, mask=mask, other=0).to(tl.uint32)
     needs_high = bit_offsets + bits > 8
-    high = tl.load(packed_ptr + byte_indices + 1, mask=mask & needs_high, other=0).to(
-        tl.uint32
-    )
+    high = tl.load(packed_ptr + byte_indices + 1, mask=mask & needs_high, other=0).to(tl.uint32)
     raw = low | (high << 8)
     indices = (raw >> bit_offsets) & ((1 << bits) - 1)
     rows = offsets // in_features
@@ -548,9 +589,7 @@ def _matmul_packed_weight_kernel(
         ).to(tl.uint32)
         raw = low | (high << 8)
         indices = (raw >> bit_offsets) & ((1 << bits) - 1)
-        centroids = tl.load(centroids_ptr + indices, mask=weight_mask, other=0.0).to(
-            tl.float32
-        )
+        centroids = tl.load(centroids_ptr + indices, mask=weight_mask, other=0.0).to(tl.float32)
         norms = tl.load(row_norms_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(
             tl.float32
         )
@@ -615,12 +654,8 @@ def _matmul_packed_weight_w4_kernel(
         )
         indices0 = packed_values & 15
         indices1 = (packed_values >> 4) & 15
-        centroids0 = tl.load(centroids_ptr + indices0, mask=weight_mask, other=0.0).to(
-            tl.float32
-        )
-        centroids1 = tl.load(centroids_ptr + indices1, mask=weight_mask, other=0.0).to(
-            tl.float32
-        )
+        centroids0 = tl.load(centroids_ptr + indices0, mask=weight_mask, other=0.0).to(tl.float32)
+        centroids1 = tl.load(centroids_ptr + indices1, mask=weight_mask, other=0.0).to(tl.float32)
         norms = tl.load(row_norms_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(
             tl.float32
         )
@@ -631,6 +666,74 @@ def _matmul_packed_weight_w4_kernel(
 
     if has_bias:
         bias = tl.load(bias_ptr + offs_n, mask=offs_n < out_features, other=0.0).to(tl.float32)
+        accumulator += bias[None, :]
+
+    tl.store(
+        output_ptr + offs_m[:, None] * out_features + offs_n[None, :],
+        accumulator,
+        mask=(offs_m[:, None] < rows) & (offs_n[None, :] < out_features),
+    )
+
+
+@triton.jit
+def _matmul_packed_adaln_int4_kernel(
+    input_ptr,
+    packed_ptr,
+    scales_ptr,
+    bias_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    padded_in_features: tl.constexpr,
+    num_groups: tl.constexpr,
+    group_size: tl.constexpr,
+    has_bias: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * block_m + tl.arange(0, block_m)
+    offs_n = pid_n * block_n + tl.arange(0, block_n)
+    offs_k = tl.arange(0, block_k)
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
+
+    for k_start in range(0, in_features, block_k):
+        k = k_start + offs_k
+        input_mask = (offs_m[:, None] < rows) & (k[None, :] < in_features)
+        input_values = tl.load(
+            input_ptr + offs_m[:, None] * in_features + k[None, :],
+            mask=input_mask,
+            other=0.0,
+        )
+
+        value_offsets = offs_n[None, :] * padded_in_features + k[:, None]
+        weight_mask = (offs_n[None, :] < out_features) & (k[:, None] < in_features)
+        packed = tl.load(
+            packed_ptr + value_offsets // 2,
+            mask=weight_mask,
+            other=0,
+        ).to(tl.uint32)
+        shifts = (value_offsets & 1) * 4
+        unsigned = (packed >> shifts) & 15
+        signed = unsigned.to(tl.int32) - 8
+        groups = k[:, None] // group_size
+        scales = tl.load(
+            scales_ptr + offs_n[None, :] * num_groups + groups,
+            mask=weight_mask,
+            other=0.0,
+        ).to(tl.float32)
+        weights = (signed.to(tl.float32) * scales).to(input_values.dtype)
+        accumulator += tl.dot(input_values, weights)
+
+    if has_bias:
+        bias = tl.load(
+            bias_ptr + offs_n,
+            mask=offs_n < out_features,
+            other=0.0,
+        ).to(tl.float32)
         accumulator += bias[None, :]
 
     tl.store(
@@ -679,12 +782,8 @@ def _scale_int32_matmul_output_chunk_kernel(
     accumulator_offsets = offs_m[:, None] * chunk_out_features + offs_n[None, :]
     output_columns = output_col_start + offs_n
     output_offsets = offs_m[:, None] * out_features + output_columns[None, :]
-    accumulator = tl.load(
-        accumulator_ptr + accumulator_offsets, mask=mask, other=0
-    ).to(tl.float32)
-    token_norms = tl.load(
-        token_norms_ptr + offs_m, mask=offs_m < rows, other=0.0
-    ).to(tl.float32)
+    accumulator = tl.load(accumulator_ptr + accumulator_offsets, mask=mask, other=0).to(tl.float32)
+    token_norms = tl.load(token_norms_ptr + offs_m, mask=offs_m < rows, other=0.0).to(tl.float32)
     row_norms = tl.load(
         row_norms_ptr + output_columns,
         mask=output_columns < out_features,
@@ -743,9 +842,7 @@ def _unpack_lowbit_kernel(
     bit_offsets = bit_starts % 8
     low = tl.load(packed_ptr + byte_indices, mask=mask, other=0).to(tl.uint32)
     needs_high = bit_offsets + bits > 8
-    high = tl.load(packed_ptr + byte_indices + 1, mask=mask & needs_high, other=0).to(
-        tl.uint32
-    )
+    high = tl.load(packed_ptr + byte_indices + 1, mask=mask & needs_high, other=0).to(tl.uint32)
     raw = low | (high << 8)
     values = (raw >> bit_offsets) & ((1 << bits) - 1)
     tl.store(values_ptr + offsets, values.to(tl.uint8), mask=mask)
@@ -894,6 +991,15 @@ def _adaln_group_scales_kernel(
 
 
 @triton.jit
+def _round_to_nearest_even(values):
+    lower = tl.floor(values)
+    lower_int = lower.to(tl.int32)
+    fraction = values - lower
+    round_up = (fraction > 0.5) | ((fraction == 0.5) & ((lower_int & 1) != 0))
+    return lower_int + round_up.to(tl.int32)
+
+
+@triton.jit
 def _adaln_quantize_pack_int4_kernel(
     weight_ptr,
     scales_ptr,
@@ -927,14 +1033,7 @@ def _adaln_quantize_pack_int4_kernel(
         other=1.0,
     ).to(tl.float32)
     scaled0 = values0 / scales0
-    rounded0 = tl.inline_asm_elementwise(
-        "cvt.rni.s32.f32 $0, $1;",
-        "=r,f",
-        [scaled0],
-        dtype=tl.int32,
-        is_pure=True,
-        pack=1,
-    )
+    rounded0 = _round_to_nearest_even(scaled0)
     clamped0 = tl.minimum(tl.maximum(rounded0, -8), 7) + 8
 
     rows1 = value_offsets1 // padded_in_features
@@ -953,14 +1052,7 @@ def _adaln_quantize_pack_int4_kernel(
         other=1.0,
     ).to(tl.float32)
     scaled1 = values1 / scales1
-    rounded1 = tl.inline_asm_elementwise(
-        "cvt.rni.s32.f32 $0, $1;",
-        "=r,f",
-        [scaled1],
-        dtype=tl.int32,
-        is_pure=True,
-        pack=1,
-    )
+    rounded1 = _round_to_nearest_even(scaled1)
     clamped1 = tl.minimum(tl.maximum(rounded1, -8), 7) + 8
     clamped1 = tl.where(valid1, clamped1, 0)
 
@@ -991,9 +1083,7 @@ def _dequantize_adaln_weight_kernel(
     packed = tl.load(packed_ptr + byte_offsets, mask=mask, other=0).to(tl.uint32)
     unsigned = (packed >> shifts) & 15
     signed = unsigned.to(tl.int32) - 8
-    scales = tl.load(scales_ptr + rows * num_groups + groups, mask=mask, other=0.0).to(
-        tl.float32
-    )
+    scales = tl.load(scales_ptr + rows * num_groups + groups, mask=mask, other=0.0).to(tl.float32)
     tl.store(output_ptr + offsets, signed.to(tl.float32) * scales, mask=mask)
 
 
@@ -1002,8 +1092,7 @@ def quantize_rotated_activations_with_triton(
     norms: torch.Tensor,
     codebook: LloydMaxCodebook,
 ) -> torch.Tensor:
-    if not rotated.is_cuda:
-        raise RuntimeError("triton_cuda backend requires CUDA tensors")
+    _require_triton_tensor(rotated, "activation quantization")
     triton, _ = _load_triton()
     rotated_contiguous = rotated.contiguous()
     flat = rotated_contiguous.reshape(-1)
@@ -1035,8 +1124,7 @@ def quantize_activations_with_triton(
     eps: float,
     constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
-    if not x.is_cuda:
-        raise RuntimeError("triton_cuda activation quantization requires CUDA tensors")
+    _require_triton_tensor(x, "activation quantization")
     if x.shape[-1] != rotation.dim:
         raise ValueError(f"expected last dimension {rotation.dim}, got {x.shape[-1]}")
 
@@ -1099,9 +1187,7 @@ def quantize_activations_with_triton(
     element_block_size = 256
     work = torch.empty(total, device=x.device, dtype=torch.float32)
     chunks_per_orbit_block = orbit_block_size // 1024
-    _fused_rpbh_fwht_1024_chunk_kernel[
-        (rows * num_blocks * chunks_per_orbit_block,)
-    ](
+    _fused_rpbh_fwht_1024_chunk_kernel[(rows * num_blocks * chunks_per_orbit_block,)](
         input_contiguous,
         norms,
         permutation,
@@ -1141,9 +1227,7 @@ def quantize_activations_with_triton(
             block_size=element_block_size,
         )
 
-    _quantize_activation_work_rescale_kernel[
-        (triton.cdiv(total, element_block_size),)
-    ](
+    _quantize_activation_work_rescale_kernel[(triton.cdiv(total, element_block_size),)](
         work,
         norms,
         centroids,
@@ -1167,8 +1251,7 @@ def quantize_activations_packed_w4_with_triton(
     constant_tensors: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Quantize RPBH activations directly to packed W4 indices and token norms."""
-    if not x.is_cuda:
-        raise RuntimeError("triton_cuda packed activation quantization requires CUDA tensors")
+    _require_triton_tensor(x, "packed activation quantization")
     if codebook.bits != 4:
         raise ValueError("packed W4 activation quantization requires a 4-bit codebook")
     if x.shape[-1] != rotation.dim:
@@ -1185,20 +1268,22 @@ def quantize_activations_packed_w4_with_triton(
     packed = torch.empty(rows * (dim // 2), device=x.device, dtype=torch.uint8)
     norms = torch.empty(rows, device=x.device, dtype=torch.float32)
     if total == 0:
-        return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(
-            original_shape[:-1]
-        )
+        return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(original_shape[:-1])
 
     constants = {} if constant_tensors is None else constant_tensors
-    permutation = constants.get("permutation", rotation.permutation).to(
-        device=x.device, dtype=torch.int64
-    ).contiguous()
-    signs = constants.get("signs", rotation.signs).to(
-        device=x.device, dtype=torch.int8
-    ).contiguous()
-    boundaries = constants.get("boundaries", codebook.boundaries).to(
-        device=x.device, dtype=torch.float32
-    ).contiguous()
+    permutation = (
+        constants.get("permutation", rotation.permutation)
+        .to(device=x.device, dtype=torch.int64)
+        .contiguous()
+    )
+    signs = (
+        constants.get("signs", rotation.signs).to(device=x.device, dtype=torch.int8).contiguous()
+    )
+    boundaries = (
+        constants.get("boundaries", codebook.boundaries)
+        .to(device=x.device, dtype=torch.float32)
+        .contiguous()
+    )
 
     norm_block_size = triton.next_power_of_2(dim)
     _row_norm_kernel[(rows,)](
@@ -1232,16 +1317,12 @@ def quantize_activations_packed_w4_with_triton(
             inv_sqrt_block=float(rotation.normalization),
             num_warps=8 if orbit_block_size >= 512 else 4,
         )
-        return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(
-            original_shape[:-1]
-        )
+        return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(original_shape[:-1])
 
     element_block_size = 256
     work = torch.empty(total, device=x.device, dtype=torch.float32)
     chunks_per_orbit_block = orbit_block_size // 1024
-    _fused_rpbh_fwht_1024_chunk_kernel[
-        (rows * num_blocks * chunks_per_orbit_block,)
-    ](
+    _fused_rpbh_fwht_1024_chunk_kernel[(rows * num_blocks * chunks_per_orbit_block,)](
         input_contiguous,
         norms,
         permutation,
@@ -1279,9 +1360,7 @@ def quantize_activations_packed_w4_with_triton(
             stage_width=stage_width,
             block_size=element_block_size,
         )
-    _quantize_activation_work_pack_w4_kernel[
-        (triton.cdiv(packed.numel(), element_block_size),)
-    ](
+    _quantize_activation_work_pack_w4_kernel[(triton.cdiv(packed.numel(), element_block_size),)](
         work,
         boundaries,
         packed,
@@ -1290,9 +1369,7 @@ def quantize_activations_packed_w4_with_triton(
         inv_sqrt_block=float(rotation.normalization),
         block_size=element_block_size,
     )
-    return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(
-        original_shape[:-1]
-    )
+    return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(original_shape[:-1])
 
 
 def quantize_adaln_weight_with_triton(
@@ -1300,8 +1377,7 @@ def quantize_adaln_weight_with_triton(
     *,
     group_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if not weight.is_cuda:
-        raise RuntimeError("triton_cuda AdaLN RTN quantization requires CUDA tensors")
+    _require_triton_tensor(weight, "AdaLN RTN quantization")
     if weight.ndim != 2:
         raise ValueError("weight must be a rank-2 tensor")
     if group_size <= 0:
@@ -1355,11 +1431,7 @@ def dequantize_adaln_weight_with_triton(
     group_size: int,
     device: torch.device | str = "cuda",
 ) -> torch.Tensor:
-    if not torch.cuda.is_available():
-        raise RuntimeError("triton_cuda backend requires CUDA tensors")
-    target_device = torch.device(device)
-    if target_device.type != "cuda":
-        raise RuntimeError("triton_cuda AdaLN dequant requires a CUDA device")
+    target_device = _require_triton_device(device, "AdaLN dequantization")
     if group_size <= 0:
         raise ValueError("group_size must be positive")
 
@@ -1398,12 +1470,8 @@ def dequantize_packed_weight_with_triton(
     in_features: int,
     device: torch.device | str = "cuda",
 ) -> torch.Tensor:
-    if not torch.cuda.is_available():
-        raise RuntimeError("triton_cuda backend requires CUDA tensors")
     triton, _ = _load_triton()
-    target_device = torch.device(device)
-    if target_device.type != "cuda":
-        raise RuntimeError("triton_cuda weight dequant requires a CUDA device")
+    target_device = _require_triton_device(device, "weight dequantization")
     total = out_features * in_features
     packed = packed_weight_indices.to(device=target_device, dtype=torch.uint8).contiguous()
     norms = row_norms.to(device=target_device, dtype=torch.float32).contiguous()
@@ -1446,10 +1514,7 @@ def matmul_packed_weight_with_triton(
         raise ValueError("bits must be in [1, 8]")
     if block_m <= 0 or block_n <= 0 or block_k <= 0 or num_warps <= 0:
         raise ValueError("packed matmul tile sizes and num_warps must be positive")
-    if not torch.cuda.is_available():
-        raise RuntimeError("triton_cuda backend requires CUDA tensors")
-    if not x.is_cuda:
-        raise RuntimeError("triton_cuda packed matmul requires CUDA input tensors")
+    _require_triton_tensor(x, "packed matmul")
     if x.shape[-1] != in_features:
         raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
 
@@ -1513,6 +1578,93 @@ def matmul_packed_weight_with_triton(
     return output.reshape(*original_shape[:-1], out_features)
 
 
+def matmul_packed_adaln_int4_with_triton(
+    x: torch.Tensor,
+    packed_weight: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    out_features: int,
+    in_features: int,
+    group_size: int,
+    bias: torch.Tensor | None = None,
+    block_m: int = 64,
+    block_n: int = 128,
+    block_k: int = 128,
+    num_warps: int = 4,
+) -> torch.Tensor:
+    _require_triton_tensor(x, "packed AdaLN matmul")
+    if x.shape[-1] != in_features:
+        raise ValueError(f"expected input last dimension {in_features}, got {x.shape[-1]}")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+    tile_sizes = (block_m, block_n, block_k)
+    if any(value <= 0 or value & (value - 1) for value in tile_sizes):
+        raise ValueError("packed AdaLN tile sizes must be positive powers of two")
+    if num_warps <= 0:
+        raise ValueError("num_warps must be positive")
+
+    triton, _ = _load_triton()
+    original_shape = x.shape
+    input_contiguous = x.to(dtype=torch.bfloat16).contiguous().reshape(-1, in_features)
+    rows = input_contiguous.shape[0]
+    output = torch.empty(
+        (rows, out_features),
+        device=x.device,
+        dtype=torch.bfloat16,
+    )
+    if rows == 0 or out_features == 0:
+        return output.reshape(*original_shape[:-1], out_features)
+
+    num_groups = (in_features + group_size - 1) // group_size
+    padded_in_features = num_groups * group_size
+    expected_packed_bytes = (out_features * padded_in_features + 1) // 2
+    if packed_weight.numel() != expected_packed_bytes:
+        raise ValueError(
+            f"expected {expected_packed_bytes} packed AdaLN bytes, got {packed_weight.numel()}"
+        )
+    if tuple(scales.shape) != (out_features, num_groups):
+        raise ValueError(
+            f"expected AdaLN scales shape {(out_features, num_groups)}, got {tuple(scales.shape)}"
+        )
+
+    packed = packed_weight.to(device=x.device, dtype=torch.uint8).contiguous().flatten()
+    scale_values = scales.to(device=x.device).contiguous()
+    if bias is None:
+        bias_values = output
+        has_bias = False
+    else:
+        bias_values = bias.to(
+            device=x.device,
+            dtype=torch.bfloat16,
+        ).contiguous()
+        has_bias = True
+
+    effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
+    grid = (
+        triton.cdiv(rows, effective_block_m),
+        triton.cdiv(out_features, block_n),
+    )
+    _matmul_packed_adaln_int4_kernel[grid](
+        input_contiguous,
+        packed,
+        scale_values,
+        bias_values,
+        output,
+        rows=rows,
+        out_features=out_features,
+        in_features=in_features,
+        padded_in_features=padded_in_features,
+        num_groups=num_groups,
+        group_size=group_size,
+        has_bias=has_bias,
+        block_m=effective_block_m,
+        block_n=block_n,
+        block_k=block_k,
+        num_warps=num_warps,
+    )
+    return output.reshape(*original_shape[:-1], out_features)
+
+
 def fit_int8_centroid_surrogate(centroids: torch.Tensor) -> tuple[torch.Tensor, float]:
     """Fit a symmetric INT8 scale without changing the 4-bit centroid indices."""
     values = centroids.detach().to(device="cpu", dtype=torch.float64).flatten()
@@ -1529,12 +1681,8 @@ def fit_int8_centroid_surrogate(centroids: torch.Tensor) -> tuple[torch.Tensor, 
         return result[0].clone(), result[1]
     base_scale = max_abs / 127.0
     candidate_scales = base_scale * torch.linspace(0.5, 2.0, 3001, dtype=torch.float64)
-    candidate_codes = torch.round(values[None, :] / candidate_scales[:, None]).clamp(
-        -127, 127
-    )
-    errors = (
-        candidate_codes * candidate_scales[:, None] - values[None, :]
-    ).square().mean(dim=1)
+    candidate_codes = torch.round(values[None, :] / candidate_scales[:, None]).clamp(-127, 127)
+    errors = (candidate_codes * candidate_scales[:, None] - values[None, :]).square().mean(dim=1)
     best = int(errors.argmin())
     result = (candidate_codes[best].to(torch.int8), float(candidate_scales[best]))
     _INT8_CENTROID_SURROGATE_CACHE[cache_key] = result
@@ -1571,9 +1719,7 @@ def matmul_packed_w4a4_with_int_mm(
         raise ValueError("out_features must be positive and divisible by 16")
     if min(epilogue_block_m, epilogue_block_n) <= 0:
         raise ValueError("epilogue tile sizes must be positive")
-    if chunk_out_features is not None and (
-        chunk_out_features <= 0 or chunk_out_features % 16 != 0
-    ):
+    if chunk_out_features is not None and (chunk_out_features <= 0 or chunk_out_features % 16 != 0):
         raise ValueError("chunk_out_features must be positive and divisible by 16")
 
     triton, _ = _load_triton()
@@ -1584,8 +1730,7 @@ def matmul_packed_w4a4_with_int_mm(
             raise ValueError("INT8 activations must have dtype int8")
         if original_shape[-1] != in_features:
             raise ValueError(
-                f"expected INT8 activation last dimension {in_features}, "
-                f"got {original_shape[-1]}"
+                f"expected INT8 activation last dimension {in_features}, got {original_shape[-1]}"
             )
         activation_values = packed_activations.contiguous().reshape(-1, in_features)
         activations = None
@@ -1593,12 +1738,9 @@ def matmul_packed_w4a4_with_int_mm(
     else:
         if original_shape[-1] != packed_k:
             raise ValueError(
-                f"expected packed activation last dimension {packed_k}, "
-                f"got {original_shape[-1]}"
+                f"expected packed activation last dimension {packed_k}, got {original_shape[-1]}"
             )
-        activations = (
-            packed_activations.to(dtype=torch.uint8).contiguous().reshape(-1, packed_k)
-        )
+        activations = packed_activations.to(dtype=torch.uint8).contiguous().reshape(-1, packed_k)
         rows = activations.shape[0]
         activation_values = torch.empty(
             (rows, in_features), device=activations.device, dtype=torch.int8
@@ -1617,24 +1759,14 @@ def matmul_packed_w4a4_with_int_mm(
             dtype=output_dtype,
         )
 
-    weights = packed_weight_indices.to(
-        device=device, dtype=torch.uint8
-    ).contiguous().flatten()
-    activation_code_values = activation_codes.to(
-        device=device, dtype=torch.int8
-    ).contiguous()
-    weight_code_values = weight_codes.to(
-        device=device, dtype=torch.int8
-    ).contiguous()
+    weights = packed_weight_indices.to(device=device, dtype=torch.uint8).contiguous().flatten()
+    activation_code_values = activation_codes.to(device=device, dtype=torch.int8).contiguous()
+    weight_code_values = weight_codes.to(device=device, dtype=torch.int8).contiguous()
     if activation_code_values.numel() != 16 or weight_code_values.numel() != 16:
         raise ValueError("packed W4A4 int_mm requires 16 activation and weight codes")
 
-    token_norm_values = token_norms.to(
-        device=device, dtype=torch.float32
-    ).contiguous().reshape(-1)
-    row_norm_values = row_norms.to(
-        device=device, dtype=torch.float32
-    ).contiguous().reshape(-1)
+    token_norm_values = token_norms.to(device=device, dtype=torch.float32).contiguous().reshape(-1)
+    row_norm_values = row_norms.to(device=device, dtype=torch.float32).contiguous().reshape(-1)
     if token_norm_values.numel() != rows:
         raise ValueError("token_norms must contain one value per activation row")
     if row_norm_values.numel() != out_features:
@@ -1643,9 +1775,7 @@ def matmul_packed_w4a4_with_int_mm(
     decode_block_size = 256
     if not activations_are_int8:
         activation_total = rows * in_features
-        _decode_packed_w4_codes_kernel[
-            (triton.cdiv(activation_total, decode_block_size),)
-        ](
+        _decode_packed_w4_codes_kernel[(triton.cdiv(activation_total, decode_block_size),)](
             activations,
             activation_code_values,
             activation_values,
@@ -1653,9 +1783,7 @@ def matmul_packed_w4a4_with_int_mm(
             block_size=decode_block_size,
         )
 
-    output = torch.empty(
-        (rows, out_features), device=device, dtype=output_dtype
-    )
+    output = torch.empty((rows, out_features), device=device, dtype=output_dtype)
     if bias is None:
         bias_values = output
         has_bias = False
@@ -1676,9 +1804,7 @@ def matmul_packed_w4a4_with_int_mm(
             dtype=torch.int8,
         )
         weight_total = current_chunk * in_features
-        _decode_packed_w4_codes_kernel[
-            (triton.cdiv(weight_total, decode_block_size),)
-        ](
+        _decode_packed_w4_codes_kernel[(triton.cdiv(weight_total, decode_block_size),)](
             packed_weight_chunk,
             weight_code_values,
             weight_storage,
@@ -1754,12 +1880,13 @@ def pack_lowbit_with_triton(
 ) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
-    if not values.is_cuda:
-        raise RuntimeError("triton_cuda pack requires CUDA tensors")
+    _require_triton_tensor(values, "low-bit packing")
     max_value = (1 << bits) - 1
     flat_raw = values.detach().flatten()
-    if validate and flat_raw.numel() and bool(
-        torch.any((flat_raw < 0) | (flat_raw > max_value)).item()
+    if (
+        validate
+        and flat_raw.numel()
+        and bool(torch.any((flat_raw < 0) | (flat_raw > max_value)).item())
     ):
         raise ValueError(f"all values must fit in {bits} bits")
     flat = flat_raw.to(dtype=torch.uint8).contiguous()
@@ -1787,8 +1914,7 @@ def unpack_lowbit_with_triton(packed: torch.Tensor, *, bits: int, length: int) -
         raise ValueError("bits must be in [1, 8]")
     if length < 0:
         raise ValueError("length must be non-negative")
-    if not packed.is_cuda:
-        raise RuntimeError("triton_cuda unpack requires CUDA tensors")
+    _require_triton_tensor(packed, "low-bit unpacking")
 
     triton, _ = _load_triton()
     packed_contiguous = packed.detach().to(dtype=torch.uint8).contiguous().flatten()
@@ -1809,8 +1935,7 @@ def unpack_lowbit_with_triton(packed: torch.Tensor, *, bits: int, length: int) -
 
 
 def row_norms_with_triton(weight: torch.Tensor, *, eps: float) -> torch.Tensor:
-    if not weight.is_cuda:
-        raise RuntimeError("triton_cuda row norm requires CUDA tensors")
+    _require_triton_tensor(weight, "row norm")
     if weight.ndim != 2:
         raise ValueError("weight must be a rank-2 tensor")
     if not weight.is_floating_point():
@@ -1844,8 +1969,7 @@ def quantize_weight_indices_with_triton(
     codebook: LloydMaxCodebook,
     eps: float = 1e-10,
 ) -> torch.Tensor:
-    if not weight.is_cuda:
-        raise RuntimeError("triton_cuda weight quantization requires CUDA tensors")
+    _require_triton_tensor(weight, "weight quantization")
     if weight.ndim != 2:
         raise ValueError("weight must be a rank-2 tensor")
     if weight.shape[-1] != rotation.dim:
@@ -1930,8 +2054,7 @@ def quantize_weight_packed_with_triton(
 ) -> torch.Tensor:
     if bits <= 0 or bits > 8:
         raise ValueError("bits must be in [1, 8]")
-    if not weight.is_cuda:
-        raise RuntimeError("triton_cuda packed weight quantization requires CUDA tensors")
+    _require_triton_tensor(weight, "packed weight quantization")
     if weight.ndim != 2:
         raise ValueError("weight must be a rank-2 tensor")
     if weight.shape[-1] != rotation.dim:

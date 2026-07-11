@@ -2,6 +2,11 @@
 
 #if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
 
 #include <torch/headeronly/util/BFloat16.h>
 #include <torch/headeronly/util/Half.h>
@@ -145,20 +150,78 @@ ORBITQUANT_TARGET_AVX2 inline void packed_matmul_avx2_w4_rows(
   }
 }
 
-template <typename scalar_t, __m256 (*load8)(void const *, std::int64_t)>
+template <typename scalar_t>
+bool use_verified_amd_cezanne_row_tile(PackedMatmulArgs const &args) {
+  if constexpr (!std::is_same_v<scalar_t, c10::BFloat16>) {
+    return false;
+  }
+  const bool tuned_dimension = args.in_features == 1536 ||
+      args.in_features == 1920 || args.in_features == 3072;
+  if (args.rows < 16 || !tuned_dimension) {
+    return false;
+  }
+  static const bool verified_cpu = [] {
+    unsigned int eax = 0;
+    unsigned int ebx = 0;
+    unsigned int ecx = 0;
+    unsigned int edx = 0;
+#if defined(_MSC_VER)
+    int registers[4]{};
+    __cpuid(registers, 0);
+    eax = static_cast<unsigned int>(registers[0]);
+    ebx = static_cast<unsigned int>(registers[1]);
+    ecx = static_cast<unsigned int>(registers[2]);
+    edx = static_cast<unsigned int>(registers[3]);
+    if (ebx != 0x68747541u || edx != 0x69746e65u ||
+        ecx != 0x444d4163u) {
+      return false;
+    }
+    __cpuid(registers, 1);
+    eax = static_cast<unsigned int>(registers[0]);
+#else
+    // CPUID vendor registers spell "AuthenticAMD" in EBX, EDX, ECX order.
+    if (!__get_cpuid(0, &eax, &ebx, &ecx, &edx) ||
+        ebx != 0x68747541u || edx != 0x69746e65u || ecx != 0x444d4163u ||
+        !__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+      return false;
+    }
+#endif
+    const unsigned int base_family = (eax >> 8) & 0xfu;
+    const unsigned int base_model = (eax >> 4) & 0xfu;
+    const unsigned int family = base_family == 0xfu
+        ? base_family + ((eax >> 20) & 0xffu)
+        : base_family;
+    const unsigned int model = (base_family == 0x6u || base_family == 0xfu)
+        ? base_model + (((eax >> 16) & 0xfu) << 4)
+        : base_model;
+    // Family 19h/model 50h is the measured Ryzen 5 5600G configuration.
+    return family == 0x19u && model == 0x50u;
+  }();
+  return verified_cpu;
+}
+
+template <
+    typename scalar_t,
+    __m256 (*load8)(void const *, std::int64_t),
+    int primary_row_tile>
 ORBITQUANT_TARGET_AVX2 ORBITQUANT_NOINLINE void packed_matmul_avx2_w4_typed(
     PackedMatmulArgs const &args,
     std::int64_t out_start,
     std::int64_t out_end) {
-  constexpr int kPrimaryRowTile = 8;
+  static_assert(primary_row_tile == 8 || primary_row_tile == 16);
   const std::int64_t packed_row_bytes = args.in_features / 2;
   for (std::int64_t out_col = out_start; out_col < out_end; ++out_col) {
     const auto *packed_row =
         args.packed_weight_indices + out_col * packed_row_bytes;
     std::int64_t row = 0;
-    for (; row + kPrimaryRowTile <= args.rows; row += kPrimaryRowTile) {
-      packed_matmul_avx2_w4_rows<scalar_t, load8, kPrimaryRowTile>(
+    for (; row + primary_row_tile <= args.rows; row += primary_row_tile) {
+      packed_matmul_avx2_w4_rows<scalar_t, load8, primary_row_tile>(
           args, packed_row, out_col, row);
+    }
+    if (row + 8 <= args.rows) {
+      packed_matmul_avx2_w4_rows<scalar_t, load8, 8>(
+          args, packed_row, out_col, row);
+      row += 8;
     }
     if (row + 4 <= args.rows) {
       packed_matmul_avx2_w4_rows<scalar_t, load8, 4>(
@@ -197,14 +260,21 @@ void packed_matmul_x86_avx2_range(
   }
   switch (args.scalar_kind) {
     case ScalarKind::Float32:
-      packed_matmul_avx2_w4_typed<float, load_float8>(args, out_start, out_end);
+      packed_matmul_avx2_w4_typed<float, load_float8, 8>(
+          args, out_start, out_end);
       return;
     case ScalarKind::Float16:
-      packed_matmul_avx2_w4_typed<c10::Half, load_half8>(args, out_start, out_end);
+      packed_matmul_avx2_w4_typed<c10::Half, load_half8, 8>(
+          args, out_start, out_end);
       return;
     case ScalarKind::BFloat16:
-      packed_matmul_avx2_w4_typed<c10::BFloat16, load_bfloat8>(
-          args, out_start, out_end);
+      if (use_verified_amd_cezanne_row_tile<c10::BFloat16>(args)) {
+        packed_matmul_avx2_w4_typed<c10::BFloat16, load_bfloat8, 16>(
+            args, out_start, out_end);
+      } else {
+        packed_matmul_avx2_w4_typed<c10::BFloat16, load_bfloat8, 8>(
+            args, out_start, out_end);
+      }
       return;
   }
 }

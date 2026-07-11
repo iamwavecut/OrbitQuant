@@ -20,6 +20,10 @@ _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = (
 _TRITON_PACKED_MATMUL_IMPORT_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
 
 
+def _torch_uses_hip() -> bool:
+    return bool(getattr(torch.version, "hip", None))
+
+
 def _packed_length(value_count: int, bits: int) -> int:
     return (value_count * bits + 7) // 8
 
@@ -46,7 +50,7 @@ def _quantize_weight_indices(
     codebook,
     eps: float,
 ) -> torch.Tensor:
-    if weight.is_cuda:
+    if weight.device.type in {"cuda", "xpu"}:
         from orbitquant.kernels.triton_cuda import quantize_weight_indices_with_triton
 
         return quantize_weight_indices_with_triton(
@@ -73,7 +77,7 @@ def _quantize_weight_pack(
     bits: int,
     eps: float,
 ) -> torch.Tensor:
-    if weight.is_cuda:
+    if weight.device.type in {"cuda", "xpu"}:
         from orbitquant.kernels.triton_cuda import quantize_weight_packed_with_triton
 
         return quantize_weight_packed_with_triton(
@@ -131,7 +135,7 @@ def _quantize_weight_bounded(
         row_tile_size,
     ):
         tile = weight[row_start:row_end].to(device=work_device)
-        if tile.is_cuda:
+        if tile.device.type in {"cuda", "xpu"}:
             from orbitquant.kernels.triton_cuda import row_norms_with_triton
 
             row_norms = row_norms_with_triton(tile, eps=eps)
@@ -568,12 +572,19 @@ class OrbitQuantLinear(nn.Module):
         }
 
     def _validate_triton_packed_matmul_input(self, x: torch.Tensor) -> None:
-        if x.device.type != "cuda":
+        if x.device.type not in {"cuda", "xpu"}:
             raise RuntimeError(
-                f"triton_packed_matmul runtime requires CUDA input tensors; got {x.device.type}."
+                "triton_packed_matmul runtime requires CUDA, HIP, or XPU input tensors; "
+                f"got {x.device.type}."
             )
 
     def _validate_native_packed_matmul_input(self, x: torch.Tensor) -> None:
+        if x.device.type == "cuda" and _torch_uses_hip():
+            raise RuntimeError(
+                "native_packed_matmul currently provides CUDA, not HIP, accelerator "
+                "kernels. Use runtime_mode='auto_fused' or 'triton_packed_matmul' on "
+                "ROCm, or runtime_mode='dequant_bf16' for the explicit reference path."
+            )
         if x.device.type not in {"cpu", "cuda", "mps"}:
             raise RuntimeError(
                 "native_packed_matmul runtime requires CPU, CUDA, or MPS input tensors; "
@@ -583,6 +594,7 @@ class OrbitQuantLinear(nn.Module):
     def _native_w4a4_available(self, x: torch.Tensor) -> bool:
         if (
             x.device.type != "cuda"
+            or _torch_uses_hip()
             or x.dtype not in {torch.bfloat16, torch.float16}
             or self.weight_bits != 4
             or self.activation_bits != 4
@@ -618,6 +630,7 @@ class OrbitQuantLinear(nn.Module):
     def _native_w4_activation_available(self, x: torch.Tensor) -> bool:
         if (
             not x.is_cuda
+            or _torch_uses_hip()
             or self.rotation.block_size != self.in_features
             or self.in_features not in {512, 1024, 2048, 4096, 8192, 16384}
         ):
@@ -636,7 +649,7 @@ class OrbitQuantLinear(nn.Module):
             self.rotation.block_size == self.in_features
             and self.in_features in {512, 1024, 2048, 4096, 8192, 16384}
         ) or (self.in_features, self.rotation.block_size) == (12288, 4096)
-        if not x.is_cuda or not supported_rotation:
+        if not x.is_cuda or _torch_uses_hip() or not supported_rotation:
             return False
         try:
             from orbitquant.kernels.native_packed_matmul import (
@@ -701,6 +714,17 @@ class OrbitQuantLinear(nn.Module):
             "or make the `orbitquant_packed_matmul` package importable."
         )
         if device_type == "cuda":
+            if _torch_uses_hip():
+                triton_hint = (
+                    "Install the ROCm-compatible PyTorch Triton package to use "
+                    "triton_packed_matmul."
+                )
+                return RuntimeError(
+                    "auto_fused runtime requires packed low-bit matmul on ROCm and will "
+                    "not silently materialize a full dequantized weight matrix. "
+                    f"triton_packed_matmul failed: {triton_error}. {triton_hint} "
+                    f"{reference_hint}"
+                )
             triton_hint = "Install a CUDA-compatible Triton stack to use triton_packed_matmul."
             return RuntimeError(
                 "auto_fused runtime requires packed low-bit matmul on CUDA and will not "
@@ -715,6 +739,14 @@ class OrbitQuantLinear(nn.Module):
                 f"weight matrix. native_packed_matmul failed: {native_error}. "
                 f"{native_hint} {reference_hint}"
             )
+        if device_type == "xpu":
+            return RuntimeError(
+                "auto_fused XPU dispatch remains experimental until real Intel GPU "
+                "correctness, memory, profiler, and performance proof is recorded. "
+                "For explicit validation, set runtime_mode='triton_packed_matmul' and "
+                "activation_kernel_backend='triton_xpu'. "
+                f"{reference_hint}"
+            )
         return RuntimeError(
             f"auto_fused runtime does not support device type {device_type!r}. {reference_hint}"
         )
@@ -726,6 +758,21 @@ class OrbitQuantLinear(nn.Module):
                 return "native_packed_matmul"
             return "dequant_bf16"
         if device_type == "cuda":
+            if _torch_uses_hip():
+                triton_error = _triton_packed_matmul_import_error()
+                if triton_error is not None:
+                    raise self._auto_fused_unavailable_error(
+                        device_type=device_type,
+                        native_error=None,
+                        triton_error=triton_error,
+                    )
+                raise RuntimeError(
+                    "auto_fused ROCm dispatch remains experimental until real AMD "
+                    "hardware correctness, memory, and performance proof is recorded. "
+                    "For explicit validation, set runtime_mode='triton_packed_matmul' "
+                    "and activation_kernel_backend='triton_rocm'. Set "
+                    "runtime_mode='dequant_bf16' for the reference/debug path."
+                )
             native_error = _native_packed_matmul_load_error()
             if native_error is None:
                 return "native_packed_matmul"
@@ -744,6 +791,11 @@ class OrbitQuantLinear(nn.Module):
             raise self._auto_fused_unavailable_error(
                 device_type=device_type,
                 native_error=native_error,
+            )
+        if device_type == "xpu":
+            raise self._auto_fused_unavailable_error(
+                device_type=device_type,
+                native_error=None,
             )
         raise self._auto_fused_unavailable_error(
             device_type=device_type,
@@ -784,7 +836,7 @@ class OrbitQuantLinear(nn.Module):
                 )
                 dequantized = weight.to(dtype=dtype)
                 return self._remember_dequantized_weight(dequantized, cache_key)
-        if device.type == "cuda":
+        if device.type in {"cuda", "xpu"}:
             try:
                 from orbitquant.kernels.triton_cuda import dequantize_packed_weight_with_triton
             except Exception:
@@ -1014,8 +1066,15 @@ class OrbitQuantLinear(nn.Module):
             try:
                 from orbitquant.kernels.triton_cuda import matmul_packed_weight_with_triton
             except Exception as exc:
+                backend = (
+                    "XPU"
+                    if x.device.type == "xpu"
+                    else "ROCm"
+                    if _torch_uses_hip()
+                    else "CUDA"
+                )
                 raise RuntimeError(
-                    "triton_packed_matmul runtime requires the Triton CUDA backend"
+                    f"triton_packed_matmul runtime requires the Triton {backend} backend"
                 ) from exc
             return matmul_packed_weight_with_triton(
                 rotated_x,

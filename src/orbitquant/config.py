@@ -25,7 +25,14 @@ _SUPPORTED_RUNTIME_MODES = {
     "triton_packed_matmul",
     "native_packed_matmul",
 }
-_SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {"auto", "cpu", "mps", "triton_cuda"}
+_SUPPORTED_ACTIVATION_KERNEL_BACKENDS = {
+    "auto",
+    "cpu",
+    "mps",
+    "triton_cuda",
+    "triton_rocm",
+    "triton_xpu",
+}
 _SUPPORTED_TARGET_POLICIES = {
     "auto",
     "universal",

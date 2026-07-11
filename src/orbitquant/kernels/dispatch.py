@@ -13,14 +13,24 @@ _MPS_SHADER_STAGE = "activation_norm_rpbh_quant_rescale,packed_weight_dequant"
 _MPS_NATIVE_STAGE = "packed_weight_matmul"
 _MPS_IMPLEMENTED_STAGE = f"{_MPS_SHADER_STAGE},{_MPS_NATIVE_STAGE}"
 _CPU_IMPLEMENTED_STAGE = (
-    "activation_norm_rpbh_quant_rescale,packed_weight_matmul,"
-    "adaln_rtn_packed_matmul"
+    "activation_norm_rpbh_quant_rescale,packed_weight_matmul,adaln_rtn_packed_matmul"
 )
 _TRITON_CUDA_IMPLEMENTED_STAGE = (
     "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
     "packed_weight_matmul,lowbit_pack,lowbit_unpack,weight_rotation_fwht_quant_pack,"
-    "adaln_rtn_quant_pack,adaln_rtn_dequant"
+    "adaln_rtn_quant_pack,adaln_rtn_dequant,adaln_rtn_packed_matmul"
 )
+_TRITON_ROCM_IMPLEMENTED_STAGE = _TRITON_CUDA_IMPLEMENTED_STAGE
+_TRITON_XPU_IMPLEMENTED_STAGE = _TRITON_CUDA_IMPLEMENTED_STAGE
+
+
+def _torch_uses_hip() -> bool:
+    return bool(getattr(torch.version, "hip", None))
+
+
+def _xpu_available() -> bool:
+    xpu = getattr(torch, "xpu", None)
+    return bool(xpu is not None and xpu.is_available())
 
 
 def _triton_available() -> bool:
@@ -88,37 +98,31 @@ def _join_stages(stages: list[str]) -> str | None:
 
 
 def available_backends() -> BackendAvailability:
+    triton_gpu_available = bool(torch.cuda.is_available() and _triton_available())
+    triton_xpu_available = bool(_xpu_available() and _triton_available())
+    uses_hip = _torch_uses_hip()
     return {
         "cpu": True,
         "mps": bool(torch.backends.mps.is_available()),
-        "triton_cuda": bool(torch.cuda.is_available() and _triton_available()),
+        "triton_cuda": bool(triton_gpu_available and not uses_hip),
+        "triton_rocm": bool(triton_gpu_available and uses_hip),
+        "triton_xpu": triton_xpu_available,
     }
 
 
 def backend_capabilities(backends: BackendAvailability | None = None) -> BackendCapabilities:
     available = available_backends() if backends is None else backends
-    cpu_native_matmul_optimized = bool(
-        available["cpu"] and _native_cpu_packed_matmul_available()
-    )
-    cpu_native_activation_optimized = bool(
-        available["cpu"] and _native_cpu_activation_available()
-    )
-    cpu_native_adaln_optimized = bool(
-        available["cpu"] and _native_cpu_adaln_available()
-    )
+    triton_cuda_available = bool(available.get("triton_cuda", False))
+    triton_rocm_available = bool(available.get("triton_rocm", False))
+    triton_xpu_available = bool(available.get("triton_xpu", False))
+    cpu_native_matmul_optimized = bool(available["cpu"] and _native_cpu_packed_matmul_available())
+    cpu_native_activation_optimized = bool(available["cpu"] and _native_cpu_activation_available())
+    cpu_native_adaln_optimized = bool(available["cpu"] and _native_cpu_adaln_available())
     cpu_optimized_stages = _join_stages(
         [
-            *(
-                ["activation_norm_rpbh_quant_rescale"]
-                if cpu_native_activation_optimized
-                else []
-            ),
+            *(["activation_norm_rpbh_quant_rescale"] if cpu_native_activation_optimized else []),
             *(["packed_weight_matmul"] if cpu_native_matmul_optimized else []),
-            *(
-                ["adaln_rtn_packed_matmul"]
-                if cpu_native_adaln_optimized
-                else []
-            ),
+            *(["adaln_rtn_packed_matmul"] if cpu_native_adaln_optimized else []),
         ]
     )
     cpu_implementation = (
@@ -155,9 +159,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
     else:
         cpu_notes.append("AdaLN uses the explicit BF16 dequantization path.")
     mps_shader_optimized = bool(available["mps"] and _mps_metal_available())
-    mps_native_matmul_optimized = bool(
-        available["mps"] and _native_packed_matmul_available()
-    )
+    mps_native_matmul_optimized = bool(available["mps"] and _native_packed_matmul_available())
     mps_optimized_stages = _join_stages(
         [
             *([_MPS_SHADER_STAGE] if mps_shader_optimized else []),
@@ -205,6 +207,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "weight_quant_optimized": False,
             "adaln_quant_optimized": False,
             "adaln_dequant_optimized": cpu_native_adaln_optimized,
+            "adaln_packed_matmul_optimized": cpu_native_adaln_optimized,
             "device_types": ["cpu"],
             "implementation": cpu_implementation,
             "package_format": "native_kernel_package_torch_stable_abi"
@@ -226,6 +229,7 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "weight_quant_optimized": False,
             "adaln_quant_optimized": False,
             "adaln_dequant_optimized": False,
+            "adaln_packed_matmul_optimized": False,
             "device_types": ["mps"],
             "implementation": (
                 "torch_mps_compile_shader_fused_activation+native_packed_matmul"
@@ -250,20 +254,19 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
             "notes": mps_notes,
         },
         "triton_cuda": {
-            "available": bool(available["triton_cuda"]),
-            "claim_status": "partial_optimized" if available["triton_cuda"] else "unavailable",
-            "optimized": bool(available["triton_cuda"]),
+            "available": triton_cuda_available,
+            "claim_status": "partial_optimized" if triton_cuda_available else "unavailable",
+            "optimized": triton_cuda_available,
             "full_fusion": False,
             "implemented_stage": _TRITON_CUDA_IMPLEMENTED_STAGE,
-            "optimized_stage": _TRITON_CUDA_IMPLEMENTED_STAGE
-            if available["triton_cuda"]
-            else None,
-            "weight_dequant_optimized": bool(available["triton_cuda"]),
-            "weight_pack_optimized": bool(available["triton_cuda"]),
-            "lowbit_unpack_optimized": bool(available["triton_cuda"]),
-            "weight_quant_optimized": bool(available["triton_cuda"]),
-            "adaln_quant_optimized": bool(available["triton_cuda"]),
-            "adaln_dequant_optimized": bool(available["triton_cuda"]),
+            "optimized_stage": _TRITON_CUDA_IMPLEMENTED_STAGE if triton_cuda_available else None,
+            "weight_dequant_optimized": triton_cuda_available,
+            "weight_pack_optimized": triton_cuda_available,
+            "lowbit_unpack_optimized": triton_cuda_available,
+            "weight_quant_optimized": triton_cuda_available,
+            "adaln_quant_optimized": triton_cuda_available,
+            "adaln_dequant_optimized": triton_cuda_available,
+            "adaln_packed_matmul_optimized": triton_cuda_available,
             "device_types": ["cuda"],
             "implementation": "python_triton_orbitquant_pipeline",
             "package_format": "python_triton",
@@ -272,10 +275,61 @@ def backend_capabilities(backends: BackendAvailability | None = None) -> Backend
                 "Triton handles runtime activation norm, RPBH/FWHT rotation, codebook "
                 "lookup/rescale, packed weight dequant, packed weight matmul, "
                 "offline low-bit pack/unpack, offline weight RPBH/FWHT codebook indexing "
-                "with direct low-bit packing, and AdaLN INT4 RTN quantize/pack/dequant. "
+                "with direct low-bit packing, and AdaLN INT4 RTN quantize/pack, "
+                "dequant, and packed matmul. "
                 "The default auto_fused runtime prefers packed low-bit matmul when a "
                 "native or Triton packed kernel is available; full-model speedup claims "
                 "still require separate benchmark artifacts."
+            ),
+        },
+        "triton_rocm": {
+            "available": triton_rocm_available,
+            "claim_status": "experimental_unverified" if triton_rocm_available else "unavailable",
+            "optimized": False,
+            "full_fusion": False,
+            "implemented_stage": _TRITON_ROCM_IMPLEMENTED_STAGE,
+            "optimized_stage": None,
+            "weight_dequant_optimized": False,
+            "weight_pack_optimized": False,
+            "lowbit_unpack_optimized": False,
+            "weight_quant_optimized": False,
+            "adaln_quant_optimized": False,
+            "adaln_dequant_optimized": False,
+            "adaln_packed_matmul_optimized": False,
+            "device_types": ["cuda"],
+            "implementation": "python_triton_orbitquant_pipeline_rocm_candidate",
+            "package_format": "python_triton_rocm",
+            "hf_kernel_builder_compliant": False,
+            "notes": (
+                "PyTorch exposes HIP tensors through the cuda device type. The candidate "
+                "reuses the exact packed Triton pipeline without loading CUDA-native "
+                "extensions. It remains experimental until correctness, memory, profiler, "
+                "and performance evidence is recorded on supported AMD hardware."
+            ),
+        },
+        "triton_xpu": {
+            "available": triton_xpu_available,
+            "claim_status": "experimental_unverified" if triton_xpu_available else "unavailable",
+            "optimized": False,
+            "full_fusion": False,
+            "implemented_stage": _TRITON_XPU_IMPLEMENTED_STAGE,
+            "optimized_stage": None,
+            "weight_dequant_optimized": False,
+            "weight_pack_optimized": False,
+            "lowbit_unpack_optimized": False,
+            "weight_quant_optimized": False,
+            "adaln_quant_optimized": False,
+            "adaln_dequant_optimized": False,
+            "adaln_packed_matmul_optimized": False,
+            "device_types": ["xpu"],
+            "implementation": "python_triton_orbitquant_pipeline_xpu_candidate",
+            "package_format": "python_triton_xpu",
+            "hf_kernel_builder_compliant": False,
+            "notes": (
+                "The candidate reuses the exact packed Triton pipeline on torch.xpu. "
+                "It remains explicit-only and experimental until correctness, memory, "
+                "profiler, and performance evidence is recorded on supported Intel GPU "
+                "hardware."
             ),
         },
     }
@@ -290,7 +344,11 @@ def select_backend(
     requested_device = torch.device(device)
     available = available_backends() if backends is None else backends
     if requested == "auto":
-        if requested_device.type == "cuda" and available["triton_cuda"]:
+        if (
+            requested_device.type == "cuda"
+            and not _torch_uses_hip()
+            and available.get("triton_cuda", False)
+        ):
             return "triton_cuda"
         if requested_device.type == "mps" and available["mps"]:
             return "mps"
@@ -298,9 +356,19 @@ def select_backend(
     if requested == "cpu":
         return "cpu"
     if requested == "triton_cuda":
-        if not available["triton_cuda"]:
+        if not available.get("triton_cuda", False):
             raise RuntimeError("CUDA/Triton activation kernel is not available in this environment")
         return "triton_cuda"
+    if requested == "triton_rocm":
+        if not available.get("triton_rocm", False):
+            raise RuntimeError("ROCm/Triton activation kernel is not available in this environment")
+        return "triton_rocm"
+    if requested == "triton_xpu":
+        if not available.get("triton_xpu", False):
+            raise RuntimeError("XPU/Triton activation kernel is not available in this environment")
+        if requested_device.type != "xpu":
+            raise RuntimeError("XPU/Triton activation kernel requires an XPU device")
+        return "triton_xpu"
     if requested == "mps":
         if not available["mps"]:
             raise RuntimeError("MPS activation kernel is not available in this environment")
@@ -339,7 +407,7 @@ def _mps_quantize_activations(
     )
 
 
-def _triton_cuda_quantize_activations(
+def _triton_quantize_activations(
     x: torch.Tensor,
     *,
     rotation: RPBHRotation,
@@ -378,8 +446,8 @@ def quantize_activations_kernel(
             eps=eps,
             constant_tensors=constant_tensors,
         )
-    if selected == "triton_cuda":
-        return _triton_cuda_quantize_activations(
+    if selected in {"triton_cuda", "triton_rocm", "triton_xpu"}:
+        return _triton_quantize_activations(
             x,
             rotation=rotation,
             codebook=codebook,

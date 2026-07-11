@@ -24,6 +24,10 @@ from orbitquant.artifacts.checksums import (
     write_sha256sums_from_manifest,
 )
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.kernels.executorch_vulkan import (
+    ExecuTorchVulkanW4A4Linear,
+    prepare_executorch_vulkan_w4a4_model,
+)
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import inspect_linear_module_policy, quantize_linear_modules
 
@@ -339,6 +343,36 @@ def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model
     restored_state = restored.state_dict()
     packed_key = "transformer_blocks.0.attn.to_q.packed_weight_indices"
     assert restored_state[packed_key].dtype == torch.uint8
+
+
+def test_loaded_artifact_can_be_prepared_for_executorch_vulkan_without_requantizing(
+    tmp_path,
+):
+    torch.manual_seed(11)
+    source = TinyArtifactModel()
+    config = OrbitQuantConfig(block_size=8, runtime_mode="dequant_bf16")
+    summary = quantize_linear_modules(source, config)
+    save_orbitquant_artifact(
+        source,
+        tmp_path,
+        config=config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="apache-2.0",
+        summary=summary,
+    )
+    restored = TinyArtifactModel()
+    load_orbitquant_artifact(restored, tmp_path)
+    loaded_layer = restored.transformer_blocks[0]["attn"]["to_q"]
+    x = torch.randn(2, 3, 8)
+    expected = loaded_layer(x)
+
+    prepared = prepare_executorch_vulkan_w4a4_model(restored)
+    prepared_layer = prepared.transformer_blocks[0]["attn"]["to_q"]
+
+    assert prepared is restored
+    assert isinstance(prepared_layer, ExecuTorchVulkanW4A4Linear)
+    torch.testing.assert_close(prepared_layer(x), expected, atol=1e-6, rtol=1e-6)
 
 
 def test_validate_orbitquant_artifact_reports_eval_ready_required_files(tmp_path):

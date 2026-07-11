@@ -29,9 +29,7 @@ def test_cli_packed_matmul_runtime_modes_skip_dequant_prewarm():
     assert cli_main._should_prewarm_quantized_weights(None) is True
     assert cli_main._should_prewarm_quantized_weights(OrbitQuantConfig()) is False
     assert (
-        cli_main._should_prewarm_quantized_weights(
-            OrbitQuantConfig(runtime_mode="dequant_bf16")
-        )
+        cli_main._should_prewarm_quantized_weights(OrbitQuantConfig(runtime_mode="dequant_bf16"))
         is True
     )
     assert (
@@ -135,13 +133,15 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
                     "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
                     "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
                     "weight_rotation_fwht_quant_pack,"
-                    "adaln_rtn_quant_pack,adaln_rtn_dequant"
+                    "adaln_rtn_quant_pack,adaln_rtn_dequant,"
+                    "adaln_rtn_packed_matmul"
                 ),
                 "optimized_stage": (
                     "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
                     "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
                     "weight_rotation_fwht_quant_pack,"
-                    "adaln_rtn_quant_pack,adaln_rtn_dequant"
+                    "adaln_rtn_quant_pack,adaln_rtn_dequant,"
+                    "adaln_rtn_packed_matmul"
                 ),
                 "implementation": "python_triton_orbitquant_pipeline",
                 "package_format": "python_triton",
@@ -193,7 +193,7 @@ def test_cli_kernel_info_reports_backend_capabilities(capsys, monkeypatch):
         "activation_norm_rpbh_quant_rescale,packed_weight_dequant,"
         "packed_weight_matmul,lowbit_pack,lowbit_unpack,"
         "weight_rotation_fwht_quant_pack,"
-        "adaln_rtn_quant_pack,adaln_rtn_dequant"
+        "adaln_rtn_quant_pack,adaln_rtn_dequant,adaln_rtn_packed_matmul"
     )
     assert payload["triton_cuda"]["implemented_stage"] == expected_triton_stage
     assert payload["triton_cuda"]["optimized_stage"] == expected_triton_stage
@@ -255,9 +255,7 @@ def test_cli_kernel_bench_prints_stage_timings(capsys):
 
 
 @pytest.mark.parametrize("runtime_mode", ["triton_packed_matmul", "native_packed_matmul"])
-def test_cli_kernel_bench_passes_packed_matmul_tile_options(
-    monkeypatch, capsys, runtime_mode
-):
+def test_cli_kernel_bench_passes_packed_matmul_tile_options(monkeypatch, capsys, runtime_mode):
     seen_kwargs = []
 
     def fake_benchmark_orbit_linear(**kwargs):
@@ -362,9 +360,7 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(
     assert sum(1 for job in jobs if job["suite"] == "wan-native") == 2
     assert {job["runtime_mode"] for job in jobs} == {runtime_mode}
     wan_w4a6 = next(
-        job
-        for job in jobs
-        if job["suite"] == "wan-native" and job["bit_setting"] == "W4A6"
+        job for job in jobs if job["suite"] == "wan-native" and job["bit_setting"] == "W4A6"
     )
     flux1_w3a3 = next(
         job
@@ -510,8 +506,7 @@ def test_cli_report_can_fail_on_missing_required_metrics(capsys, monkeypatch, tm
     monkeypatch.setattr(cli_main, "generate_native_eval_report", lambda *args, **kwargs: result)
 
     assert (
-        main(["report", "--artifact", str(tmp_path / "artifact"), "--output", str(tmp_path)])
-        == 0
+        main(["report", "--artifact", str(tmp_path / "artifact"), "--output", str(tmp_path)]) == 0
     )
     assert json.loads(capsys.readouterr().out)["missing_required_metric_count"] == 1
 
@@ -593,10 +588,7 @@ def test_cli_native_script_groups_quantize_and_generate_pack_commands(capsys, tm
     assert "--seeds 0,1" in script
     assert "--prompt-limit 1" in script
     assert script.count("orbitquant validate-artifact") == 4
-    assert (
-        "--policy-inventory reports/native/module-inventories/wan-native-policy.json"
-        in script
-    )
+    assert "--policy-inventory reports/native/module-inventories/wan-native-policy.json" in script
     assert script.count("orbitquant report") == 1
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a6'}" in script
     assert f"--artifact {tmp_path / 'artifacts' / 'wan-native-w4a4'}" in script
@@ -749,21 +741,14 @@ def test_cli_record_metrics_imports_nested_json_into_artifact(capsys, tmp_path):
     assert "benchmark/orbitquant.metrics.jsonl" in manifest["checksums"]
 
     report_dir = tmp_path / "reports"
-    assert (
-        main(["report", "--artifact", str(tmp_path), "--output", str(report_dir)])
-        == 0
-    )
+    assert main(["report", "--artifact", str(tmp_path), "--output", str(report_dir)]) == 0
 
     report_output = json.loads(capsys.readouterr().out)
     missing_table = (report_dir / "tables" / "missing_required_metrics.csv").read_text()
     assert report_output["missing_required_metric_count"] == 11
     assert "orbitquant,flux1-schnell-native,geneval_overall" not in missing_table
-    assert "orbitquant,flux1-schnell-native,geneval_per_task_single_object" not in (
-        missing_table
-    )
-    assert "orbitquant,flux1-schnell-native,geneval_per_task_counting" not in (
-        missing_table
-    )
+    assert "orbitquant,flux1-schnell-native,geneval_per_task_single_object" not in (missing_table)
+    assert "orbitquant,flux1-schnell-native,geneval_per_task_counting" not in (missing_table)
     assert "original,flux1-schnell-native,geneval_overall" in missing_table
     assert "orbitquant,flux1-schnell-native,geneval_per_task_color_attr" in missing_table
 
@@ -1000,16 +985,12 @@ def test_cli_compare_native_runs_original_and_quantized_side_by_side(
     output = json.loads(capsys.readouterr().out)
     summary = json.loads((tmp_path / "comparison" / "summary.json").read_text())
     comparison_path = (
-        tmp_path
-        / "comparison"
-        / "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
+        tmp_path / "comparison" / "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
     )
     assert output["summary_path"] == str(tmp_path / "comparison" / "summary.json")
     assert output["comparison_path"] == str(comparison_path)
     assert output["validation"]["valid"] is True
-    assert output["validation"]["orbitquant_runtime"]["runtime_mode_counts"] == {
-        "dequant_bf16": 1
-    }
+    assert output["validation"]["orbitquant_runtime"]["runtime_mode_counts"] == {"dequant_bf16": 1}
     assert validation_calls == [tmp_path / "comparison"]
     assert comparison_path.is_file()
     assert summary["original"]["output_path"].endswith("flux2-native_seed4_original.png")
@@ -1199,9 +1180,7 @@ def test_cli_validate_comparison_accepts_copied_runpod_bundle(capsys, tmp_path):
     assert output["valid"] is True
     assert output["speed_ratio_orbitquant_over_original"] == 1.5
     assert output["comparison"]["size"] == [suite.width * 2, suite.height + 24]
-    assert output["orbitquant_runtime"]["runtime_mode_counts"] == {
-        "triton_packed_matmul": 1
-    }
+    assert output["orbitquant_runtime"]["runtime_mode_counts"] == {"triton_packed_matmul": 1}
 
 
 def test_cli_validate_comparison_accepts_wan_video_contact_sheets(capsys, tmp_path):
@@ -1371,8 +1350,7 @@ def test_cli_validate_comparison_rejects_blank_images(tmp_path):
                     "metadata_path": "/workspace/run/flux2-native_seed4_W4A4.png.json",
                 },
                 "comparison_path": (
-                    "/workspace/run/"
-                    "flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
+                    "/workspace/run/flux2-native_seed4_W4A4_original_vs_orbitquant.webp"
                 ),
             }
         )
@@ -2320,9 +2298,7 @@ def test_cli_generate_pack_with_packed_runtime_artifact_skips_dequant_prewarm(
 
     output = json.loads(capsys.readouterr().out)
     assert output["run_count"] == 1
-    assert output["outputs"][0]["output_path"].endswith(
-        "flux2-native_seed3_W4A4_simple-object.png"
-    )
+    assert output["outputs"][0]["output_path"].endswith("flux2-native_seed3_W4A4_simple-object.png")
 
 
 def test_cli_generate_pack_skip_checksums_refreshes_artifact_once_at_end(
@@ -3399,9 +3375,7 @@ def test_cli_validate_artifact_rejects_manifest_policy_config_mismatch(tmp_path)
         )
 
 
-def test_cli_repair_artifact_metadata_wires_provenance_options(
-    capsys, tmp_path, monkeypatch
-):
+def test_cli_repair_artifact_metadata_wires_provenance_options(capsys, tmp_path, monkeypatch):
     seen = {}
 
     def fake_repair_artifact_metadata(artifact, **kwargs):
@@ -3602,9 +3576,7 @@ def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monke
             "changed_files": ["orbitquant_manifest.json"],
         }
 
-    monkeypatch.setattr(
-        cli_main, "repair_hf_artifact_metadata", fake_repair_hf_artifact_metadata
-    )
+    monkeypatch.setattr(cli_main, "repair_hf_artifact_metadata", fake_repair_hf_artifact_metadata)
 
     assert (
         main(
@@ -3642,9 +3614,7 @@ def test_cli_repair_hf_artifact_metadata_wires_single_repo_options(capsys, monke
     }
 
 
-def test_cli_repair_hf_native_smoke_proof_wires_single_repo_options(
-    capsys, monkeypatch
-):
+def test_cli_repair_hf_native_smoke_proof_wires_single_repo_options(capsys, monkeypatch):
     seen = {}
 
     def fake_repair_hf_native_smoke_proof(**kwargs):
@@ -3656,9 +3626,7 @@ def test_cli_repair_hf_native_smoke_proof_wires_single_repo_options(
             "changed_files": ["benchmark/summary.json"],
         }
 
-    monkeypatch.setattr(
-        cli_main, "repair_hf_native_smoke_proof", fake_repair_hf_native_smoke_proof
-    )
+    monkeypatch.setattr(cli_main, "repair_hf_native_smoke_proof", fake_repair_hf_native_smoke_proof)
 
     assert (
         main(
@@ -3689,9 +3657,7 @@ def test_cli_repair_hf_native_smoke_proof_wires_single_repo_options(
     assert seen["dry_run"] is True
 
 
-def test_cli_cleanup_hf_artifact_reports_wires_single_repo_options(
-    capsys, monkeypatch
-):
+def test_cli_cleanup_hf_artifact_reports_wires_single_repo_options(capsys, monkeypatch):
     seen = {}
 
     def fake_cleanup_hf_artifact_reports(**kwargs):
@@ -3705,9 +3671,7 @@ def test_cli_cleanup_hf_artifact_reports_wires_single_repo_options(
             "delete_paths": ["reports"],
         }
 
-    monkeypatch.setattr(
-        cli_main, "cleanup_hf_artifact_reports", fake_cleanup_hf_artifact_reports
-    )
+    monkeypatch.setattr(cli_main, "cleanup_hf_artifact_reports", fake_cleanup_hf_artifact_reports)
 
     assert (
         main(
@@ -3797,9 +3761,7 @@ def test_cli_audit_hf_artifacts_writes_json_report(capsys, tmp_path, monkeypatch
     }
 
 
-def test_cli_audit_hf_artifacts_summary_only_omits_full_rows(
-    capsys, tmp_path, monkeypatch
-):
+def test_cli_audit_hf_artifacts_summary_only_omits_full_rows(capsys, tmp_path, monkeypatch):
     def fake_audit_hf_artifacts(*, namespace, suites, revision, policy_inventory_root):
         return {
             "namespace": namespace,
@@ -3963,9 +3925,7 @@ def test_cli_audit_hf_artifacts_artifact_regression_gate_fails_on_remote_hygiene
     assert "forbidden_file_count=1 expected 0" in captured.err
 
 
-def test_cli_fetch_hf_artifacts_wires_suite_and_download_options(
-    capsys, tmp_path, monkeypatch
-):
+def test_cli_fetch_hf_artifacts_wires_suite_and_download_options(capsys, tmp_path, monkeypatch):
     seen = {}
 
     def fake_fetch_hf_artifacts(**kwargs):
