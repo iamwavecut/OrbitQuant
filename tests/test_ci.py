@@ -45,7 +45,9 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "uses: actions/cache/save@v6.1.0" in text
     assert "vswhere.exe" in text
     assert "VsDevCmd.bat" in text
-    assert "ninja --version" in text
+    assert 'ninja = "$env:GITHUB_WORKSPACE\\.venv\\Scripts\\ninja.exe"' in text
+    assert 'env:Path = "$(Split-Path $ninja);$env:Path"' in text
+    assert "& $ninja --version" in text
     assert 'CMAKE_GENERATOR = "Ninja"' in text
     assert "Get-CimInstance Win32_Processor" in text
     assert "bdist_wheel --py-limited-api=cp39" in text

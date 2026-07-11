@@ -140,12 +140,17 @@ jobs:
               Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
             }
           }
+          $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
+          $ninja = "$env:GITHUB_WORKSPACE\.venv\Scripts\ninja.exe"
+          if (-not (Test-Path $ninja)) {
+            throw "venv Ninja executable was not found: $ninja"
+          }
+          $env:Path = "$(Split-Path $ninja);$env:Path"
           cl.exe 2>&1 | Select-Object -First 3
-          ninja --version
+          & $ninja --version
           $env:CMAKE_GENERATOR = "Ninja"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
           $env:MAX_JOBS = "2"
-          $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
           & $python setup.py bdist_wheel --py-limited-api=cp39
 
       - name: Verify wheel tag and metadata
