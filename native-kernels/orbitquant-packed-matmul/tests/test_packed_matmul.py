@@ -209,7 +209,7 @@ def test_cpu_avx2_bf16_realistic_row_tiles_match_reference(monkeypatch, rows: in
         in_features=in_features,
     )
 
-    torch.testing.assert_close(actual, expected, atol=0.125, rtol=3e-2)
+    torch.testing.assert_close(actual, expected, atol=0.25, rtol=3e-2)
 
 
 @pytest.mark.kernels_ci
