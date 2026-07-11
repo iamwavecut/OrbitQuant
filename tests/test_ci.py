@@ -355,6 +355,7 @@ def test_paper_methodology_script_is_executable_and_scope_limited():
     assert "tests/test_rpbh.py" in text
     assert "tests/test_orbit_linear.py" in text
     assert "tests/test_adaln_rtn.py" in text
+    assert "tests/test_paper_reference_oracle.py" in text
     assert "tests/test_target_policies.py" in text
     assert "orbitquant inspect-policy" in text
     assert "flux1-schnell-native" in text

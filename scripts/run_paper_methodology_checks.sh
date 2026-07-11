@@ -10,9 +10,9 @@ usage() {
 Usage: scripts/run_paper_methodology_checks.sh
 
 Runs the lightweight OrbitQuant paper-methodology gate. The gate checks the
-math, artifact, native-settings, and model-policy invariants that support the
-methodology audit. It does not run GenEval, VBench, model generation, or weight
-downloads.
+independent paper-equation oracles, artifact, native-settings, and model-policy
+invariants that support the methodology audit. It does not run GenEval, VBench,
+model generation, or weight downloads.
 
 Environment:
   ORBITQUANT_PAPER_AUDIT_DIR     Output directory for local audit JSON files.
@@ -59,6 +59,7 @@ METHODOLOGY_TESTS=(
   "tests/test_target_policies.py"
   "tests/test_kernels.py"
   "tests/test_paper_methodology.py"
+  "tests/test_paper_reference_oracle.py"
   "tests/test_documentation.py"
   "tests/test_linear_adapters.py"
   "tests/test_universal_transformers.py"
@@ -162,7 +163,12 @@ def module_list_hash(values):
     payload = json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
 
-summary = {"suites": {}, "claim_boundary": "config_inventory_only"}
+summary = {
+    "suites": {},
+    "method_conformance": "independent_oracle_and_config_inventory",
+    "empirical_reproduction": "not_evaluated",
+    "claim_boundary": "method_implementation_only",
+}
 for suite in suites:
     path = inventory_dir / f"{suite}-policy.json"
     data = json.loads(path.read_text(encoding="utf-8"))
