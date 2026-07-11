@@ -50,6 +50,7 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert 'ORBITQUANT_BUILD_TEMP = "$env:RUNNER_TEMP\\orbitquant-native-build"' in text
     assert 'CMAKE_GENERATOR = "NMake Makefiles"' in text
     assert "Get-CimInstance Win32_Processor" in text
+    assert "setup.py build_ext bdist_wheel" in text
     assert "bdist_wheel --py-limited-api=cp39" in text
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text
     assert "torch==2.12.1 pytest" in text
