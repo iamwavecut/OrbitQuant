@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -59,6 +61,85 @@ def test_kernel_builder_manifest_targets_cpu_cuda_and_metal() -> None:
     assert kernels["packed_matmul_cuda"]["depends"] == ["torch"]
     assert kernels["packed_matmul_metal"]["backend"] == "metal"
     assert kernels["packed_matmul_metal"]["depends"] == ["torch"]
+
+
+def test_wheel_project_preparation_keeps_windows_ninja_executable() -> None:
+    script = (KERNEL_ROOT / "scripts/prepare_wheel_project.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'dependencies = ["torch>=2.11"]' in script
+    assert 'ninja_executable_path = Path(ninja.BIN_DIR)' in script
+    assert 'which("ninja")' not in script
+    assert '"ninja.exe" if os.name == "nt" else "ninja"' in script
+    assert 'os.name != "nt" and which("{cache_tool}") is not None' in script
+    assert 'os.environ.get("ORBITQUANT_CMAKE_MAKE_PROGRAM")' in script
+    assert 'cmake_args.append(f"-DCMAKE_MAKE_PROGRAM:FILEPATH=' in script
+
+
+def test_wheel_project_preparation_injects_build_tool_argv_hook(tmp_path) -> None:
+    project = tmp_path / "kernel"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nversion = "0.1.0"\nrequires-python = ">=3.9"\n',
+        encoding="utf-8",
+    )
+    (project / "setup.py").write_text(
+        """import os
+from pathlib import Path
+from shutil import which
+
+def is_sccache_available() -> bool:
+    return which("sccache") is not None
+
+def is_ccache_available() -> bool:
+    return which("ccache") is not None
+
+def make_args():
+    cmake_args = []
+    if "CMAKE_ARGS" in os.environ:
+        cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") if item]
+    ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"
+    return cmake_args, ninja_executable_path
+
+class Build:
+    def build_extension(self, ext):
+        build_temp = Path(self.build_temp) / ext.name
+        extdir = Path("output")
+        cfg = "Release"
+        if sys.platform == "win32":
+            # Move the dylib one folder up for discovery.
+            for filename in os.listdir(extdir / cfg):
+                move(extdir / cfg / filename, extdir / filename)
+        return build_temp
+""",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            KERNEL_ROOT / "scripts/prepare_wheel_project.py",
+            project,
+            "--version",
+            "0.4.0",
+        ],
+        check=True,
+    )
+
+    prepared_setup = (project / "setup.py").read_text(encoding="utf-8")
+    ast.parse(prepared_setup)
+    assert 'os.environ.get("ORBITQUANT_CMAKE_MAKE_PROGRAM")' in prepared_setup
+    assert 'os.environ.get("ORBITQUANT_BUILD_TEMP", self.build_temp)' in prepared_setup
+    assert "build_temp = (Path(build_temp_root) / ext.name).resolve()" in prepared_setup
+    assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in prepared_setup
+    assert 'return os.name != "nt" and which("ccache") is not None' in prepared_setup
+    assert 'Path(ninja.BIN_DIR) / ("ninja.exe" if os.name == "nt" else "ninja")' in prepared_setup
+    prepared_project = tomllib.loads(
+        (project / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert prepared_project["project"]["version"] == "0.4.0"
+    assert prepared_project["project"]["dependencies"] == ["torch>=2.11"]
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:

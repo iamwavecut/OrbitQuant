@@ -30,6 +30,67 @@ def main() -> None:
     )
     pyproject.write_text(text, encoding="utf-8")
 
+    setup = args.project / "setup.py"
+    setup_text = setup.read_text(encoding="utf-8")
+    ninja_path = 'ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"'
+    if setup_text.count(ninja_path) != 1:
+        raise RuntimeError("generated setup must contain one Ninja executable path")
+    setup_text = setup_text.replace(
+        ninja_path,
+        'ninja_executable_path = Path(ninja.BIN_DIR) / '
+        '("ninja.exe" if os.name == "nt" else "ninja")',
+        1,
+    )
+    for cache_tool in ("sccache", "ccache"):
+        availability = f'return which("{cache_tool}") is not None'
+        if setup_text.count(availability) != 1:
+            raise RuntimeError(
+                f"generated setup must contain one {cache_tool} availability check"
+            )
+        setup_text = setup_text.replace(
+            availability,
+            f'return os.name != "nt" and which("{cache_tool}") is not None',
+            1,
+        )
+    cmake_args_hook = (
+        '    if "CMAKE_ARGS" in os.environ:\n'
+        '        cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") '
+        "if item]\n"
+    )
+    if setup_text.count(cmake_args_hook) != 1:
+        raise RuntimeError("generated setup must contain one CMAKE_ARGS hook")
+    setup_text = setup_text.replace(
+        cmake_args_hook,
+        cmake_args_hook
+        + '    cmake_make_program = os.environ.get("ORBITQUANT_CMAKE_MAKE_PROGRAM")\n'
+        + "    if cmake_make_program:\n"
+        + '        cmake_args.append(f"-DCMAKE_MAKE_PROGRAM:FILEPATH={cmake_make_program}")\n',
+        1,
+    )
+    build_temp = "        build_temp = Path(self.build_temp) / ext.name"
+    if setup_text.count(build_temp) != 1:
+        raise RuntimeError("generated setup must contain one extension build temp")
+    setup_text = setup_text.replace(
+        build_temp,
+        '        build_temp_root = os.environ.get("ORBITQUANT_BUILD_TEMP", '
+        "self.build_temp)\n"
+        "        build_temp = (Path(build_temp_root) / ext.name).resolve()",
+        1,
+    )
+    windows_multi_config = (
+        '        if sys.platform == "win32":\n'
+        "            # Move the dylib one folder up for discovery."
+    )
+    if setup_text.count(windows_multi_config) != 1:
+        raise RuntimeError("generated setup must contain one Windows output move")
+    setup_text = setup_text.replace(
+        windows_multi_config,
+        '        if sys.platform == "win32" and (extdir / cfg).is_dir():\n'
+        "            # Move the dylib one folder up for discovery.",
+        1,
+    )
+    setup.write_text(setup_text, encoding="utf-8")
+
 
 if __name__ == "__main__":
     main()

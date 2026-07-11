@@ -72,9 +72,9 @@ jobs:
           uv sync --extra dev
           uv pip install --python .venv\Scripts\python.exe cmake ninja setuptools wheel
 
-      - name: Cache pinned kernel-builder
+      - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache@v6.1.0
+        uses: actions/cache/restore@v6.1.0
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
@@ -90,6 +90,13 @@ jobs:
             --debug `
             --root "$env:RUNNER_TEMP\kernel-builder" `
             hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
 
       - name: Generate native build project
         shell: pwsh
@@ -111,12 +118,38 @@ jobs:
             Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | `
             Format-List
           cmake --version
-          $env:CMAKE_GENERATOR = "Visual Studio 18 2026"
-          $env:CMAKE_GENERATOR_PLATFORM = "x64"
-          $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
-          $env:MAX_JOBS = "2"
+          $vswhere = `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
+          }
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to initialize the MSVC x86_64 environment"
+          }
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
-          & $python setup.py bdist_wheel --py-limited-api=cp39
+          cl.exe 2>&1 | Select-Object -First 3
+          $nmake = Get-Command nmake.exe -ErrorAction Stop
+          Write-Host "Using NMake: $($nmake.Source)"
+          $env:CMAKE_GENERATOR = "NMake Makefiles"
+          $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
+          $env:ORBITQUANT_CMAKE_MAKE_PROGRAM = $nmake.Source
+          $env:ORBITQUANT_BUILD_TEMP = "$env:RUNNER_TEMP\orbitquant-native-build"
+          $env:MAX_JOBS = "2"
+          & $python setup.py build_ext bdist_wheel --py-limited-api=cp39
 
       - name: Verify wheel tag and metadata
         shell: pwsh
