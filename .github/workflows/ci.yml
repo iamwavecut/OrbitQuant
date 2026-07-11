@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           uv sync --extra dev
-          uv pip install --python .venv\Scripts\python.exe cmake ninja setuptools wheel
+          uv pip install --python .venv\Scripts\python.exe cmake setuptools wheel
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
@@ -141,10 +141,10 @@ jobs:
             }
           }
           cl.exe 2>&1 | Select-Object -First 3
-          ninja --version
-          $env:CMAKE_GENERATOR = "Ninja"
+          Get-Command nmake.exe | Select-Object -ExpandProperty Source
+          $env:CMAKE_GENERATOR = "NMake Makefiles"
           $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
-          $env:MAX_JOBS = "2"
+          $env:MAX_JOBS = "1"
           $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
           & $python setup.py bdist_wheel --py-limited-api=cp39
 

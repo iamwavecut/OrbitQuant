@@ -32,13 +32,12 @@ def main() -> None:
 
     setup = args.project / "setup.py"
     setup_text = setup.read_text(encoding="utf-8")
-    ninja_path = 'ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"'
-    if setup_text.count(ninja_path) != 1:
-        raise RuntimeError("generated setup must contain one Ninja executable path")
+    windows_move = '        if sys.platform == "win32":\n'
+    if setup_text.count(windows_move) != 1:
+        raise RuntimeError("generated setup must contain one Windows output move")
     setup_text = setup_text.replace(
-        ninja_path,
-        'ninja_executable_path = which("ninja") or Path(ninja.BIN_DIR) / '
-        '("ninja.exe" if os.name == "nt" else "ninja")',
+        windows_move,
+        '        if sys.platform == "win32" and (extdir / cfg).is_dir():\n',
         1,
     )
     setup.write_text(setup_text, encoding="utf-8")

@@ -61,14 +61,13 @@ def test_kernel_builder_manifest_targets_cpu_cuda_and_metal() -> None:
     assert kernels["packed_matmul_metal"]["depends"] == ["torch"]
 
 
-def test_wheel_project_preparation_keeps_windows_ninja_executable() -> None:
+def test_wheel_project_preparation_supports_windows_single_config_build() -> None:
     script = (KERNEL_ROOT / "scripts/prepare_wheel_project.py").read_text(
         encoding="utf-8"
     )
 
     assert 'dependencies = ["torch>=2.11"]' in script
-    assert 'which("ninja") or Path(ninja.BIN_DIR)' in script
-    assert '"ninja.exe" if os.name == "nt" else "ninja"' in script
+    assert 'sys.platform == "win32" and (extdir / cfg).is_dir()' in script
 
 
 def test_kernel_builder_binding_uses_abi3_safe_registration_pattern() -> None:
