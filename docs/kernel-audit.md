@@ -35,7 +35,7 @@ Other explicit modes are `native_packed_matmul`, `triton_packed_matmul`,
 | --- | --- | --- |
 | CUDA | Optimized packed inference | Native RPBH/quantization, chunked packed-weight decode plus CUTLASS INT8 matmul, direct packed CUDA MMA fallback, and generic Triton packed fallback |
 | MPS/Metal | Optimized packed inference | Native Metal packed matmul and Metal activation quantization stages |
-| CPU | Hardware-verified native source build; platform wheels pending | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
+| CPU | Hardware-verified source builds; Windows x86_64 ABI3 wheel verified in CI but not yet published | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
 | Vulkan | Unverified | No runtime backend |
 | ROCm | Unsupported | No release backend |
 | XPU | Unsupported | No release backend |
@@ -127,6 +127,19 @@ maximum error `1.526e-5`. Packed weights and row norms occupied 1,179,648 bytes
 versus 4,718,592 bytes for BF16 weights, and the native layer retained no
 dequantized-weight cache.
 
+A clean ABI3 wheel rebuild was also profiled on an AMD EPYC 9654 (Zen 4) with
+GCC 13.3 and Torch 2.12.1+cpu. Its hosted cpuset exposed logical CPUs `36,132`,
+the two SMT threads of one physical core. At 32 rows and dimension 1536, exact
+W4A4 packed matmul measured 1.4928 ms hot median and 1.5151 ms p95. Explicit
+dequantization plus `F.linear` measured 6.6373 ms median, so the packed path was
+4.51x faster while using 1,182,784 bytes instead of 4,718,592 bytes for the
+weight-side representation. A resident BF16 `F.linear` was faster at 0.7823 ms
+but retained the complete dense weight. Relative RMSE was `6.546e-6` and maximum
+error was `0.03125`. Disassembly contained the selected AVX-512/BF16 `vpermw`
+and `vdpbf16ps` instructions. The Ubuntu 24.04 development wheel required
+`manylinux_2_38`; it is local evidence, not a distributable Linux release
+artifact.
+
 AdaLN uses an exact signed INT4 group-64 lookup with BF16 scales and
 activations. The realistic modulation shape below is 3072 input channels and
 18432 output channels. Timings are 21 post-warmup calls with
@@ -149,8 +162,17 @@ spatial-token row counts.
 The same x86_64 stable-ABI 2.11 binary built against Torch 2.13 loaded and ran
 under Torch 2.12.1. This verifies the current LibTorch Stable ABI boundary for
 those two runtimes; it does not make the wheel independent of the platform
-GLIBC, C++ runtime, or CPU ISA. Linux and Windows wheel policy remains pending,
-and Windows CPU execution is not yet verified.
+GLIBC, C++ runtime, or CPU ISA. A separate Windows Server 2022 build on an AMD
+EPYC 7763 used Python 3.12.10, Torch 2.12.1, CMake 3.31.6, Ninja Multi-Config,
+and MSVC 19.44. It produced a 147,326-byte
+`orbitquant_packed_matmul-0.1.0-cp39-abi3-win_amd64.whl` with
+`Requires-Dist: torch>=2.11`. A clean environment passed 73 native-package
+tests with 33 accelerator-only skips; OrbitQuant integration and the independent
+paper oracle passed another 33 tests with two CUDA/Triton skips. The suite
+forced both scalar and AVX2 dispatch on the x86_64 runner. This verifies the
+Windows x86_64 build, installation, packed forward, and artifact contract; the
+wheel is not published yet, and Windows Server 2025/Visual Studio 2026 remains
+unverified. A release-compatible Linux wheel also remains pending.
 
 The ARM64 native CPU path was separately built on an Apple M2 Max. At 32 rows
 and dimension 1536, the full native W4A4 layer measured about 1.20 ms versus

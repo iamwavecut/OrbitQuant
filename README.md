@@ -20,7 +20,7 @@ The implementation is clean-room and Apache-2.0 licensed.
 - Model-specific policies for paper-sensitive AdaLN and output-layer handling.
 - Compact `safetensors` artifacts and Hugging Face `save_pretrained()` /
   `from_pretrained()` integration.
-- Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
+- Packed-weight CPU, CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
 
 Embeddings, timestep modules, task heads, and common final projections are
