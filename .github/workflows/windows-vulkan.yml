@@ -48,10 +48,12 @@ jobs:
           $orbitquantBuild = Join-Path $env:RUNNER_TEMP "orbitquant-vulkan-build"
           $python = Join-Path $env:pythonLocation "python.exe"
 
+          git config --global core.autocrlf false
           git config --global core.symlinks true
           git clone --filter=blob:none --no-checkout `
             https://github.com/pytorch/executorch.git $executorch
           git -C $executorch fetch --depth=1 origin $env:EXECUTORCH_COMMIT
+          git -C $executorch config core.autocrlf false
           git -C $executorch config core.symlinks true
           git -C $executorch checkout --detach $env:EXECUTORCH_COMMIT
           if ((git -C $executorch rev-parse HEAD) -ne $env:EXECUTORCH_COMMIT) {
@@ -70,6 +72,11 @@ jobs:
           Pop-Location
           $glslc = (Get-Command glslc.exe -ErrorAction Stop).Source
           & $python -m pip install PyYAML==6.0.1
+          & $python -m pip install torch==2.12.1
+          $env:PYTHONPATH = `
+            "$executorch\src;$executorch;$(Split-Path $executorch -Parent)"
+          & $python -c `
+            "import executorch.codegen, torchgen; print('codegen imports ok')"
 
           $vswhere = `
             "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
