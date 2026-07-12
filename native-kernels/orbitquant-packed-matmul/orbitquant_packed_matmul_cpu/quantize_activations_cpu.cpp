@@ -1,3 +1,4 @@
+#include "cpu_pool.h"
 #include "cpu_threads.h"
 #include "cpu_kernel_args.h"
 #include "packed_matmul_cpu.h"
@@ -10,12 +11,14 @@
 #include <torch/headeronly/util/Half.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
-#include <thread>
+#include <mutex>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -652,8 +655,8 @@ void parallel_quantize_activations(ActivationArgs const &args) {
     return;
   }
 
-  std::vector<std::thread> workers;
-  workers.reserve(threads);
+  std::vector<std::pair<std::int64_t, std::int64_t>> ranges;
+  ranges.reserve(threads);
   const std::int64_t rows_per_thread = (args.rows + threads - 1) / threads;
   for (int thread = 0; thread < threads; ++thread) {
     const std::int64_t start = thread * rows_per_thread;
@@ -661,13 +664,13 @@ void parallel_quantize_activations(ActivationArgs const &args) {
     if (start >= end) {
       break;
     }
-    workers.emplace_back([&args, start, end] {
-      quantize_activation_dispatch(args, start, end);
-    });
+    ranges.emplace_back(start, end);
   }
-  for (auto &worker : workers) {
-    worker.join();
-  }
+  orbitquant::cpu::run_ranges(
+      ranges,
+      [&args](std::int64_t start, std::int64_t end) {
+        quantize_activation_dispatch(args, start, end);
+      });
 }
 
 }  // namespace
@@ -731,13 +734,48 @@ void quantize_activations_cpu(
 
   const auto *permutation_values = permutation.const_data_ptr<std::int64_t>();
   const auto *sign_values = signs.const_data_ptr<std::int8_t>();
-  for (int64_t index = 0; index < dim; ++index) {
-    STD_TORCH_CHECK(
-        permutation_values[index] >= 0 && permutation_values[index] < dim,
-        "permutation contains an out-of-range index");
-    STD_TORCH_CHECK(
-        sign_values[index] == -1 || sign_values[index] == 1,
-        "signs must contain only -1 and 1");
+  // The permutation/sign buffers are immutable module constants, so cache a
+  // fingerprint of validated buffers instead of re-scanning them per forward.
+  struct ValidatedEntry {
+    void const *permutation;
+    void const *signs;
+    std::int64_t dim;
+    std::int64_t head;
+    std::int64_t tail;
+  };
+  static std::mutex validated_mutex;
+  static std::array<ValidatedEntry, 16> validated_entries{};
+  static std::size_t validated_cursor = 0;
+  const ValidatedEntry candidate{
+      permutation_values,
+      sign_values,
+      dim,
+      permutation_values[0],
+      permutation_values[dim - 1]};
+  bool already_validated = false;
+  {
+    std::lock_guard<std::mutex> lock(validated_mutex);
+    for (auto const &entry : validated_entries) {
+      if (entry.permutation == candidate.permutation &&
+          entry.signs == candidate.signs && entry.dim == candidate.dim &&
+          entry.head == candidate.head && entry.tail == candidate.tail) {
+        already_validated = true;
+        break;
+      }
+    }
+  }
+  if (!already_validated) {
+    for (int64_t index = 0; index < dim; ++index) {
+      STD_TORCH_CHECK(
+          permutation_values[index] >= 0 && permutation_values[index] < dim,
+          "permutation contains an out-of-range index");
+      STD_TORCH_CHECK(
+          sign_values[index] == -1 || sign_values[index] == 1,
+          "signs must contain only -1 and 1");
+    }
+    std::lock_guard<std::mutex> lock(validated_mutex);
+    validated_entries[validated_cursor % validated_entries.size()] = candidate;
+    ++validated_cursor;
   }
   if (x.numel() == 0) {
     return;

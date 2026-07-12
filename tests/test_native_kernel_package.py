@@ -38,6 +38,8 @@ def test_kernel_builder_manifest_targets_cpu_cuda_and_metal() -> None:
     assert kernels["packed_matmul_cpu"]["src"] == [
         "orbitquant_packed_matmul_cpu/cpu_isa.cpp",
         "orbitquant_packed_matmul_cpu/cpu_kernel_args.h",
+        "orbitquant_packed_matmul_cpu/cpu_pool.cpp",
+        "orbitquant_packed_matmul_cpu/cpu_pool.h",
         "orbitquant_packed_matmul_cpu/cpu_threads.cpp",
         "orbitquant_packed_matmul_cpu/cpu_threads.h",
         "orbitquant_packed_matmul_cpu/packed_adaln_cpu.cpp",

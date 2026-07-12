@@ -1,3 +1,4 @@
+#include "cpu_pool.h"
 #include "cpu_threads.h"
 #include "packed_matmul_cpu.h"
 #include "../torch-ext/torch_binding.h"
@@ -9,7 +10,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -47,8 +48,8 @@ void parallel_packed_matmul(
     return;
   }
 
-  std::vector<std::thread> workers;
-  workers.reserve(threads);
+  std::vector<std::pair<std::int64_t, std::int64_t>> ranges;
+  ranges.reserve(threads);
   const std::int64_t columns_per_thread =
       (args.out_features + threads - 1) / threads;
   for (int thread = 0; thread < threads; ++thread) {
@@ -59,13 +60,13 @@ void parallel_packed_matmul(
     if (start >= end) {
       break;
     }
-    workers.emplace_back([&args, function, start, end] {
-      function(args, start, end);
-    });
+    ranges.emplace_back(start, end);
   }
-  for (auto &worker : workers) {
-    worker.join();
-  }
+  orbitquant::cpu::run_ranges(
+      ranges,
+      [&args, function](std::int64_t start, std::int64_t end) {
+        function(args, start, end);
+      });
 }
 
 orbitquant::cpu::PackedMatmulRangeFn select_packed_matmul() {
