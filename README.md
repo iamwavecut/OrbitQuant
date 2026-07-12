@@ -295,6 +295,11 @@ CUDA and MPS do not silently materialize a full BF16/FP16 weight matrix in
 backend and installation guidance. CPU retains a compatibility fallback when
 the optional native package is absent.
 
+End-to-end FLUX.2 Klein 9B numbers for the released package are recorded in
+[docs/flux2-klein-9b-sdnq-vs-orbitquant.md](docs/flux2-klein-9b-sdnq-vs-orbitquant.md)
+(0.5.0 on an NVIDIA A40: 4.00 s hot median at 1024x1024/4 steps with
+13.43 GB peak CUDA allocated memory).
+
 Use the explicit reference path for compatibility or numerical debugging:
 
 ```python

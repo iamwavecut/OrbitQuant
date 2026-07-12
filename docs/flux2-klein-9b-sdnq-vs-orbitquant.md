@@ -90,6 +90,23 @@ this run. OrbitQuant loaded 57.0% faster, used 0.902 GB less peak CUDA allocated
 memory, and used 1.833 GB less peak CUDA reserved and NVML memory. The packed
 weight payload also remains 11.0% smaller.
 
+### OrbitQuant 0.5.0 control rerun (NVIDIA A40)
+
+The same protocol rerun with the released `orbitquant==0.5.0`, a locally
+built sm_86 CUDA kernel package, Torch 2.9.1+cu128, and the pinned checkpoint
+revision on an NVIDIA A40:
+
+| Variant | Load | Cold image | Hot mean | Hot median | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OrbitQuant W4A4 (0.5.0) | 4.106 s | 11.989 s | 4.0118 s | 4.0022 s | 14.785 GB | 13.429 GB | 13.841 GB |
+
+Absolute times track the slower GPU; the memory peaks are the release-level
+numbers: 0.51 GB less CUDA allocated and 0.70 GB less reserved memory than
+the 0.3.0 rows above. The SDNQ rows were not rerun; the two tables compare
+package versions on their respective recorded hardware, not GPUs. The
+checkpoint's `benchmark/summary.json` carries this run;
+`benchmark/summary-l40s-0.3.0.json` preserves the original measurement.
+
 The selected CUDA path performs native token norm, RPBH/FWHT and codebook-bin
 selection, emits an INT8 surrogate of the 4-bit activation codebook, decodes
 only a bounded output-channel chunk of the packed W4 weights, calls the
