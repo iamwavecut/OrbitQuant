@@ -316,6 +316,25 @@ projection would require 169,869,312 bytes. The optimized call therefore
 retained bounded output and allocator scratch instead of a full floating-point
 weight.
 
+W2, W3, and W6 packed matmuls dispatch to dedicated SIMD decoders on every
+tier: AVX-512 covers all three widths, AVX2 covers W2 (`vpermps` lookup) and
+W6 (`vgatherdps` lookup) while W3 stays scalar there, and NEON covers all
+three with vectorized FMA over scalar table decode. Row starts must be
+byte-aligned (`in_features % 4 == 0` for W2/W6, `% 8 == 0` for W3); other
+shapes keep the scalar fallback. Multi-threaded execution uses a lazily
+created persistent worker pool instead of per-call thread spawning, with
+outputs bitwise identical to single-threaded runs. Measured with six pinned
+cores, 32 BF16 rows, and square projections on an AMD EPYC 9684X (Zen 4)
+cpuset, and with one thread on an Apple M2 Max aarch64-linux container:
+
+| Bits | Dimension | Scalar (Zen 4) | AVX2/FMA | AVX-512 | Scalar (M2) | NEON |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| W2 | 3072 / 1536 | 60.66 ms | 2.25 ms | 2.14 ms | 95.18 ms | 9.07 ms |
+| W3 | 3072 / 1536 | 61.07 ms | scalar | 6.88 ms | 93.28 ms | 9.83 ms |
+| W6 | 3072 / 1536 | 63.28 ms | 13.85 ms | 2.60 ms | 92.65 ms | 9.80 ms |
+
+Zen 4 columns use dimension 3072 and the M2 columns use dimension 1536.
+
 The AVX2-only tier was separately profiled on an AMD Ryzen 5 5600G Cezanne
 (family 19h/model 50h), GCC 13.3, and Torch 2.11.0. Runtime dispatch uses a
 16-row primary accumulator tile with 8-row and 4-row tails only for BF16 W4,
