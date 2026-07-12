@@ -24,7 +24,10 @@ The implementation is clean-room and Apache-2.0 licensed.
   dequantized weight matrix.
 - `torch.compile(fullgraph=True)` support: quantized forwards run behind a
   registered custom op with a fake implementation, so compiled models match
-  eager output exactly.
+  eager output exactly. The forward is also CUDA-Graph-capturable;
+  `torch.compile(mode="reduce-overhead")` removes the per-launch overhead that
+  dominates small decode batches (measured 1.6-5.5x at 1-32 rows on
+  A40/RTX 4090).
 
 Embeddings, timestep modules, task heads, and common final projections are
 kept in source precision by default. Every automatic decision is available as

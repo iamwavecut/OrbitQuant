@@ -19,7 +19,9 @@ _PACKED_MATMUL_PROBE_MISSING = object()
 # Measured crossover on RTX 4090-class hardware: below this row count the
 # per-forward INT8 weight decode dominates torch._int_mm, so the fused Triton
 # kernel that reads packed nibbles directly wins.
-_W4A4_FUSED_MAX_ROWS = 512
+# Measured crossover vs the int_mm path with the tuned tile table (RTX 4090,
+# 2026-07): the fused kernel stays ahead through 2048 rows.
+_W4A4_FUSED_MAX_ROWS = 2048
 
 # torch.compile support: the runtime dispatch below is Python-heavy, so the
 # whole quantized forward is exposed to Dynamo as one opaque custom op. The

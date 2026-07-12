@@ -1923,6 +1923,14 @@ def _matmul_packed_w4a4_fused_int8_kernel(
     )
 
 
+def _fused_w4a4_tile_config(rows: int) -> tuple[int, int, int, int]:
+    """Measured tile table (A40/sm_86 and RTX 4090/sm_89 grids, 2026-07):
+    large batches want a taller M tile and a narrower K tile."""
+    if rows >= 512:
+        return 128, 128, 64, 4
+    return 64, 128, 128, 4
+
+
 def matmul_packed_w4a4_fused_with_triton(
     packed_activations: torch.Tensor,
     packed_weight_indices: torch.Tensor,
@@ -1937,10 +1945,10 @@ def matmul_packed_w4a4_fused_with_triton(
     in_features: int,
     bias: torch.Tensor | None = None,
     output_dtype: torch.dtype = torch.bfloat16,
-    block_m: int = 64,
-    block_n: int = 128,
-    block_k: int = 128,
-    num_warps: int = 8,
+    block_m: int | None = None,
+    block_n: int | None = None,
+    block_k: int | None = None,
+    num_warps: int | None = None,
 ) -> torch.Tensor:
     """Single-kernel W4A4 matmul over packed operands (no INT8 materialization)."""
     if not packed_activations.is_cuda:
@@ -1980,6 +1988,12 @@ def matmul_packed_w4a4_fused_with_triton(
         bias_values = bias.to(device=device, dtype=output_dtype).contiguous()
         has_bias = True
     combined_scale = float(activation_scale * weight_scale)
+
+    default_m, default_n, default_k, default_warps = _fused_w4a4_tile_config(rows)
+    block_m = default_m if block_m is None else block_m
+    block_n = default_n if block_n is None else block_n
+    block_k = default_k if block_k is None else block_k
+    num_warps = default_warps if num_warps is None else num_warps
 
     effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
     out_of_resources = _triton_out_of_resources_error()
