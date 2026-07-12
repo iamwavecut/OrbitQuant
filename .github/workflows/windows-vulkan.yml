@@ -71,8 +71,25 @@ jobs:
           $glslc = (Get-Command glslc.exe -ErrorAction Stop).Source
           & $python -m pip install PyYAML==6.0.1
 
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Launch-VsDevShell.ps1" `
-            -Arch amd64
+          $vswhere = `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
+          }
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
           Get-Command cl.exe -ErrorAction Stop | Format-List Source
           & $glslc --version
           cmake --version
