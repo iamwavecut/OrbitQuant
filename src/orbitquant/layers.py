@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import weakref
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -13,6 +15,51 @@ from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
 from orbitquant.streaming import accelerate_hook_offloads, iter_aligned_row_tiles
 
 _PACKED_MATMUL_PROBE_MISSING = object()
+
+# Measured crossover on RTX 4090-class hardware: below this row count the
+# per-forward INT8 weight decode dominates torch._int_mm, so the fused Triton
+# kernel that reads packed nibbles directly wins.
+_W4A4_FUSED_MAX_ROWS = 512
+
+# torch.compile support: the runtime dispatch below is Python-heavy, so the
+# whole quantized forward is exposed to Dynamo as one opaque custom op. The
+# registry maps a stable integer handle (burned into the traced graph) back to
+# the live module; weakref finalizers drop entries when modules die.
+_COMPILE_REGISTRY: dict[int, object] = {}
+
+
+def _compile_registry_lookup(handle: int):
+    module = _COMPILE_REGISTRY.get(handle)
+    if module is None:
+        raise RuntimeError(
+            "orbitquant compiled-forward handle is stale; rebuild the module "
+            "before calling the compiled graph"
+        )
+    return module
+
+
+def _compile_registry_register(module) -> int:
+    handle = id(module)
+    if handle not in _COMPILE_REGISTRY:
+        _COMPILE_REGISTRY[handle] = module
+        weakref.finalize(module, _COMPILE_REGISTRY.pop, handle, None)
+    return handle
+
+
+@torch.library.custom_op("orbitquant::packed_linear_forward", mutates_args=())
+def _packed_linear_forward_op(
+    x: torch.Tensor, handle: int, out_features: int, bf16_output: bool
+) -> torch.Tensor:
+    module = _compile_registry_lookup(handle)
+    return module._forward_impl(x)
+
+
+@_packed_linear_forward_op.register_fake
+def _packed_linear_forward_fake(
+    x: torch.Tensor, handle: int, out_features: int, bf16_output: bool
+) -> torch.Tensor:
+    dtype = torch.bfloat16 if bf16_output else x.dtype
+    return x.new_empty((*x.shape[:-1], out_features), dtype=dtype)
 _NATIVE_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = _PACKED_MATMUL_PROBE_MISSING
 _NATIVE_CPU_PACKED_MATMUL_LOAD_ERROR: object | Exception | None = (
     _PACKED_MATMUL_PROBE_MISSING
@@ -274,6 +321,7 @@ class OrbitQuantLinear(nn.Module):
         self.weight_bits = config.weight_bits
         self.activation_bits = config.activation_bits
         self.runtime_mode = config.runtime_mode
+        self.w4a4_int8_weight_cache = config.w4a4_int8_weight_cache
         self.activation_kernel_backend = config.activation_kernel_backend
         self.packed_matmul_block_m = config.packed_matmul_block_m
         self.packed_matmul_block_n = config.packed_matmul_block_n
@@ -349,6 +397,10 @@ class OrbitQuantLinear(nn.Module):
         self._int8_surrogate_cache: tuple[str, torch.Tensor, float, torch.Tensor, float] | None = (
             None
         )
+        self._runtime_probe_cache: dict[str, bool] = {}
+        self._bias_cache: tuple[tuple[str, torch.dtype], torch.Tensor] | None = None
+        self._int8_weight_cache: tuple[str, torch.Tensor] | None = None
+        self._compile_handle = _compile_registry_register(self)
         self.last_effective_runtime_mode: str | None = None
         self.last_activation_kernel_backend: str | None = None
         self.last_forward_device_type: str | None = None
@@ -516,8 +568,49 @@ class OrbitQuantLinear(nn.Module):
         result = super()._apply(fn, recurse=recurse)
         self._derived_constants_valid = False
         self._int8_surrogate_cache = None
+        self._runtime_probe_cache = {}
+        self._bias_cache = None
+        self._int8_weight_cache = None
         self.clear_dequantized_cache()
         return result
+
+    def _int8_weight_for(self, device: torch.device) -> torch.Tensor | None:
+        """Opt-in persistent INT8 surrogate weight (skips per-forward decode)."""
+        if not self.w4a4_int8_weight_cache or accelerate_hook_offloads(self):
+            return None
+        key = str(device)
+        if self._int8_weight_cache is not None and self._int8_weight_cache[0] == key:
+            return self._int8_weight_cache[1]
+        from orbitquant.kernels.triton_cuda import decode_packed_w4_weight_to_int8
+
+        _, _, weight_codes, _ = self._int8_surrogate_constants(device)
+        decoded = decode_packed_w4_weight_to_int8(
+            self.packed_weight_indices,
+            weight_codes,
+            out_features=self.out_features,
+            in_features=self.in_features,
+        )
+        self._int8_weight_cache = (key, decoded)
+        return decoded
+
+    def _cached_runtime_probe(self, key: str, probe) -> bool:
+        cached = self._runtime_probe_cache.get(key)
+        if cached is None:
+            cached = bool(probe())
+            self._runtime_probe_cache[key] = cached
+        return cached
+
+    def _bias_for(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor | None:
+        if self.bias is None:
+            return None
+        if self.bias.device == device and self.bias.dtype == dtype:
+            return self.bias
+        key = (str(device), dtype)
+        if self._bias_cache is not None and self._bias_cache[0] == key:
+            return self._bias_cache[1]
+        value = self.bias.to(device=device, dtype=dtype)
+        self._bias_cache = (key, value)
+        return value
 
     def _ensure_derived_constants(self, device: torch.device) -> None:
         if self._derived_constants_valid and self._rotation_permutation.device == device:
@@ -603,31 +696,38 @@ class OrbitQuantLinear(nn.Module):
             or self.in_features % 64 != 0
         ):
             return False
-        try:
-            from orbitquant.kernels.native_packed_matmul import (
-                native_packed_w4a4_available,
-            )
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels.native_packed_matmul import (
+                    native_packed_w4a4_available,
+                )
 
-            if not native_packed_w4a4_available():
+                if not native_packed_w4a4_available():
+                    return False
+                from orbitquant.kernels.triton_cuda import (  # noqa: F401
+                    quantize_activations_packed_w4_with_triton,
+                )
+            except (ImportError, RuntimeError):
                 return False
-            from orbitquant.kernels.triton_cuda import (  # noqa: F401
-                quantize_activations_packed_w4_with_triton,
-            )
-        except (ImportError, RuntimeError):
-            return False
-        return True
+            return True
+
+        return self._cached_runtime_probe("native_w4a4_kernels", probe)
 
     def _native_cpu_activation_available(self, x: torch.Tensor) -> bool:
         if x.device.type != "cpu":
             return False
-        try:
-            from orbitquant.kernels.native_packed_matmul import (
-                native_cpu_activation_available,
-            )
 
-            return native_cpu_activation_available()
-        except (ImportError, RuntimeError):
-            return False
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels.native_packed_matmul import (
+                    native_cpu_activation_available,
+                )
+
+                return native_cpu_activation_available()
+            except (ImportError, RuntimeError):
+                return False
+
+        return self._cached_runtime_probe("native_cpu_activation", probe)
 
     def _native_w4_activation_available(self, x: torch.Tensor) -> bool:
         if (
@@ -637,14 +737,18 @@ class OrbitQuantLinear(nn.Module):
             or self.in_features not in {512, 1024, 2048, 4096, 8192, 16384}
         ):
             return False
-        try:
-            from orbitquant.kernels.native_packed_matmul import (
-                native_packed_w4_activation_available,
-            )
 
-            return native_packed_w4_activation_available()
-        except (ImportError, RuntimeError):
-            return False
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels.native_packed_matmul import (
+                    native_packed_w4_activation_available,
+                )
+
+                return native_packed_w4_activation_available()
+            except (ImportError, RuntimeError):
+                return False
+
+        return self._cached_runtime_probe("native_w4_activation", probe)
 
     def _native_int8_activation_available(self, x: torch.Tensor) -> bool:
         supported_rotation = (
@@ -653,14 +757,18 @@ class OrbitQuantLinear(nn.Module):
         ) or (self.in_features, self.rotation.block_size) == (12288, 4096)
         if not x.is_cuda or _torch_uses_hip() or not supported_rotation:
             return False
-        try:
-            from orbitquant.kernels.native_packed_matmul import (
-                native_int8_activation_available,
-            )
 
-            return native_int8_activation_available()
-        except (ImportError, RuntimeError):
-            return False
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels.native_packed_matmul import (
+                    native_int8_activation_available,
+                )
+
+                return native_int8_activation_available()
+            except (ImportError, RuntimeError):
+                return False
+
+        return self._cached_runtime_probe("native_int8_activation", probe)
 
     def _int8_surrogate_constants(
         self, device: torch.device
@@ -869,6 +977,13 @@ class OrbitQuantLinear(nn.Module):
         return self._remember_dequantized_weight(dequantized, cache_key)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.compiler.is_compiling():
+            return torch.ops.orbitquant.packed_linear_forward(
+                x, self._compile_handle, self.out_features, False
+            )
+        return self._forward_impl(x)
+
+    def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_derived_constants(x.device)
         runtime_mode = (
             self._resolve_auto_fused_runtime(x)
@@ -903,8 +1018,19 @@ class OrbitQuantLinear(nn.Module):
                 and self.out_features % 16 == 0
                 and callable(getattr(torch, "_int_mm", None))
             )
+            int8_weight = self._int8_weight_for(x.device) if use_cutlass_tn else None
+            # Mid-size row counts pay more for the per-forward INT8 weight
+            # decode than the GEMM itself; the fused Triton kernel reads the
+            # packed nibbles directly there.
+            use_fused_triton = (
+                use_cutlass_tn and int8_weight is None and rows < _W4A4_FUSED_MAX_ROWS
+            )
             int8_x: torch.Tensor | None = None
-            if use_cutlass_tn and self._native_int8_activation_available(x):
+            if (
+                use_cutlass_tn
+                and not use_fused_triton
+                and self._native_int8_activation_available(x)
+            ):
                 from orbitquant.kernels.native_packed_matmul import (
                     quantize_activations_int8_with_native_kernel,
                 )
@@ -951,13 +1077,35 @@ class OrbitQuantLinear(nn.Module):
                     constant_tensors=activation_constants,
                 )
                 self.last_activation_kernel_backend = "triton_cuda_packed_w4"
-            bias = None if self.bias is None else self.bias.to(device=x.device, dtype=x.dtype)
+            bias = self._bias_for(x.device, x.dtype)
             self.last_native_w4a4_enabled = True
+            if use_fused_triton:
+                from orbitquant.kernels.triton_cuda import (
+                    matmul_packed_w4a4_fused_with_triton,
+                )
+
+                return matmul_packed_w4a4_fused_with_triton(
+                    packed_x,
+                    self.packed_weight_indices,
+                    token_norms,
+                    self.row_norms,
+                    activation_codes,
+                    weight_codes,
+                    activation_scale=activation_scale,
+                    weight_scale=weight_scale,
+                    out_features=self.out_features,
+                    in_features=self.in_features,
+                    bias=bias,
+                    output_dtype=x.dtype,
+                )
             if use_cutlass_tn:
-                if self.in_features >= 8192 and self.out_features <= 4096:
-                    cutlass_chunk_out_features = 4096
+                # Chunking bounds the transient INT8 weight but re-reads the
+                # activations per chunk; it only measured faster for large row
+                # counts against wide projections.
+                if rows >= 2048 and self.out_features >= 8192:
+                    cutlass_chunk_out_features: int | None = 2048
                 else:
-                    cutlass_chunk_out_features = 2048
+                    cutlass_chunk_out_features = None
                 if int8_x is not None:
                     from orbitquant.kernels.triton_cuda import (
                         matmul_int8_activations_packed_w4_with_int_mm,
@@ -976,6 +1124,7 @@ class OrbitQuantLinear(nn.Module):
                         bias=bias,
                         output_dtype=x.dtype,
                         chunk_out_features=cutlass_chunk_out_features,
+                        decoded_weight=int8_weight,
                     )
                 from orbitquant.kernels.triton_cuda import (
                     matmul_packed_w4a4_with_int_mm,
@@ -995,6 +1144,7 @@ class OrbitQuantLinear(nn.Module):
                     bias=bias,
                     output_dtype=x.dtype,
                     chunk_out_features=cutlass_chunk_out_features,
+                    decoded_weight=int8_weight,
                 )
             from orbitquant.kernels.native_packed_matmul import (
                 matmul_packed_w4a4_int8_with_native_kernel,
@@ -1064,7 +1214,7 @@ class OrbitQuantLinear(nn.Module):
                 constant_tensors=self._activation_kernel_constant_tensors(x.device),
             )
 
-        bias = None if self.bias is None else self.bias.to(device=x.device, dtype=rotated_x.dtype)
+        bias = self._bias_for(x.device, rotated_x.dtype)
         if runtime_mode == "triton_packed_matmul":
             if self.packed_weight_indices is None or self.row_norms is None:
                 raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")

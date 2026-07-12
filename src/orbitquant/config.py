@@ -93,6 +93,9 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     packed_matmul_block_k: int = 128
     packed_matmul_num_warps: int = 4
     weight_row_tile_size: int = 256
+    # Opt-in: keep a persistent INT8 copy of each W4A4 weight on CUDA (twice
+    # the packed size) so the cuBLASLt path skips its per-forward decode.
+    w4a4_int8_weight_cache: bool = False
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
@@ -138,6 +141,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError(f"target_policy must be one of {sorted(_SUPPORTED_TARGET_POLICIES)}")
         if self.adaln_group_size <= 0:
             raise ValueError("adaln_group_size must be positive")
+        if not isinstance(self.w4a4_int8_weight_cache, bool):
+            raise ValueError("w4a4_int8_weight_cache must be a boolean")
         normalized_dtype_dict: dict[str, list[str]] = {}
         for dtype_name, module_names in self.modules_dtype_dict.items():
             normalized_dtype = dtype_name.lower()

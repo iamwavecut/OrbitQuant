@@ -143,7 +143,23 @@ class RTNInt4Linear(nn.Module):
             self.bias = nn.Parameter(bias.detach().clone(), requires_grad=False)
         self._dequantized_weight_cache: torch.Tensor | None = None
         self._dequantized_weight_cache_key: tuple[str, torch.dtype] | None = None
+        self._bias_cache: tuple[tuple[str, torch.dtype], torch.Tensor] | None = None
         self.last_effective_runtime_mode: str | None = None
+        from orbitquant.layers import _compile_registry_register
+
+        self._compile_handle = _compile_registry_register(self)
+
+    def _bias_for(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor | None:
+        if self.bias is None:
+            return None
+        if self.bias.device == device and self.bias.dtype == dtype:
+            return self.bias
+        key = (str(device), dtype)
+        if self._bias_cache is not None and self._bias_cache[0] == key:
+            return self._bias_cache[1]
+        value = self.bias.to(device=device, dtype=dtype)
+        self._bias_cache = (key, value)
+        return value
 
     def clear_dequantized_cache(self) -> None:
         self._dequantized_weight_cache = None
@@ -294,6 +310,13 @@ class RTNInt4Linear(nn.Module):
         return self._remember_dequantized_weight(dequantized, cache_key)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.compiler.is_compiling():
+            return torch.ops.orbitquant.packed_linear_forward(
+                x, self._compile_handle, self.out_features, True
+            )
+        return self._forward_impl(x)
+
+    def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
         activation = x.to(torch.bfloat16)
         uses_hip = bool(getattr(torch.version, "hip", None))
         if x.device.type == "xpu":
@@ -358,7 +381,7 @@ class RTNInt4Linear(nn.Module):
                 out_features=self.out_features,
                 in_features=self.in_features,
                 group_size=self.group_size,
-                bias=self.bias,
+                bias=self._bias_for(x.device, torch.bfloat16),
             )
         if x.device.type == "cpu" and self.runtime_mode in {
             "auto_fused",
@@ -399,5 +422,5 @@ class RTNInt4Linear(nn.Module):
 
         self.last_effective_runtime_mode = "dequant_bf16"
         weight = self._dequantize_weight(device=x.device, dtype=torch.bfloat16)
-        bias = None if self.bias is None else self.bias.to(device=x.device, dtype=torch.bfloat16)
+        bias = self._bias_for(x.device, torch.bfloat16)
         return F.linear(activation, weight, bias)
