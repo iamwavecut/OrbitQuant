@@ -323,17 +323,25 @@ three with vectorized FMA over scalar table decode. Row starts must be
 byte-aligned (`in_features % 4 == 0` for W2/W6, `% 8 == 0` for W3); other
 shapes keep the scalar fallback. Multi-threaded execution uses a lazily
 created persistent worker pool instead of per-call thread spawning, with
-outputs bitwise identical to single-threaded runs. Measured with six pinned
-cores, 32 BF16 rows, and square projections on an AMD EPYC 9684X (Zen 4)
-cpuset, and with one thread on an Apple M2 Max aarch64-linux container:
+outputs bitwise identical to single-threaded runs. When at least 16 activation
+rows are present, every SIMD tier decodes each packed column once into a
+thread-local buffer and reuses it across the row tile instead of re-decoding
+per row. Measured with six unpinned worker threads, 32 BF16 rows, 21 timed
+iterations (hot-loop medians), and square projections on an AMD EPYC 9354
+(Zen 4) Secure Cloud cpuset, and with one thread on an Apple M2 Max
+aarch64-linux container:
 
 | Bits | Dimension | Scalar (Zen 4) | AVX2/FMA | AVX-512 | Scalar (M2) | NEON |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| W2 | 3072 / 1536 | 60.66 ms | 2.25 ms | 2.14 ms | 95.18 ms | 9.07 ms |
-| W3 | 3072 / 1536 | 61.07 ms | scalar | 6.88 ms | 93.28 ms | 9.83 ms |
-| W6 | 3072 / 1536 | 63.28 ms | 13.85 ms | 2.60 ms | 92.65 ms | 9.80 ms |
+| W2 | 3072 / 1536 | 81.76 ms | 5.04 ms | 4.96 ms | 91.66 ms | 7.27 ms |
+| W3 | 3072 / 1536 | 82.10 ms | scalar | 7.04 ms | 92.32 ms | 7.49 ms |
+| W6 | 3072 / 1536 | 83.98 ms | 8.69 ms | 5.49 ms | 92.31 ms | 8.15 ms |
+| W4 | 3072 / 1536 | 82.35 ms | 6.87 ms | 2.53 ms | 91.63 ms | 7.30 ms |
 
-Zen 4 columns use dimension 3072 and the M2 columns use dimension 1536.
+Zen 4 columns use dimension 3072 and the M2 columns use dimension 1536. A
+higher-clock EPYC 9684X cpuset measured the same AVX-512 shapes at
+1.92/2.86/2.03 ms (W2/W3/W6); absolute numbers track the host, the tier
+ordering does not.
 
 The AVX2-only tier was separately profiled on an AMD Ryzen 5 5600G Cezanne
 (family 19h/model 50h), GCC 13.3, and Torch 2.11.0. Runtime dispatch uses a

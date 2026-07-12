@@ -22,6 +22,9 @@ The implementation is clean-room and Apache-2.0 licensed.
   `from_pretrained()` integration.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
+- `torch.compile(fullgraph=True)` support: quantized forwards run behind a
+  registered custom op with a fake implementation, so compiled models match
+  eager output exactly.
 
 Embeddings, timestep modules, task heads, and common final projections are
 kept in source precision by default. Every automatic decision is available as

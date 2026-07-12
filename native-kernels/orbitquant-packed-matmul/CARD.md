@@ -138,9 +138,15 @@ python benchmarks/benchmark.py \
   --iters 20
 ```
 
+`--rows` accepts a comma-separated sweep (the default covers decode-bound
+small batches and GEMM-bound large batches), and `--dtype` selects the
+activation dtype explicitly. Headline timings are hot-loop medians.
+
 The script prints JSON with `packed_seconds_per_iter`,
 `predequantized_f_linear_seconds_per_iter`,
-`dequantize_then_f_linear_seconds_per_iter`,
+`dequantize_then_f_linear_seconds_per_iter` (all hot-loop medians), the
+per-path `*_hot_mean_seconds`, `*_hot_median_seconds`, and
+`*_hot_p95_seconds` distributions,
 `packed_vs_predequantized_f_linear_speedup`,
 `packed_vs_dequantize_then_f_linear_speedup`, compatibility aliases
 `reference_seconds_per_iter` and `packed_vs_reference_speedup`, and
