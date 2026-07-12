@@ -110,7 +110,8 @@ jobs:
           }
           Get-Command cl.exe -ErrorAction Stop | Format-List Source
           Write-Host "Using CMake generator: $cmakeGenerator"
-          & $glslc --version
+          $glslcVersion = (& $glslc --version | Select-Object -First 1)
+          Write-Host $glslcVersion
           cmake --version
 
           cmake -S $executorch -B $executorchBuild `
@@ -144,3 +145,117 @@ jobs:
           Get-Item `
             "$orbitquantBuild\Release\orbitquant_vulkan_test.exe", `
             "$orbitquantBuild\Release\orbitquant_vulkan_pte_runner.exe"
+
+          $bundle = Join-Path `
+            $env:RUNNER_TEMP "orbitquant-vulkan-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          Copy-Item `
+            "$orbitquantBuild\Release\orbitquant_vulkan_test.exe", `
+            "$orbitquantBuild\Release\orbitquant_vulkan_pte_runner.exe" `
+            -Destination $bundle
+
+          $runtimeDirs = @(
+            "$orbitquantBuild\Release",
+            "$executorchInstall\bin"
+          )
+          if ($env:VCToolsRedistDir) {
+            $redistRoot = Join-Path $env:VCToolsRedistDir "x64"
+            if (Test-Path $redistRoot) {
+              $runtimeDirs += Get-ChildItem `
+                $redistRoot -Directory -Filter "Microsoft.VC*.CRT" |
+                Select-Object -ExpandProperty FullName
+            }
+          }
+          foreach ($runtimeDir in $runtimeDirs) {
+            if (Test-Path $runtimeDir) {
+              Get-ChildItem $runtimeDir -Filter "*.dll" -File |
+                Copy-Item -Destination $bundle -Force
+            }
+          }
+
+          $licenseFiles = @(
+            @{
+              Source = "$env:GITHUB_WORKSPACE\LICENSE"
+              Destination = "LICENSE-OrbitQuant.txt"
+            },
+            @{
+              Source = "$executorch\LICENSE"
+              Destination = "LICENSE-ExecuTorch.txt"
+            },
+            @{
+              Source = "$executorch\third-party\gflags\COPYING.txt"
+              Destination = "LICENSE-gflags.txt"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\Vulkan-Headers\LICENSE.md"
+              Destination = "LICENSE-Vulkan-Headers.md"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\VulkanMemoryAllocator\LICENSE.txt"
+              Destination = "LICENSE-VulkanMemoryAllocator.txt"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\volk\LICENSE.md"
+              Destination = "LICENSE-volk.md"
+            }
+          )
+          foreach ($licenseFile in $licenseFiles) {
+            if (-not (Test-Path $licenseFile.Source)) {
+              throw "Required license is missing: $($licenseFile.Source)"
+            }
+            Copy-Item `
+              $licenseFile.Source `
+              (Join-Path $bundle $licenseFile.Destination)
+          }
+
+          @(
+            "Prerequisite: install the hardware vendor Vulkan driver.",
+            "The bundle intentionally does not ship vulkan-1.dll.",
+            "",
+            "Run native correctness and realistic-shape benchmarks:",
+            ".\orbitquant_vulkan_test.exe",
+            "",
+            "Run an exported PTE with one raw tensor input:",
+            ".\orbitquant_vulkan_pte_runner.exe --model_path model.pte --inputs input0.bin --output_file actual --print_output=none",
+            "The output tensor is written to actual-0.bin."
+          ) | Set-Content `
+            -Encoding ascii (Join-Path $bundle "README.txt")
+
+          $dependencyReport = Join-Path $bundle "DEPENDENCIES.txt"
+          foreach ($executable in Get-ChildItem $bundle -Filter "*.exe") {
+            "[$($executable.Name)]" | Add-Content $dependencyReport
+            dumpbin.exe /dependents $executable.FullName |
+              Add-Content $dependencyReport
+          }
+          @(
+            "orbitquant_commit=$env:GITHUB_SHA",
+            "executorch_commit=$env:EXECUTORCH_COMMIT",
+            "cmake_generator=$cmakeGenerator",
+            "visual_studio_version=$vsVersion",
+            "python_version=3.12",
+            "pytorch_version=2.12.1",
+            "glslc_version=$glslcVersion"
+          ) | Set-Content `
+            -Encoding ascii (Join-Path $bundle "BUILD-METADATA.txt")
+          Get-ChildItem $bundle -File |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } |
+            Set-Content -Encoding ascii (Join-Path $bundle "SHA256SUMS")
+
+          $bundleBytes = (
+            Get-ChildItem $bundle -File | Measure-Object Length -Sum
+          ).Sum
+          if ($bundleBytes -gt 64MB) {
+            throw "Windows Vulkan runner bundle exceeds 64 MiB: $bundleBytes"
+          }
+          Write-Host "Windows Vulkan runner bundle bytes: $bundleBytes"
+          Get-ChildItem $bundle | Format-Table Name, Length
+
+      - name: Upload Windows Vulkan runner bundle
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: orbitquant-vulkan-windows-x86_64-${{ github.sha }}
+          path: ${{ runner.temp }}/orbitquant-vulkan-windows-x86_64
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
