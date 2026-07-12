@@ -157,6 +157,10 @@ __device__ __forceinline__ void decode_mma64_weight_segment_from_stage(
   }
 }
 
+// WMMA fragments (and the bf16 variants in particular) only exist on sm80+.
+// Multi-architecture builds still instantiate these templates for older
+// targets, so the bodies compile to empty stubs there; the host dispatch
+// requires compute capability >= 8 before launching either kernel.
 template <typename storage_t, typename mma_t, int Bits>
 __global__ void orbitquant_packed_matmul_mma64_kernel(
     storage_t *__restrict__ out,
@@ -169,6 +173,7 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile_m = 128;
   constexpr int tile_n = 128;
   constexpr int tile_k = 64;
@@ -286,6 +291,7 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
     }
     __syncwarp();
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 __device__ __forceinline__ void copy_async_16(
@@ -331,6 +337,7 @@ __global__ void orbitquant_packed_matmul_mma64_pipelined_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile_m = 128;
   constexpr int tile_n = 128;
   constexpr int tile_k = 64;
@@ -543,6 +550,7 @@ __global__ void orbitquant_packed_matmul_mma64_pipelined_kernel(
     }
     __syncwarp();
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 __device__ __forceinline__ uint8_t orbitquant_bucketize_w4(
@@ -739,6 +747,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile_k = 64;
   constexpr int packed_tile_k = tile_k / 2;
   constexpr int padded_k = 80;
@@ -981,6 +990,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
     }
     __syncwarp();
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 template <int Bits>
@@ -995,6 +1005,7 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile = 16;
   constexpr int col_tiles = 4;
   constexpr int warps_per_block = 8;
@@ -1076,6 +1087,7 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
       }
     }
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 template <int Bits>
@@ -1398,7 +1410,8 @@ void matmul_packed_weight(
     return;
   }
 
-  if (x.scalar_type() == at::kBFloat16 && x.size(0) >= 9) {
+  if (x.scalar_type() == at::kBFloat16 && x.size(0) >= 9 &&
+      mma_properties->major >= 8) {
     if (in_features % 64 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
       constexpr int mma_tile_m = 128;
@@ -1436,12 +1449,18 @@ void matmul_packed_weight(
             out_features,                                                        \
             in_features);                                                        \
   } while (0)
-// The cp.async pipeline is enabled only for W2: measured on sm_89 it is ~6.8x
-// faster there (decode-bound legacy), while W4/W6 range from parity to a 10x
-// regression depending on shape. ORBITQUANT_MMA64_DISABLE_PIPELINE=1 forces
-// the legacy kernel everywhere.
+// The cp.async pipeline wins when the launch is latency-bound: with cold L2
+// (each layer's weights are evicted between calls in a real model) it is
+// 1.35-1.46x faster for W2/W4/W6 on RTX 4060 Ti, A40, and RTX 4090 whenever
+// the grid fits in one wave (blocks <= SM count), and it regresses up to 15%
+// once the grid oversubscribes the device. Gate on grid size; measured
+// 2026-07 across the three architectures above.
+// ORBITQUANT_MMA64_FORCE_PIPELINE=1 bypasses the grid gate,
+// ORBITQUANT_MMA64_DISABLE_PIPELINE=1 forces the legacy kernel everywhere.
 #define ORBITQUANT_MMA64_USE_PIPELINE(BITS_VALUE)                               \
-  (((BITS_VALUE) == 2 || orbitquant_mma64_pipeline_forced()) &&                 \
+  ((orbitquant_mma64_pipeline_forced() ||                                       \
+    static_cast<int64_t>(mma_grid.x) * mma_grid.y <=                            \
+        mma_properties->multiProcessorCount) &&                                 \
    !orbitquant_mma64_pipeline_disabled() &&                                     \
    mma_properties->major >= 8 &&                                                \
    (2 * 128 * 72 * 2 + 128 * 72 * 2 + 8 * 16 * 16 * 4 +                        \
@@ -1543,7 +1562,8 @@ void matmul_packed_weight(
     return;
   }
 
-  if (x.scalar_type() == at::kHalf && x.size(0) >= 9) {
+  if (x.scalar_type() == at::kHalf && x.size(0) >= 9 &&
+      mma_properties->major >= 8) {
     if (in_features % 64 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
       constexpr int mma_tile_m = 128;
