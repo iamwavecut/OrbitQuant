@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cstdint>
 #include <type_traits>
+#include <vector>
 
 #define ORBITQUANT_TARGET_AVX512 \
   __attribute__((target("avx512f,avx512dq,avx512bw,avx512vl,fma,f16c")))
@@ -376,6 +377,61 @@ ORBITQUANT_TARGET_AVX512 inline void packed_matmul_avx512_lowbit_rows(
   }
 }
 
+template <typename scalar_t, __m512 (*load16)(void const *, std::int64_t), int row_tile>
+ORBITQUANT_TARGET_AVX512 inline void packed_matmul_avx512_buffered_rows(
+    PackedMatmulArgs const &args,
+    float const *decoded_row,
+    std::int64_t out_col,
+    std::int64_t row_start) {
+  __m512 accumulators[row_tile];
+#pragma clang loop unroll(full)
+  for (int row = 0; row < row_tile; ++row) {
+    accumulators[row] = _mm512_setzero_ps();
+  }
+
+  std::int64_t k = 0;
+  for (; k + 16 <= args.in_features; k += 16) {
+    const __m512 weight = _mm512_loadu_ps(decoded_row + k);
+#pragma clang loop unroll(full)
+    for (int row = 0; row < row_tile; ++row) {
+      const std::int64_t input_offset =
+          (row_start + row) * args.in_features + k;
+      accumulators[row] = _mm512_fmadd_ps(
+          load16(args.x, input_offset),
+          weight,
+          accumulators[row]);
+    }
+  }
+
+  const float row_norm = args.row_norms[out_col];
+#pragma clang loop unroll(full)
+  for (int row = 0; row < row_tile; ++row) {
+    const std::int64_t input_row_offset =
+        (row_start + row) * args.in_features;
+    float accumulator = horizontal_sum(accumulators[row]);
+    for (std::int64_t tail = k; tail < args.in_features; ++tail) {
+      if constexpr (std::is_same_v<scalar_t, float>) {
+        accumulator +=
+            static_cast<float const *>(args.x)[input_row_offset + tail] *
+            decoded_row[tail];
+      } else {
+        accumulator += static_cast<float>(
+                           static_cast<scalar_t const *>(
+                               args.x)[input_row_offset + tail]) *
+            decoded_row[tail];
+      }
+    }
+    accumulator *= row_norm;
+    if (args.has_bias) {
+      accumulator += args.bias[out_col];
+    }
+    store_value<scalar_t>(
+        args.out,
+        (row_start + row) * args.out_features + out_col,
+        accumulator);
+  }
+}
+
 template <
     typename scalar_t,
     __m512 (*load16)(void const *, std::int64_t),
@@ -388,9 +444,57 @@ packed_matmul_avx512_lowbit_typed(
   constexpr int kPrimaryRowTile = 8;
   const std::int64_t packed_row_bytes =
       args.in_features * decoder_t::kBits / 8;
+  // Two or more row tiles amortize the packed decode: expand the column once
+  // into a per-thread scratch row and stream plain FMA tiles from it.
+  const bool use_decoded_buffer = args.rows >= 16;
+  thread_local std::vector<float> decoded_row_storage;
+  if (use_decoded_buffer &&
+      decoded_row_storage.size() < static_cast<std::size_t>(args.in_features)) {
+    decoded_row_storage.resize(static_cast<std::size_t>(args.in_features));
+  }
   for (std::int64_t out_col = out_start; out_col < out_end; ++out_col) {
     const auto *packed_row =
         args.packed_weight_indices + out_col * packed_row_bytes;
+    if (use_decoded_buffer) {
+      float *decoded_row = decoded_row_storage.data();
+      const typename decoder_t::Tables tables =
+          decoder_t::load_tables(args.centroids);
+      std::int64_t k = 0;
+      for (; k + 16 <= args.in_features; k += 16) {
+        _mm512_storeu_ps(decoded_row + k, decoder_t::decode(packed_row, k, tables));
+      }
+      for (; k < args.in_features; ++k) {
+        decoded_row[k] =
+            args.centroids[unpack_index_generic<decoder_t::kBits>(packed_row, k)];
+      }
+      std::int64_t row = 0;
+      for (; row + kPrimaryRowTile <= args.rows; row += kPrimaryRowTile) {
+        packed_matmul_avx512_buffered_rows<scalar_t, load16, 8>(
+            args, decoded_row, out_col, row);
+      }
+      if (row + 4 <= args.rows) {
+        packed_matmul_avx512_buffered_rows<scalar_t, load16, 4>(
+            args, decoded_row, out_col, row);
+        row += 4;
+      }
+      switch (args.rows - row) {
+        case 3:
+          packed_matmul_avx512_buffered_rows<scalar_t, load16, 3>(
+              args, decoded_row, out_col, row);
+          break;
+        case 2:
+          packed_matmul_avx512_buffered_rows<scalar_t, load16, 2>(
+              args, decoded_row, out_col, row);
+          break;
+        case 1:
+          packed_matmul_avx512_buffered_rows<scalar_t, load16, 1>(
+              args, decoded_row, out_col, row);
+          break;
+        default:
+          break;
+      }
+      continue;
+    }
     std::int64_t row = 0;
     for (; row + kPrimaryRowTile <= args.rows; row += kPrimaryRowTile) {
       packed_matmul_avx512_lowbit_rows<scalar_t, load16, decoder_t, 8>(
@@ -642,15 +746,13 @@ bool runtime_has_verified_amd_bf16_tuning() {
       return false;
     }
     const unsigned int base_family = (eax >> 8) & 0xfu;
-    const unsigned int base_model = (eax >> 4) & 0xfu;
     const unsigned int family = base_family == 0xfu
         ? base_family + ((eax >> 20) & 0xffu)
         : base_family;
-    const unsigned int model = (base_family == 0x6u || base_family == 0xfu)
-        ? base_model + (((eax >> 16) & 0xfu) << 4)
-        : base_model;
-    // Family 19h/model 61h is the measured EPYC 4564P configuration.
-    return family == 0x19u && model == 0x61u;
+    // The four-row unrolled tile was measured on Zen 4 (EPYC 4564P); apply it
+    // to the AMD families that ship AVX-512 BF16 (Zen 4 = 19h, Zen 5 = 1Ah)
+    // instead of pinning the one benchmarked model.
+    return (family == 0x19u || family == 0x1au) && runtime_has_avx512_bf16();
   }();
   return available;
 }

@@ -87,7 +87,8 @@ def quantize_activations_cpu(
     original_shape = x.shape
     values = x.contiguous().reshape(-1, dim)
     out = torch.empty_like(values)
-    permutation_values = permutation.to(device="cpu", dtype=torch.int64).contiguous()
+    permutation_dtype = torch.int32 if permutation.dtype == torch.int32 else torch.int64
+    permutation_values = permutation.to(device="cpu", dtype=permutation_dtype).contiguous()
     sign_values = signs.to(device="cpu", dtype=torch.int8).contiguous()
     centroid_values = centroids.to(device="cpu", dtype=torch.float32).contiguous()
     boundary_values = boundaries.to(device="cpu", dtype=torch.float32).contiguous()

@@ -131,20 +131,29 @@ inline void fwht_block_portable(float *values, std::int64_t block_size) {
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 inline void fwht_block_neon(float *values, std::int64_t block_size) {
-  for (std::int64_t half = 1; half < block_size; half *= 2) {
+  if (block_size < 4) {
+    fwht_block_portable(values, block_size);
+    return;
+  }
+  const uint32x4_t odd_lanes = {0u, 0xFFFFFFFFu, 0u, 0xFFFFFFFFu};
+  const uint32x4_t high_lanes = {0u, 0u, 0xFFFFFFFFu, 0xFFFFFFFFu};
+  for (std::int64_t base = 0; base < block_size; base += 4) {
+    float32x4_t value = vld1q_f32(values + base);
+    float32x4_t swapped = vrev64q_f32(value);
+    value = vbslq_f32(
+        odd_lanes, vsubq_f32(swapped, value), vaddq_f32(value, swapped));
+    swapped = vextq_f32(value, value, 2);
+    value = vbslq_f32(
+        high_lanes, vsubq_f32(swapped, value), vaddq_f32(value, swapped));
+    vst1q_f32(values + base, value);
+  }
+  for (std::int64_t half = 4; half < block_size; half *= 2) {
     for (std::int64_t base = 0; base < block_size; base += 2 * half) {
-      std::int64_t offset = 0;
-      for (; offset + 4 <= half; offset += 4) {
+      for (std::int64_t offset = 0; offset + 4 <= half; offset += 4) {
         const float32x4_t left = vld1q_f32(values + base + offset);
         const float32x4_t right = vld1q_f32(values + base + half + offset);
         vst1q_f32(values + base + offset, vaddq_f32(left, right));
         vst1q_f32(values + base + half + offset, vsubq_f32(left, right));
-      }
-      for (; offset < half; ++offset) {
-        const float left = values[base + offset];
-        const float right = values[base + half + offset];
-        values[base + offset] = left + right;
-        values[base + half + offset] = left - right;
       }
     }
   }
@@ -155,10 +164,26 @@ inline void fwht_block_neon(float *values, std::int64_t block_size) {
 ORBITQUANT_TARGET_AVX2 void fwht_block_avx2(
     float *values,
     std::int64_t block_size) {
-  for (std::int64_t half = 1; half < block_size; half *= 2) {
+  if (block_size < 8) {
+    fwht_block_portable(values, block_size);
+    return;
+  }
+  for (std::int64_t base = 0; base < block_size; base += 8) {
+    __m256 value = _mm256_loadu_ps(values + base);
+    __m256 swapped = _mm256_permute_ps(value, 0xB1);
+    value = _mm256_blend_ps(
+        _mm256_add_ps(value, swapped), _mm256_sub_ps(swapped, value), 0xAA);
+    swapped = _mm256_permute_ps(value, 0x4E);
+    value = _mm256_blend_ps(
+        _mm256_add_ps(value, swapped), _mm256_sub_ps(swapped, value), 0xCC);
+    swapped = _mm256_permute2f128_ps(value, value, 0x01);
+    value = _mm256_blend_ps(
+        _mm256_add_ps(value, swapped), _mm256_sub_ps(swapped, value), 0xF0);
+    _mm256_storeu_ps(values + base, value);
+  }
+  for (std::int64_t half = 8; half < block_size; half *= 2) {
     for (std::int64_t base = 0; base < block_size; base += 2 * half) {
-      std::int64_t offset = 0;
-      for (; offset + 8 <= half; offset += 8) {
+      for (std::int64_t offset = 0; offset + 8 <= half; offset += 8) {
         const __m256 left = _mm256_loadu_ps(values + base + offset);
         const __m256 right =
             _mm256_loadu_ps(values + base + half + offset);
@@ -167,12 +192,6 @@ ORBITQUANT_TARGET_AVX2 void fwht_block_avx2(
             values + base + half + offset,
             _mm256_sub_ps(left, right));
       }
-      for (; offset < half; ++offset) {
-        const float left = values[base + offset];
-        const float right = values[base + half + offset];
-        values[base + offset] = left + right;
-        values[base + half + offset] = left - right;
-      }
     }
   }
 }
@@ -180,10 +199,32 @@ ORBITQUANT_TARGET_AVX2 void fwht_block_avx2(
 ORBITQUANT_TARGET_AVX512 void fwht_block_avx512(
     float *values,
     std::int64_t block_size) {
-  for (std::int64_t half = 1; half < block_size; half *= 2) {
+  if (block_size < 16) {
+    fwht_block_portable(values, block_size);
+    return;
+  }
+  // Butterfly widths 1-8 stay inside one 16-float register: swap the paired
+  // lanes with shuffles and blend the +/- results, one pass over memory
+  // instead of four.
+  for (std::int64_t base = 0; base < block_size; base += 16) {
+    __m512 value = _mm512_loadu_ps(values + base);
+    __m512 swapped = _mm512_permute_ps(value, 0xB1);
+    value = _mm512_mask_blend_ps(
+        0xAAAA, _mm512_add_ps(value, swapped), _mm512_sub_ps(swapped, value));
+    swapped = _mm512_permute_ps(value, 0x4E);
+    value = _mm512_mask_blend_ps(
+        0xCCCC, _mm512_add_ps(value, swapped), _mm512_sub_ps(swapped, value));
+    swapped = _mm512_shuffle_f32x4(value, value, 0xB1);
+    value = _mm512_mask_blend_ps(
+        0xF0F0, _mm512_add_ps(value, swapped), _mm512_sub_ps(swapped, value));
+    swapped = _mm512_shuffle_f32x4(value, value, 0x4E);
+    value = _mm512_mask_blend_ps(
+        0xFF00, _mm512_add_ps(value, swapped), _mm512_sub_ps(swapped, value));
+    _mm512_storeu_ps(values + base, value);
+  }
+  for (std::int64_t half = 16; half < block_size; half *= 2) {
     for (std::int64_t base = 0; base < block_size; base += 2 * half) {
-      std::int64_t offset = 0;
-      for (; offset + 16 <= half; offset += 16) {
+      for (std::int64_t offset = 0; offset + 16 <= half; offset += 16) {
         const __m512 left = _mm512_loadu_ps(values + base + offset);
         const __m512 right =
             _mm512_loadu_ps(values + base + half + offset);
@@ -191,12 +232,6 @@ ORBITQUANT_TARGET_AVX512 void fwht_block_avx512(
         _mm512_storeu_ps(
             values + base + half + offset,
             _mm512_sub_ps(left, right));
-      }
-      for (; offset < half; ++offset) {
-        const float left = values[base + offset];
-        const float right = values[base + half + offset];
-        values[base + offset] = left + right;
-        values[base + half + offset] = left - right;
       }
     }
   }
@@ -594,12 +629,16 @@ void quantize_lookup(
   quantize_lookup_scalar<scalar_t>(args, scratch, output_offset, norm);
 }
 
-template <typename scalar_t>
+template <typename scalar_t, typename index_t>
 void quantize_activation_range(
     ActivationArgs const &args,
+    index_t const *permutation,
     std::int64_t row_start,
     std::int64_t row_end) {
-  std::vector<float> scratch(static_cast<std::size_t>(args.dim));
+  thread_local std::vector<float> scratch;
+  if (scratch.size() < static_cast<std::size_t>(args.dim)) {
+    scratch.resize(static_cast<std::size_t>(args.dim));
+  }
   for (std::int64_t row = row_start; row < row_end; ++row) {
     const std::int64_t input_offset = row * args.dim;
     const float norm_squared =
@@ -609,7 +648,7 @@ void quantize_activation_range(
     for (std::int64_t index = 0; index < args.dim; ++index) {
       const float value = load_scalar<scalar_t>(
           args.x,
-          input_offset + args.permutation[index]);
+          input_offset + static_cast<std::int64_t>(permutation[index]));
       scratch[index] = value * static_cast<float>(args.signs[index]) * inverse_norm;
     }
     for (std::int64_t block = 0; block < args.dim; block += args.block_size) {
@@ -624,21 +663,35 @@ void quantize_activation_range(
   }
 }
 
-void quantize_activation_dispatch(
+template <typename index_t>
+void quantize_activation_dispatch_indexed(
     ActivationArgs const &args,
+    index_t const *permutation,
     std::int64_t row_start,
     std::int64_t row_end) {
   switch (args.scalar_kind) {
     case orbitquant::cpu::ScalarKind::Float32:
-      quantize_activation_range<float>(args, row_start, row_end);
+      quantize_activation_range<float>(args, permutation, row_start, row_end);
       return;
     case orbitquant::cpu::ScalarKind::Float16:
-      quantize_activation_range<c10::Half>(args, row_start, row_end);
+      quantize_activation_range<c10::Half>(args, permutation, row_start, row_end);
       return;
     case orbitquant::cpu::ScalarKind::BFloat16:
-      quantize_activation_range<c10::BFloat16>(args, row_start, row_end);
+      quantize_activation_range<c10::BFloat16>(args, permutation, row_start, row_end);
       return;
   }
+}
+
+void quantize_activation_dispatch(
+    ActivationArgs const &args,
+    std::int64_t row_start,
+    std::int64_t row_end) {
+  if (args.permutation_i32 != nullptr) {
+    quantize_activation_dispatch_indexed(
+        args, args.permutation_i32, row_start, row_end);
+    return;
+  }
+  quantize_activation_dispatch_indexed(args, args.permutation, row_start, row_end);
 }
 
 void parallel_quantize_activations(ActivationArgs const &args) {
@@ -708,8 +761,9 @@ void quantize_activations_cpu(
   STD_TORCH_CHECK(boundaries.is_contiguous(), "boundaries must be contiguous");
   STD_TORCH_CHECK(out.scalar_type() == x.scalar_type(), "out dtype must match x dtype");
   STD_TORCH_CHECK(
-      permutation.scalar_type() == ScalarType::Long,
-      "permutation must be int64");
+      permutation.scalar_type() == ScalarType::Long ||
+          permutation.scalar_type() == ScalarType::Int,
+      "permutation must be int32 or int64");
   STD_TORCH_CHECK(signs.scalar_type() == ScalarType::Char, "signs must be int8");
   STD_TORCH_CHECK(centroids.scalar_type() == ScalarType::Float, "centroids must be float32");
   STD_TORCH_CHECK(boundaries.scalar_type() == ScalarType::Float, "boundaries must be float32");
@@ -732,8 +786,17 @@ void quantize_activations_cpu(
   STD_TORCH_CHECK(eps >= 0.0, "eps must be non-negative");
   STD_TORCH_CHECK(inv_sqrt_block > 0.0, "inv_sqrt_block must be positive");
 
-  const auto *permutation_values = permutation.const_data_ptr<std::int64_t>();
+  const bool int32_permutation = permutation.scalar_type() == ScalarType::Int;
+  const std::int64_t *permutation_values =
+      int32_permutation ? nullptr : permutation.const_data_ptr<std::int64_t>();
+  const std::int32_t *permutation_values_i32 =
+      int32_permutation ? permutation.const_data_ptr<std::int32_t>() : nullptr;
   const auto *sign_values = signs.const_data_ptr<std::int8_t>();
+  const auto permutation_at = [&](std::int64_t index) -> std::int64_t {
+    return int32_permutation
+        ? static_cast<std::int64_t>(permutation_values_i32[index])
+        : permutation_values[index];
+  };
   // The permutation/sign buffers are immutable module constants, so cache a
   // fingerprint of validated buffers instead of re-scanning them per forward.
   struct ValidatedEntry {
@@ -747,11 +810,12 @@ void quantize_activations_cpu(
   static std::array<ValidatedEntry, 16> validated_entries{};
   static std::size_t validated_cursor = 0;
   const ValidatedEntry candidate{
-      permutation_values,
+      int32_permutation ? static_cast<void const *>(permutation_values_i32)
+                        : static_cast<void const *>(permutation_values),
       sign_values,
       dim,
-      permutation_values[0],
-      permutation_values[dim - 1]};
+      permutation_at(0),
+      permutation_at(dim - 1)};
   bool already_validated = false;
   {
     std::lock_guard<std::mutex> lock(validated_mutex);
@@ -766,8 +830,9 @@ void quantize_activations_cpu(
   }
   if (!already_validated) {
     for (int64_t index = 0; index < dim; ++index) {
+      const std::int64_t source_index = permutation_at(index);
       STD_TORCH_CHECK(
-          permutation_values[index] >= 0 && permutation_values[index] < dim,
+          source_index >= 0 && source_index < dim,
           "permutation contains an out-of-range index");
       STD_TORCH_CHECK(
           sign_values[index] == -1 || sign_values[index] == 1,
@@ -785,6 +850,7 @@ void quantize_activations_cpu(
       out.mutable_data_ptr(),
       x.const_data_ptr(),
       permutation_values,
+      permutation_values_i32,
       sign_values,
       centroids.const_data_ptr<float>(),
       boundaries.const_data_ptr<float>(),

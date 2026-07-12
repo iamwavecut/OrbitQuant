@@ -16,7 +16,10 @@ enum class ActivationIsa : std::uint8_t {
 struct ActivationArgs {
   void *out;
   void const *x;
+  // Exactly one of the permutation pointers is set (int64 checkpoints and the
+  // int32 hot-path constants are both accepted).
   std::int64_t const *permutation;
+  std::int32_t const *permutation_i32;
   std::int8_t const *signs;
   float const *centroids;
   float const *boundaries;

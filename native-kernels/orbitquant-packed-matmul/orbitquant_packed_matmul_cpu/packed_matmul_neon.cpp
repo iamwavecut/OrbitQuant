@@ -7,6 +7,7 @@
 #include <torch/headeronly/util/Half.h>
 
 #include <type_traits>
+#include <vector>
 
 namespace orbitquant::cpu {
 namespace {
@@ -214,6 +215,65 @@ inline void packed_matmul_neon_lowbit_rows(
   }
 }
 
+template <typename scalar_t, float32x4_t (*load4)(void const *, std::int64_t), int row_tile>
+inline void packed_matmul_neon_buffered_rows(
+    PackedMatmulArgs const &args,
+    float const *decoded_row,
+    std::int64_t out_col,
+    std::int64_t row_start) {
+  float32x4_t accumulator0[row_tile];
+  float32x4_t accumulator1[row_tile];
+#pragma clang loop unroll(full)
+  for (int row = 0; row < row_tile; ++row) {
+    accumulator0[row] = vdupq_n_f32(0.0f);
+    accumulator1[row] = vdupq_n_f32(0.0f);
+  }
+
+  std::int64_t k = 0;
+  for (; k + 8 <= args.in_features; k += 8) {
+    const float32x4_t weight0 = vld1q_f32(decoded_row + k);
+    const float32x4_t weight1 = vld1q_f32(decoded_row + k + 4);
+#pragma clang loop unroll(full)
+    for (int row = 0; row < row_tile; ++row) {
+      const std::int64_t input_offset =
+          (row_start + row) * args.in_features + k;
+      accumulator0[row] =
+          vfmaq_f32(accumulator0[row], load4(args.x, input_offset), weight0);
+      accumulator1[row] = vfmaq_f32(
+          accumulator1[row], load4(args.x, input_offset + 4), weight1);
+    }
+  }
+
+  const float row_norm = args.row_norms[out_col];
+#pragma clang loop unroll(full)
+  for (int row = 0; row < row_tile; ++row) {
+    const std::int64_t input_row_offset =
+        (row_start + row) * args.in_features;
+    float accumulator =
+        horizontal_sum(vaddq_f32(accumulator0[row], accumulator1[row]));
+    for (std::int64_t tail = k; tail < args.in_features; ++tail) {
+      if constexpr (std::is_same_v<scalar_t, float>) {
+        accumulator +=
+            static_cast<float const *>(args.x)[input_row_offset + tail] *
+            decoded_row[tail];
+      } else {
+        accumulator += static_cast<float>(
+                           static_cast<scalar_t const *>(
+                               args.x)[input_row_offset + tail]) *
+            decoded_row[tail];
+      }
+    }
+    accumulator *= row_norm;
+    if (args.has_bias) {
+      accumulator += args.bias[out_col];
+    }
+    store_value<scalar_t>(
+        args.out,
+        (row_start + row) * args.out_features + out_col,
+        accumulator);
+  }
+}
+
 template <
     typename scalar_t,
     float32x4_t (*load4)(void const *, std::int64_t),
@@ -223,9 +283,50 @@ void packed_matmul_neon_lowbit_typed(
     std::int64_t out_start,
     std::int64_t out_end) {
   const std::int64_t packed_row_bytes = args.in_features * Bits / 8;
+  // The NEON decode goes through scalar table lookups, so expanding the
+  // column once per >=16-row call amortizes the costliest stage.
+  const bool use_decoded_buffer = args.rows >= 16;
+  thread_local std::vector<float> decoded_row_storage;
+  if (use_decoded_buffer &&
+      decoded_row_storage.size() < static_cast<std::size_t>(args.in_features)) {
+    decoded_row_storage.resize(static_cast<std::size_t>(args.in_features));
+  }
   for (std::int64_t out_col = out_start; out_col < out_end; ++out_col) {
     const auto *packed_row =
         args.packed_weight_indices + out_col * packed_row_bytes;
+    if (use_decoded_buffer) {
+      float *decoded_row = decoded_row_storage.data();
+      for (std::int64_t k = 0; k < args.in_features; ++k) {
+        decoded_row[k] =
+            args.centroids[unpack_index_generic<Bits>(packed_row, k)];
+      }
+      std::int64_t row = 0;
+      for (; row + 8 <= args.rows; row += 8) {
+        packed_matmul_neon_buffered_rows<scalar_t, load4, 8>(
+            args, decoded_row, out_col, row);
+      }
+      for (; row + 4 <= args.rows; row += 4) {
+        packed_matmul_neon_buffered_rows<scalar_t, load4, 4>(
+            args, decoded_row, out_col, row);
+      }
+      switch (args.rows - row) {
+        case 3:
+          packed_matmul_neon_buffered_rows<scalar_t, load4, 3>(
+              args, decoded_row, out_col, row);
+          break;
+        case 2:
+          packed_matmul_neon_buffered_rows<scalar_t, load4, 2>(
+              args, decoded_row, out_col, row);
+          break;
+        case 1:
+          packed_matmul_neon_buffered_rows<scalar_t, load4, 1>(
+              args, decoded_row, out_col, row);
+          break;
+        default:
+          break;
+      }
+      continue;
+    }
     std::int64_t row = 0;
     for (; row + 8 <= args.rows; row += 8) {
       packed_matmul_neon_lowbit_rows<scalar_t, load4, Bits, 8>(
@@ -325,6 +426,12 @@ void packed_matmul_neon_range(
     PackedMatmulArgs const &args,
     std::int64_t out_start,
     std::int64_t out_end) {
+  if (args.bits == 4 && args.in_features % 2 == 0 && args.rows >= 16) {
+    // The buffered generic path decodes each column once, which beats the
+    // per-tile scalar decode as soon as several row tiles reuse it.
+    packed_matmul_neon_lowbit_dispatch<4>(args, out_start, out_end);
+    return;
+  }
   if (args.bits == 2 && args.in_features % 4 == 0) {
     packed_matmul_neon_lowbit_dispatch<2>(args, out_start, out_end);
     return;
