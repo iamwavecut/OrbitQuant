@@ -166,30 +166,43 @@ jobs:
             }
           }
 
-          Copy-Item `
-            "$env:GITHUB_WORKSPACE\LICENSE" `
-            (Join-Path $bundle "LICENSE-OrbitQuant.txt")
-          $noticeRoot = Join-Path $bundle "third-party-notices"
-          $noticeFiles = Get-ChildItem $executorch -Recurse -File |
-            Where-Object {
-              $_.FullName -notmatch "\\.git\\" -and (
-                $_.Name -match `
-                  "^(LICENSE|COPYING|NOTICE|PATENTS|THIRD[-_]?PARTY[-_]?NOTICES)([-_.].*)?$" `
-                -or $_.DirectoryName -match "\\LICENSES($|\\)"
-              )
+          $licenseFiles = @(
+            @{
+              Source = "$env:GITHUB_WORKSPACE\LICENSE"
+              Destination = "LICENSE-OrbitQuant.txt"
+            },
+            @{
+              Source = "$executorch\LICENSE"
+              Destination = "LICENSE-ExecuTorch.txt"
+            },
+            @{
+              Source = "$executorch\third-party\flatbuffers\LICENSE"
+              Destination = "LICENSE-FlatBuffers.txt"
+            },
+            @{
+              Source = "$executorch\third-party\gflags\COPYING.txt"
+              Destination = "LICENSE-gflags.txt"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\Vulkan-Headers\LICENSE.md"
+              Destination = "LICENSE-Vulkan-Headers.md"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\VulkanMemoryAllocator\LICENSE.txt"
+              Destination = "LICENSE-VulkanMemoryAllocator.txt"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\volk\LICENSE.md"
+              Destination = "LICENSE-volk.md"
             }
-          if ($noticeFiles.Count -lt 5) {
-            throw "ExecuTorch third-party notices are unexpectedly incomplete"
-          }
-          foreach ($noticeFile in $noticeFiles) {
-            $relativePath = [IO.Path]::GetRelativePath(
-              $executorch, $noticeFile.FullName
-            )
-            $destination = Join-Path $noticeRoot $relativePath
-            New-Item `
-              -ItemType Directory -Force -Path (Split-Path $destination) |
-              Out-Null
-            Copy-Item $noticeFile.FullName $destination
+          )
+          foreach ($licenseFile in $licenseFiles) {
+            if (-not (Test-Path $licenseFile.Source)) {
+              throw "Required license is missing: $($licenseFile.Source)"
+            }
+            Copy-Item `
+              $licenseFile.Source `
+              (Join-Path $bundle $licenseFile.Destination)
           }
 
           @(
@@ -225,10 +238,17 @@ jobs:
             "glslc_version=$glslcVersion"
           ) | Set-Content `
             -Encoding ascii (Join-Path $bundle "BUILD-METADATA.txt")
-          Get-ChildItem $bundle -File |
-            Get-FileHash -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } |
-            Set-Content -Encoding ascii (Join-Path $bundle "SHA256SUMS")
+          $checksumPath = Join-Path $bundle "SHA256SUMS"
+          Get-ChildItem $bundle -File -Recurse |
+            Where-Object { $_.FullName -ne $checksumPath } |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+              $relativePath = [IO.Path]::GetRelativePath(
+                $bundle, $_.FullName
+              ).Replace("\", "/")
+              "$hash  $relativePath"
+            } | Set-Content -Encoding ascii $checksumPath
 
           $bundleBytes = (
             Get-ChildItem $bundle -File | Measure-Object Length -Sum
