@@ -296,10 +296,10 @@ backend and installation guidance. CPU retains a compatibility fallback when
 the optional native package is absent.
 
 End-to-end FLUX.2 Klein 9B numbers for the released package are recorded in
-[docs/flux2-klein-9b-sdnq-vs-orbitquant.md](docs/flux2-klein-9b-sdnq-vs-orbitquant.md)
-(0.5.0 on an NVIDIA L40S: 2.049 s hot median at 1024x1024/4 steps — 2.1%
-faster than the 0.3.0 recording on the same device class — with 13.43 GB
-peak CUDA allocated memory; an A40 reference table is included).
+[docs/flux2-klein-9b-sdnq-vs-orbitquant.md](docs/flux2-klein-9b-sdnq-vs-orbitquant.md):
+on a single RTX PRO 6000, OrbitQuant 0.5.0's hot median (1.164 s at
+1024x1024/4 steps) is 3.2% faster than unquantized BF16 and 8.6% faster than
+SDNQ UINT4, with 12.51 GB peak CUDA allocated memory versus BF16's 34.72 GB.
 
 Use the explicit reference path for compatibility or numerical debugging:
 

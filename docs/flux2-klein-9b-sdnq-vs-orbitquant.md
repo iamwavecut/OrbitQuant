@@ -29,12 +29,12 @@ measured transformer, text-encoder, and VAE payloads are unchanged.
 
 ## Protocol
 
-- GPU: NVIDIA L40S 48 GB (`sm_89`)
+- GPU: NVIDIA RTX PRO 6000 Blackwell Workstation Edition 96 GB (`sm_120`), one host, one session
 - Torch: 2.9.1+cu128
 - CUDA: 12.8
 - Diffusers: 0.39.0
 - Transformers: 5.13.0
-- OrbitQuant: 0.3.0
+- OrbitQuant: 0.5.0 (released package, locally built sm_120 native kernel)
 - SDNQ: 0.1.8
 - Arithmetic: BF16
 - CPU offload: disabled
@@ -48,8 +48,6 @@ measured transformer, text-encoder, and VAE payloads are unchanged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
 
 These are the measured software versions, not current installation minimums.
-OrbitQuant 0.3.1 changes the Metal/MPS path and does not supersede this 0.3.0
-L40S CUDA measurement.
 
 The prompt pack stresses micro-detail, exact counting, nested spatial composition,
 fictional authorial style, abstract material separation, English fine print, Russian,
@@ -71,65 +69,23 @@ matrix is 10.85 GB.
 
 ## Runtime
 
-The OrbitQuant row used a locally built ABI3 CUDA package from
-`native-kernels/orbitquant-packed-matmul`; Kernel Hub was not involved. All 396
-packed projections selected `native_packed_matmul` and the optimized W4A4 path.
-
-| Variant | Load | Cold image | Hot mean | Hot median | Hot p95 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| SDNQ UINT4 (0.3.0 run) | 5.918 s | 16.956 s | 2.0885 s | 2.0875 s | 2.0966 s |
-| OrbitQuant W4A4 (0.3.0) | 2.543 s | 4.193 s | 2.0907 s | 2.0920 s | 2.0988 s |
-| OrbitQuant W4A4 (0.5.0) | 3.145 s | 7.990 s | 2.0463 s | 2.0486 s | 2.0565 s |
-
-The 0.5.0 row reran the released package with the same protocol on a
-different physical L40S host: a package-version comparison on the same device
-class (SDNQ was not rerun). Its hot median improves 2.1% over 0.3.0; the
-load/cold deltas track the other host's disk and the first-run Triton
-compilation of the new fused kernels.
-
-| Variant | Load NVML peak | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
-| --- | ---: | ---: | ---: | ---: |
-| SDNQ UINT4 (0.3.0 run) | 13.383 GB | 17.564 GB | 14.844 GB | 16.377 GB |
-| OrbitQuant W4A4 (0.3.0) | 11.959 GB | 15.731 GB | 13.942 GB | 14.544 GB |
-| OrbitQuant W4A4 (0.5.0) | 11.962 GB | 15.043 GB | 13.429 GB | 13.841 GB |
-
-OrbitQuant's hot mean was 0.11% slower than SDNQ, which is practical parity for
-this run. OrbitQuant loaded 57.0% faster, used 0.902 GB less peak CUDA allocated
-memory, and used 1.833 GB less peak CUDA reserved and NVML memory. The packed
-weight payload also remains 11.0% smaller.
-
-### Single-host three-variant comparison (RTX PRO 6000, 0.5.0)
-
-All three variants ran back-to-back on one NVIDIA RTX PRO 6000 Blackwell
-Workstation Edition (96 GB) in one session, one separate process per variant,
-same protocol and pinned revisions, Torch 2.9.1+cu128, `orbitquant==0.5.0`
-with a locally built sm_120 native kernel package — removing host-to-host
-variance from the comparison:
+All three variants ran back-to-back on the same card, one separate process
+per variant, with the pinned checkpoint revisions above. The OrbitQuant rows
+used a locally built ABI3 CUDA package from
+`native-kernels/orbitquant-packed-matmul`; Kernel Hub was not involved. All
+396 packed projections selected `native_packed_matmul` and the optimized
+W4A4 path.
 
 | Variant | Load | Cold image | Hot mean | Hot median | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | BF16 (no quantization) | 3.06 s | 1.54 s | 1.2014 s | 1.2019 s | 36.40 GB | 34.72 GB | 35.12 GB |
 | SDNQ UINT4 | 3.02 s | 5.81 s | 1.2735 s | 1.2730 s | 15.42 GB | 13.75 GB | 14.14 GB |
-| OrbitQuant W4A4 (0.5.0) | 1.95 s | 4.96 s | 1.1633 s | 1.1640 s | 14.17 GB | 12.51 GB | 12.89 GB |
+| OrbitQuant W4A4 | 1.95 s | 4.96 s | 1.1633 s | 1.1640 s | 14.17 GB | 12.51 GB | 12.89 GB |
 
-On this device OrbitQuant's hot median is 3.2% faster than unquantized BF16
-and 8.6% faster than SDNQ, with 22.2 GB less peak NVML memory than BF16 and
-1.25 GB less than SDNQ. The checkpoint's
-`benchmark/summary-rtx6000-tri-0.5.0.json` carries the machine-readable
-results.
-
-### OrbitQuant 0.5.0 on NVIDIA A40 (reference)
-
-The same 0.5.0 protocol on an NVIDIA A40 — a different device class, recorded
-for reference and not comparable with the L40S rows above:
-
-| Variant | Load | Cold image | Hot mean | Hot median | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| OrbitQuant W4A4 (0.5.0, A40) | 4.106 s | 11.989 s | 4.0118 s | 4.0022 s | 14.785 GB | 13.429 GB | 13.841 GB |
-
-The checkpoint's machine-readable results live in `benchmark/summary.json`
-(0.5.0 L40S), `benchmark/summary-l40s-0.3.0.json` (historical), and
-`benchmark/summary-a40-0.5.0.json` (this table).
+OrbitQuant's hot median is 3.2% faster than unquantized BF16 and 8.6% faster
+than SDNQ, it loads fastest of the three, and it uses 22.2 GB less peak NVML
+memory than BF16 and 1.25 GB less than SDNQ. The checkpoint's
+`benchmark/summary.json` carries the machine-readable results.
 
 The selected CUDA path performs native token norm, RPBH/FWHT and codebook-bin
 selection, emits an INT8 surrogate of the 4-bit activation codebook, decodes
