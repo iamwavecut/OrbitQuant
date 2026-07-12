@@ -21,6 +21,7 @@ concurrency:
 
 env:
   EXECUTORCH_COMMIT: a6d812a082df57898b8608f56c867140cc9da32c
+  ORBITQUANT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   build:
@@ -228,7 +229,8 @@ jobs:
               Add-Content $dependencyReport
           }
           @(
-            "orbitquant_commit=$env:GITHUB_SHA",
+            "orbitquant_source_commit=$env:ORBITQUANT_SOURCE_SHA",
+            "orbitquant_checkout_commit=$(git rev-parse HEAD)",
             "executorch_commit=$env:EXECUTORCH_COMMIT",
             "cmake_generator=$cmakeGenerator",
             "visual_studio_version=$vsVersion",
@@ -254,7 +256,7 @@ jobs:
       - name: Upload Windows Vulkan runner bundle
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: orbitquant-vulkan-windows-x86_64-${{ github.sha }}
+          name: orbitquant-vulkan-windows-x86_64-${{ env.ORBITQUANT_SOURCE_SHA }}
           path: ${{ runner.temp }}/orbitquant-vulkan-windows-x86_64
           if-no-files-found: error
           retention-days: 14
