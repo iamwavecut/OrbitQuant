@@ -98,6 +98,26 @@ this run. OrbitQuant loaded 57.0% faster, used 0.902 GB less peak CUDA allocated
 memory, and used 1.833 GB less peak CUDA reserved and NVML memory. The packed
 weight payload also remains 11.0% smaller.
 
+### Single-host three-variant comparison (RTX PRO 6000, 0.5.0)
+
+All three variants ran back-to-back on one NVIDIA RTX PRO 6000 Blackwell
+Workstation Edition (96 GB) in one session, one separate process per variant,
+same protocol and pinned revisions, Torch 2.9.1+cu128, `orbitquant==0.5.0`
+with a locally built sm_120 native kernel package — removing host-to-host
+variance from the comparison:
+
+| Variant | Load | Cold image | Hot mean | Hot median | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| BF16 (no quantization) | 3.06 s | 1.54 s | 1.2014 s | 1.2019 s | 36.40 GB | 34.72 GB | 35.12 GB |
+| SDNQ UINT4 | 3.02 s | 5.81 s | 1.2735 s | 1.2730 s | 15.42 GB | 13.75 GB | 14.14 GB |
+| OrbitQuant W4A4 (0.5.0) | 1.95 s | 4.96 s | 1.1633 s | 1.1640 s | 14.17 GB | 12.51 GB | 12.89 GB |
+
+On this device OrbitQuant's hot median is 3.2% faster than unquantized BF16
+and 8.6% faster than SDNQ, with 22.2 GB less peak NVML memory than BF16 and
+1.25 GB less than SDNQ. The checkpoint's
+`benchmark/summary-rtx6000-tri-0.5.0.json` carries the machine-readable
+results.
+
 ### OrbitQuant 0.5.0 on NVIDIA A40 (reference)
 
 The same 0.5.0 protocol on an NVIDIA A40 — a different device class, recorded
