@@ -159,14 +159,6 @@ jobs:
             "$orbitquantBuild\Release",
             "$executorchInstall\bin"
           )
-          if ($env:VCToolsRedistDir) {
-            $redistRoot = Join-Path $env:VCToolsRedistDir "x64"
-            if (Test-Path $redistRoot) {
-              $runtimeDirs += Get-ChildItem `
-                $redistRoot -Directory -Filter "Microsoft.VC*.CRT" |
-                Select-Object -ExpandProperty FullName
-            }
-          }
           foreach ($runtimeDir in $runtimeDirs) {
             if (Test-Path $runtimeDir) {
               Get-ChildItem $runtimeDir -Filter "*.dll" -File |
@@ -210,6 +202,9 @@ jobs:
           }
 
           @(
+            "Install the current Microsoft Visual C++ v14 x64 Redistributable:",
+            "https://aka.ms/vc14/vc_redist.x64.exe",
+            "",
             "Prerequisite: install the hardware vendor Vulkan driver.",
             "The bundle intentionally does not ship vulkan-1.dll.",
             "",
