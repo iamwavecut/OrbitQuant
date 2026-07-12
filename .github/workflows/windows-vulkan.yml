@@ -166,39 +166,30 @@ jobs:
             }
           }
 
-          $licenseFiles = @(
-            @{
-              Source = "$env:GITHUB_WORKSPACE\LICENSE"
-              Destination = "LICENSE-OrbitQuant.txt"
-            },
-            @{
-              Source = "$executorch\LICENSE"
-              Destination = "LICENSE-ExecuTorch.txt"
-            },
-            @{
-              Source = "$executorch\third-party\gflags\COPYING.txt"
-              Destination = "LICENSE-gflags.txt"
-            },
-            @{
-              Source = "$executorch\backends\vulkan\third-party\Vulkan-Headers\LICENSE.md"
-              Destination = "LICENSE-Vulkan-Headers.md"
-            },
-            @{
-              Source = "$executorch\backends\vulkan\third-party\VulkanMemoryAllocator\LICENSE.txt"
-              Destination = "LICENSE-VulkanMemoryAllocator.txt"
-            },
-            @{
-              Source = "$executorch\backends\vulkan\third-party\volk\LICENSE.md"
-              Destination = "LICENSE-volk.md"
+          Copy-Item `
+            "$env:GITHUB_WORKSPACE\LICENSE" `
+            (Join-Path $bundle "LICENSE-OrbitQuant.txt")
+          $noticeRoot = Join-Path $bundle "third-party-notices"
+          $noticeFiles = Get-ChildItem $executorch -Recurse -File |
+            Where-Object {
+              $_.FullName -notmatch "\\.git\\" -and (
+                $_.Name -match `
+                  "^(LICENSE|COPYING|NOTICE|PATENTS|THIRD[-_]?PARTY[-_]?NOTICES)([-_.].*)?$" `
+                -or $_.DirectoryName -match "\\LICENSES($|\\)"
+              )
             }
-          )
-          foreach ($licenseFile in $licenseFiles) {
-            if (-not (Test-Path $licenseFile.Source)) {
-              throw "Required license is missing: $($licenseFile.Source)"
-            }
-            Copy-Item `
-              $licenseFile.Source `
-              (Join-Path $bundle $licenseFile.Destination)
+          if ($noticeFiles.Count -lt 5) {
+            throw "ExecuTorch third-party notices are unexpectedly incomplete"
+          }
+          foreach ($noticeFile in $noticeFiles) {
+            $relativePath = [IO.Path]::GetRelativePath(
+              $executorch, $noticeFile.FullName
+            )
+            $destination = Join-Path $noticeRoot $relativePath
+            New-Item `
+              -ItemType Directory -Force -Path (Split-Path $destination) |
+              Out-Null
+            Copy-Item $noticeFile.FullName $destination
           }
 
           @(
