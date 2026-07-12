@@ -183,6 +183,43 @@ def test_cpu_runtime_isa_dispatch_matches_scalar_reference(monkeypatch) -> None:
 
 
 @pytest.mark.kernels_ci
+@pytest.mark.parametrize("bits", [2, 3, 6])
+@pytest.mark.parametrize("in_features", [64, 84])
+def test_cpu_isa_matmul_matches_scalar_for_low_bit_widths(
+    monkeypatch, bits: int, in_features: int
+) -> None:
+    if not supports_device("cpu"):
+        pytest.skip("the built variant has no native CPU backend")
+    torch.manual_seed(47 + bits + in_features)
+    rows = 9
+    out_features = 11
+    levels = 2**bits
+    x = torch.randn(rows, in_features)
+    indices = torch.randint(0, levels, (out_features, in_features), dtype=torch.uint8)
+    packed = _pack(indices, bits)
+    row_norms = torch.linspace(0.5, 1.5, out_features)
+    centroids = torch.tanh(torch.linspace(-1.7, 1.7, levels))
+    bias = torch.randn(out_features)
+
+    outputs = {}
+    for isa in _runnable_cpu_isas():
+        monkeypatch.setenv("ORBITQUANT_CPU_ISA", isa)
+        outputs[isa] = matmul_packed_weight(
+            x,
+            packed,
+            row_norms,
+            centroids,
+            bits=bits,
+            out_features=out_features,
+            in_features=in_features,
+            bias=bias,
+        )
+
+    for isa in _runnable_cpu_isas()[1:]:
+        torch.testing.assert_close(outputs[isa], outputs["scalar"], atol=2e-5, rtol=2e-5)
+
+
+@pytest.mark.kernels_ci
 @pytest.mark.parametrize("rows", [16, 24, 32, 33])
 def test_cpu_avx2_bf16_realistic_row_tiles_match_reference(monkeypatch, rows: int) -> None:
     if "avx2" not in _runnable_cpu_isas() or not supports_device("cpu"):
@@ -694,6 +731,43 @@ def test_quantize_activations_packed_w4_matches_torch_reference(
 
     assert torch.equal(packed, expected_packed)
     assert torch.allclose(norms, expected_norms, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.kernels_ci
+def test_quantize_activations_packed_w4_accepts_int32_permutation() -> None:
+    device = _cuda_device()
+    dim = 512
+    torch.manual_seed(0)
+    x = torch.randn((3, dim), device=device, dtype=torch.bfloat16)
+    permutation = torch.randperm(dim, device=device)
+    signs = torch.where(
+        torch.arange(dim, device=device) % 2 == 0,
+        torch.ones(dim, device=device, dtype=torch.int8),
+        -torch.ones(dim, device=device, dtype=torch.int8),
+    )
+    boundaries = torch.linspace(-0.2, 0.2, 15, device=device)
+
+    packed_int64, norms_int64 = quantize_activations_packed_w4(
+        x,
+        permutation,
+        signs,
+        boundaries,
+        eps=1e-12,
+        inv_sqrt_block=dim**-0.5,
+        threads=256,
+    )
+    packed_int32, norms_int32 = quantize_activations_packed_w4(
+        x,
+        permutation.to(torch.int32),
+        signs,
+        boundaries,
+        eps=1e-12,
+        inv_sqrt_block=dim**-0.5,
+        threads=256,
+    )
+
+    assert torch.equal(packed_int32, packed_int64)
+    assert torch.equal(norms_int32, norms_int64)
 
 
 @pytest.mark.kernels_ci
