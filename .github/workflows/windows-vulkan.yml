@@ -81,6 +81,17 @@ jobs:
           if (-not $vsRoot) {
             throw "MSVC x86_64 tools were not found"
           }
+          $vsVersion = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationVersion
+          $vsMajor = [int](($vsVersion -split "\.")[0])
+          $cmakeGenerator = switch ($vsMajor) {
+            17 { "Visual Studio 17 2022" }
+            18 { "Visual Studio 18 2026" }
+            default { throw "Unsupported Visual Studio major version $vsMajor" }
+          }
           $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
           $envDump = cmd.exe /d /s /c `
             "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
@@ -91,12 +102,12 @@ jobs:
             }
           }
           Get-Command cl.exe -ErrorAction Stop | Format-List Source
-          Get-Command ninja.exe -ErrorAction Stop | Format-List Source
+          Write-Host "Using CMake generator: $cmakeGenerator"
           & $glslc --version
           cmake --version
 
           cmake -S $executorch -B $executorchBuild `
-            -G Ninja `
+            -G $cmakeGenerator -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_INSTALL_PREFIX=$executorchInstall" `
             "-DPYTHON_EXECUTABLE=$python" `
@@ -107,10 +118,11 @@ jobs:
             -DEXECUTORCH_BUILD_PYBIND=OFF `
             -DEXECUTORCH_BUILD_XNNPACK=OFF `
             "-DGLSLC_PATH=$glslc"
-          cmake --build $executorchBuild --target install --parallel 4
+          cmake --build $executorchBuild --config Release `
+            --target install --parallel 4
 
           cmake -S native-kernels\orbitquant-vulkan -B $orbitquantBuild `
-            -G Ninja `
+            -G $cmakeGenerator -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_PREFIX_PATH=$executorchInstall" `
             "-DPYTHON_EXECUTABLE=$python" `
@@ -118,10 +130,10 @@ jobs:
             "-DGLSLC_PATH=$glslc" `
             -DORBITQUANT_VULKAN_BUILD_TESTS=ON `
             -DORBITQUANT_VULKAN_BUILD_PTE_RUNNER=ON
-          cmake --build $orbitquantBuild `
+          cmake --build $orbitquantBuild --config Release `
             --target orbitquant_vulkan_test orbitquant_vulkan_pte_runner `
             --parallel 4
 
           Get-Item `
-            "$orbitquantBuild\orbitquant_vulkan_test.exe", `
-            "$orbitquantBuild\orbitquant_vulkan_pte_runner.exe"
+            "$orbitquantBuild\Release\orbitquant_vulkan_test.exe", `
+            "$orbitquantBuild\Release\orbitquant_vulkan_pte_runner.exe"
