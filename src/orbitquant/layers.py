@@ -299,7 +299,9 @@ class OrbitQuantLinear(nn.Module):
         )
         self.register_buffer(
             "_rotation_permutation",
-            _clone_constant(self.rotation.permutation, device=constant_device),
+            _clone_constant(
+                self.rotation.permutation.to(torch.int32), device=constant_device
+            ),
             persistent=False,
         )
         self.register_buffer(
@@ -521,7 +523,7 @@ class OrbitQuantLinear(nn.Module):
         if self._derived_constants_valid and self._rotation_permutation.device == device:
             return
         constants = (
-            ("_rotation_permutation", self.rotation.permutation, torch.int64),
+            ("_rotation_permutation", self.rotation.permutation, torch.int32),
             ("_rotation_signs", self.rotation.signs, torch.int8),
             (
                 "_activation_codebook_centroids",
@@ -560,7 +562,7 @@ class OrbitQuantLinear(nn.Module):
     def _activation_kernel_constant_tensors(self, device: torch.device) -> dict[str, torch.Tensor]:
         return {
             "permutation": self._constant_buffer(
-                "_rotation_permutation", device=device, dtype=torch.int64
+                "_rotation_permutation", device=device, dtype=torch.int32
             ),
             "signs": self._constant_buffer("_rotation_signs", device=device, dtype=torch.int8),
             "centroids": self._constant_buffer(
@@ -892,8 +894,12 @@ class OrbitQuantLinear(nn.Module):
             activation_codes, activation_scale, weight_codes, weight_scale = (
                 self._int8_surrogate_constants(x.device)
             )
+            rows = x.numel() // self.in_features
+            # cuBLASLt INT8 GEMM needs padded rows below 32; the fused native
+            # tile kernel reads the packed weights directly and wins there.
             use_cutlass_tn = (
                 capability[0] >= 8
+                and rows >= 32
                 and self.out_features % 16 == 0
                 and callable(getattr(torch, "_int_mm", None))
             )
@@ -994,7 +1000,6 @@ class OrbitQuantLinear(nn.Module):
                 matmul_packed_w4a4_int8_with_native_kernel,
             )
 
-            rows = x.numel() // self.in_features
             tile_m, tile_n = self._native_w4a4_tile(
                 rows=rows,
                 out_features=self.out_features,

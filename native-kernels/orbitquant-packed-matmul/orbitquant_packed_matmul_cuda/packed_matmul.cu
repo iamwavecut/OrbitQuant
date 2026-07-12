@@ -267,12 +267,12 @@ __device__ __forceinline__ uint8_t orbitquant_bucketize_w4(
   return static_cast<uint8_t>(index);
 }
 
-template <typename storage_t, int Dim>
+template <typename storage_t, typename index_t, int Dim>
 __global__ void orbitquant_rpbh_quantize_pack_w4_kernel(
     uint8_t *__restrict__ packed_out,
     float *__restrict__ norms_out,
     storage_t const *__restrict__ x,
-    int64_t const *__restrict__ permutation,
+    index_t const *__restrict__ permutation,
     int8_t const *__restrict__ signs,
     float const *__restrict__ boundaries,
     float eps,
@@ -345,12 +345,12 @@ __global__ void orbitquant_rpbh_quantize_pack_w4_kernel(
   }
 }
 
-template <typename storage_t, int Dim, int OrbitBlock>
+template <typename storage_t, typename index_t, int Dim, int OrbitBlock>
 __global__ void orbitquant_rpbh_quantize_int8_kernel(
     int8_t *__restrict__ int8_out,
     float *__restrict__ norms_out,
     storage_t const *__restrict__ x,
-    int64_t const *__restrict__ permutation,
+    index_t const *__restrict__ permutation,
     int8_t const *__restrict__ signs,
     float const *__restrict__ boundaries,
     int8_t const *__restrict__ codes,
@@ -1520,8 +1520,9 @@ void quantize_activations_packed_w4(
       x.scalar_type() == torch::kBFloat16 || x.scalar_type() == torch::kHalf,
       "x must be bfloat16 or float16");
   TORCH_CHECK(
-      permutation.scalar_type() == torch::kLong,
-      "permutation must be int64");
+      permutation.scalar_type() == torch::kLong ||
+          permutation.scalar_type() == torch::kInt,
+      "permutation must be int32 or int64");
   TORCH_CHECK(signs.scalar_type() == torch::kChar, "signs must be int8");
   TORCH_CHECK(boundaries.scalar_type() == torch::kFloat, "boundaries must be float32");
   TORCH_CHECK(x.dim() == 2, "x must be rank 2");
@@ -1561,49 +1562,59 @@ void quantize_activations_packed_w4(
   const dim3 grid(static_cast<unsigned int>(rows));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-#define ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, DIM_VALUE)                 \
+#define ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, DIM_VALUE)     \
   if (shared_bytes > properties->sharedMemPerBlock) {                           \
     C10_CUDA_CHECK(cudaFuncSetAttribute(                                        \
-        orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, DIM_VALUE>,       \
+        orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, INDEX_TYPE,       \
+                                                DIM_VALUE>,                     \
         cudaFuncAttributeMaxDynamicSharedMemorySize,                            \
         shared_bytes));                                                         \
   }                                                                             \
-  orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, DIM_VALUE>              \
+  orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, INDEX_TYPE, DIM_VALUE>  \
       <<<grid, block, shared_bytes, stream>>>(                                   \
           packed_out.data_ptr<uint8_t>(),                                       \
           norms_out.data_ptr<float>(),                                          \
           reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),                 \
-          permutation.data_ptr<int64_t>(),                                      \
+          permutation.data_ptr<INDEX_TYPE>(),                                   \
           signs.data_ptr<int8_t>(),                                             \
           boundaries.data_ptr<float>(),                                         \
           static_cast<float>(eps),                                              \
           static_cast<float>(inv_sqrt_block),                                   \
           rows)
-#define ORBITQUANT_DISPATCH_RPBH_PACK_W4(STORAGE_TYPE)                          \
+#define ORBITQUANT_DISPATCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE)              \
   switch (dim) {                                                                \
     case 512:                                                                   \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 512);                        \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 512);            \
       break;                                                                    \
     case 1024:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 1024);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 1024);           \
       break;                                                                    \
     case 2048:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 2048);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 2048);           \
       break;                                                                    \
     case 4096:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 4096);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 4096);           \
       break;                                                                    \
     case 8192:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 8192);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 8192);           \
       break;                                                                    \
     case 16384:                                                                 \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 16384);                      \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 16384);          \
       break;                                                                    \
   }
+  const bool int32_permutation = permutation.scalar_type() == torch::kInt;
   if (x.scalar_type() == torch::kBFloat16) {
-    ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16, int64_t);
+    }
   } else {
-    ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half, int64_t);
+    }
   }
 #undef ORBITQUANT_DISPATCH_RPBH_PACK_W4
 #undef ORBITQUANT_LAUNCH_RPBH_PACK_W4
@@ -1641,8 +1652,9 @@ void quantize_activations_int8(
       x.scalar_type() == torch::kBFloat16 || x.scalar_type() == torch::kHalf,
       "x must be bfloat16 or float16");
   TORCH_CHECK(
-      permutation.scalar_type() == torch::kLong,
-      "permutation must be int64");
+      permutation.scalar_type() == torch::kLong ||
+          permutation.scalar_type() == torch::kInt,
+      "permutation must be int32 or int64");
   TORCH_CHECK(signs.scalar_type() == torch::kChar, "signs must be int8");
   TORCH_CHECK(boundaries.scalar_type() == torch::kFloat, "boundaries must be float32");
   TORCH_CHECK(codes.scalar_type() == torch::kChar, "codes must be int8");
@@ -1686,55 +1698,64 @@ void quantize_activations_int8(
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
 #define ORBITQUANT_LAUNCH_RPBH_INT8(                                           \
-    STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE)                                \
+    STORAGE_TYPE, INDEX_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE)                    \
   if (shared_bytes > properties->sharedMemPerBlock) {                           \
     C10_CUDA_CHECK(cudaFuncSetAttribute(                                        \
         orbitquant_rpbh_quantize_int8_kernel<                                   \
-            STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>,                        \
+            STORAGE_TYPE, INDEX_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>,            \
         cudaFuncAttributeMaxDynamicSharedMemorySize,                            \
         shared_bytes));                                                         \
   }                                                                             \
   orbitquant_rpbh_quantize_int8_kernel<                                         \
-      STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>                               \
+      STORAGE_TYPE, INDEX_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>                   \
       <<<grid, block, shared_bytes, stream>>>(                                   \
           int8_out.data_ptr<int8_t>(),                                          \
           norms_out.data_ptr<float>(),                                          \
           reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),                 \
-          permutation.data_ptr<int64_t>(),                                      \
+          permutation.data_ptr<INDEX_TYPE>(),                                   \
           signs.data_ptr<int8_t>(),                                             \
           boundaries.data_ptr<float>(),                                         \
           codes.data_ptr<int8_t>(),                                             \
           static_cast<float>(eps),                                              \
           static_cast<float>(inv_sqrt_block),                                   \
           rows)
-#define ORBITQUANT_DISPATCH_RPBH_INT8(STORAGE_TYPE)                             \
+#define ORBITQUANT_DISPATCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE)                 \
   switch (dim) {                                                                \
     case 512:                                                                   \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 512, 512);                      \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 512, 512);          \
       break;                                                                    \
     case 1024:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 1024, 1024);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 1024, 1024);        \
       break;                                                                    \
     case 2048:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 2048, 2048);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 2048, 2048);        \
       break;                                                                    \
     case 4096:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 4096, 4096);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 4096, 4096);        \
       break;                                                                    \
     case 8192:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 8192, 8192);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 8192, 8192);        \
       break;                                                                    \
     case 12288:                                                                 \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 12288, 4096);                   \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 12288, 4096);       \
       break;                                                                    \
     case 16384:                                                                 \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 16384, 16384);                  \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 16384, 16384);      \
       break;                                                                    \
   }
+  const bool int32_permutation = permutation.scalar_type() == torch::kInt;
   if (x.scalar_type() == torch::kBFloat16) {
-    ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16, int64_t);
+    }
   } else {
-    ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half, int64_t);
+    }
   }
 #undef ORBITQUANT_DISPATCH_RPBH_INT8
 #undef ORBITQUANT_LAUNCH_RPBH_INT8

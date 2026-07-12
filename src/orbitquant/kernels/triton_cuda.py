@@ -118,7 +118,7 @@ def _weight_quantization_constants(
         ("rotation_permutation", *rotation_key),
         rotation.permutation,
         device=device,
-        dtype=torch.int64,
+        dtype=torch.int32,
     )
     signs = _cached_triton_tensor(
         ("rotation_signs", *rotation_key),
@@ -169,7 +169,7 @@ def _permute_sign_normalize_activation_kernel(
     mask = offsets < total
     rows = offsets // dim
     cols = offsets % dim
-    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int32)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norms = tl.load(norms_ptr + rows, mask=mask, other=1.0).to(tl.float32)
     denom = norms + eps
@@ -241,7 +241,7 @@ def _fused_rpbh_quantize_activation_kernel(
     local_cols = tl.arange(0, orbit_block_size)
     cols = orbit_block * orbit_block_size + local_cols
     mask = (row < rows) & (cols < dim)
-    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int32)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
     denominator = norm + eps
@@ -309,7 +309,7 @@ def _fused_rpbh_quantize_activation_pack_w4_kernel(
     local_cols = tl.arange(0, orbit_block_size)
     cols = orbit_block * orbit_block_size + local_cols
     mask = (row < rows) & (cols < dim)
-    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int32)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
     values = tl.load(
@@ -339,6 +339,10 @@ def _fused_rpbh_quantize_activation_pack_w4_kernel(
         values = _fwht_local_stage(values, orbit_block_size, 256)
     if fwht_stages > 9:
         values = _fwht_local_stage(values, orbit_block_size, 512)
+    if fwht_stages > 10:
+        values = _fwht_local_stage(values, orbit_block_size, 1024)
+    if fwht_stages > 11:
+        values = _fwht_local_stage(values, orbit_block_size, 2048)
 
     values *= inv_sqrt_block
     indices = tl.zeros((orbit_block_size,), dtype=tl.int32)
@@ -375,7 +379,7 @@ def _fused_rpbh_fwht_1024_chunk_kernel(
     local_cols = tl.arange(0, 1024)
     cols = orbit_block * orbit_block_size + chunk * 1024 + local_cols
     mask = (row < rows) & (cols < dim)
-    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int32)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
     values = tl.load(
@@ -676,6 +680,77 @@ def _matmul_packed_weight_w4_kernel(
 
 
 @triton.jit
+def _matmul_packed_adaln_int4_group_kernel(
+    input_ptr,
+    packed_ptr,
+    scales_ptr,
+    bias_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    padded_in_features: tl.constexpr,
+    num_groups: tl.constexpr,
+    group_size: tl.constexpr,
+    has_bias: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+):
+    """Group-aligned AdaLN matmul: every k-tile stays inside one scale group,
+    so scales load as one row vector instead of a (block_k, block_n) gather."""
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * block_m + tl.arange(0, block_m)
+    offs_n = pid_n * block_n + tl.arange(0, block_n)
+    offs_k = tl.arange(0, block_k)
+    col_mask = offs_n < out_features
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
+
+    for k_start in range(0, in_features, block_k):
+        k = k_start + offs_k
+        input_mask = (offs_m[:, None] < rows) & (k[None, :] < in_features)
+        input_values = tl.load(
+            input_ptr + offs_m[:, None] * in_features + k[None, :],
+            mask=input_mask,
+            other=0.0,
+        )
+
+        value_offsets = offs_n[None, :] * padded_in_features + k[:, None]
+        weight_mask = col_mask[None, :] & (k[:, None] < in_features)
+        packed = tl.load(
+            packed_ptr + value_offsets // 2,
+            mask=weight_mask,
+            other=0,
+        ).to(tl.uint32)
+        shifts = (value_offsets & 1) * 4
+        unsigned = (packed >> shifts) & 15
+        signed = unsigned.to(tl.int32) - 8
+        group = k_start // group_size
+        scales = tl.load(
+            scales_ptr + offs_n * num_groups + group,
+            mask=col_mask,
+            other=0.0,
+        ).to(tl.float32)
+        weights = (signed.to(tl.float32) * scales[None, :]).to(input_values.dtype)
+        accumulator += tl.dot(input_values, weights)
+
+    if has_bias:
+        bias = tl.load(
+            bias_ptr + offs_n,
+            mask=col_mask,
+            other=0.0,
+        ).to(tl.float32)
+        accumulator += bias[None, :]
+
+    tl.store(
+        output_ptr + offs_m[:, None] * out_features + offs_n[None, :],
+        accumulator,
+        mask=(offs_m[:, None] < rows) & col_mask[None, :],
+    )
+
+
+@triton.jit
 def _matmul_packed_adaln_int4_kernel(
     input_ptr,
     packed_ptr,
@@ -862,7 +937,7 @@ def _permute_sign_weight_kernel(
     mask = offsets < total
     rows = offsets // in_features
     cols = offsets % in_features
-    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int64)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int32)
     signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
     values = tl.load(
         weight_ptr + rows * in_features + source_cols,
@@ -1144,7 +1219,7 @@ def quantize_activations_with_triton(
     signs_source = constants.get("signs", rotation.signs)
     centroids_source = constants.get("centroids", codebook.centroids)
     boundaries_source = constants.get("boundaries", codebook.boundaries)
-    permutation = permutation_source.to(device=x.device, dtype=torch.int64).contiguous()
+    permutation = permutation_source.to(device=x.device, dtype=torch.int32).contiguous()
     signs = signs_source.to(device=x.device, dtype=torch.int8).contiguous()
     centroids = centroids_source.to(device=x.device, dtype=torch.float32).contiguous()
     boundaries = boundaries_source.to(device=x.device, dtype=torch.float32).contiguous()
@@ -1162,7 +1237,7 @@ def quantize_activations_with_triton(
 
     orbit_block_size = int(rotation.block_size)
     num_blocks = int(rotation.num_blocks)
-    if orbit_block_size <= 1024:
+    if orbit_block_size <= 4096:
         fwht_stages = orbit_block_size.bit_length() - 1
         _fused_rpbh_quantize_activation_kernel[(rows * num_blocks,)](
             input_contiguous,
@@ -1273,7 +1348,7 @@ def quantize_activations_packed_w4_with_triton(
     constants = {} if constant_tensors is None else constant_tensors
     permutation = (
         constants.get("permutation", rotation.permutation)
-        .to(device=x.device, dtype=torch.int64)
+        .to(device=x.device, dtype=torch.int32)
         .contiguous()
     )
     signs = (
@@ -1298,7 +1373,7 @@ def quantize_activations_packed_w4_with_triton(
 
     orbit_block_size = int(rotation.block_size)
     num_blocks = int(rotation.num_blocks)
-    if orbit_block_size <= 1024:
+    if orbit_block_size <= 4096:
         fwht_stages = orbit_block_size.bit_length() - 1
         _fused_rpbh_quantize_activation_pack_w4_kernel[(rows * num_blocks,)](
             input_contiguous,
@@ -1495,6 +1570,39 @@ def dequantize_packed_weight_with_triton(
     return output.reshape(out_features, in_features)
 
 
+_PACKED_MATMUL_LEGACY_TILE = (64, 64, 128, 4)
+
+
+def _resolve_packed_matmul_tile(
+    rows: int,
+    bits: int,
+    block_m: int,
+    block_n: int,
+    block_k: int,
+    num_warps: int,
+) -> tuple[int, int, int, int]:
+    """Map the historical default tile to a measured shape-aware choice.
+
+    Callers that pass any non-default tile keep full manual control. The
+    historical default (64, 64, 128, 4) measured 1.9-2.4x slower than
+    (128, 64, 64, 4) for large-row W3/W4 packed matmuls on RTX 4090-class
+    hardware, so it is treated as "auto".
+    """
+    if (block_m, block_n, block_k, num_warps) != _PACKED_MATMUL_LEGACY_TILE:
+        return block_m, block_n, block_k, num_warps
+    if rows >= 128 and bits != 4:
+        return 128, 128, 64, 8
+    return 128, 64, 64, 4
+
+
+def _triton_out_of_resources_error() -> type[Exception] | None:
+    try:
+        from triton.runtime.errors import OutOfResources
+    except Exception:  # pragma: no cover - triton version dependent
+        return None
+    return OutOfResources
+
+
 def matmul_packed_weight_with_triton(
     x: torch.Tensor,
     packed_weight_indices: torch.Tensor,
@@ -1537,45 +1645,67 @@ def matmul_packed_weight_with_triton(
         bias_tensor = bias.to(device=x.device).contiguous()
         has_bias = True
 
+    block_m, block_n, block_k, num_warps = _resolve_packed_matmul_tile(
+        rows, bits, block_m, block_n, block_k, num_warps
+    )
     effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
-    grid = (triton.cdiv(rows, effective_block_m), triton.cdiv(out_features, block_n))
-    if bits == 4 and in_features % 2 == 0 and block_k >= 2:
-        block_k_bytes = max(1, block_k // 2)
-        _matmul_packed_weight_w4_kernel[grid](
-            input_contiguous,
-            packed,
-            norms,
-            centroids,
-            bias_tensor,
-            output,
-            rows=rows,
-            out_features=out_features,
-            in_features=in_features,
-            has_bias=has_bias,
-            block_m=effective_block_m,
-            block_n=block_n,
-            block_k_bytes=block_k_bytes,
-            num_warps=num_warps,
-        )
-    else:
-        _matmul_packed_weight_kernel[grid](
-            input_contiguous,
-            packed,
-            norms,
-            centroids,
-            bias_tensor,
-            output,
-            rows=rows,
-            out_features=out_features,
-            in_features=in_features,
-            bits=bits,
-            has_bias=has_bias,
-            block_m=effective_block_m,
-            block_n=block_n,
-            block_k=block_k,
-            num_warps=num_warps,
-        )
-    return output.reshape(*original_shape[:-1], out_features)
+    out_of_resources = _triton_out_of_resources_error()
+    attempts: list[tuple[int, int]] = [(block_n, block_k)]
+    for candidate in (
+        (block_n, max(32, block_k // 2)),
+        (max(64, block_n // 2), max(32, block_k // 2)),
+    ):
+        if candidate not in attempts:
+            attempts.append(candidate)
+    last_error: Exception | None = None
+    for attempt_n, attempt_k in attempts:
+        grid = (triton.cdiv(rows, effective_block_m), triton.cdiv(out_features, attempt_n))
+        try:
+            if bits == 4 and in_features % 2 == 0 and attempt_k >= 2:
+                block_k_bytes = max(1, attempt_k // 2)
+                _matmul_packed_weight_w4_kernel[grid](
+                    input_contiguous,
+                    packed,
+                    norms,
+                    centroids,
+                    bias_tensor,
+                    output,
+                    rows=rows,
+                    out_features=out_features,
+                    in_features=in_features,
+                    has_bias=has_bias,
+                    block_m=effective_block_m,
+                    block_n=attempt_n,
+                    block_k_bytes=block_k_bytes,
+                    num_warps=num_warps,
+                )
+            else:
+                _matmul_packed_weight_kernel[grid](
+                    input_contiguous,
+                    packed,
+                    norms,
+                    centroids,
+                    bias_tensor,
+                    output,
+                    rows=rows,
+                    out_features=out_features,
+                    in_features=in_features,
+                    bits=bits,
+                    has_bias=has_bias,
+                    block_m=effective_block_m,
+                    block_n=attempt_n,
+                    block_k=attempt_k,
+                    num_warps=num_warps,
+                )
+            return output.reshape(*original_shape[:-1], out_features)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a tile overflow
+            if out_of_resources is None or not isinstance(exc, out_of_resources):
+                raise
+            last_error = exc
+    raise RuntimeError(
+        "packed matmul exceeded the device shared-memory limit for tile "
+        f"attempts {attempts}; pass smaller block_n/block_k values"
+    ) from last_error
 
 
 def matmul_packed_adaln_int4_with_triton(
@@ -1589,7 +1719,7 @@ def matmul_packed_adaln_int4_with_triton(
     bias: torch.Tensor | None = None,
     block_m: int = 64,
     block_n: int = 128,
-    block_k: int = 128,
+    block_k: int = 64,
     num_warps: int = 4,
 ) -> torch.Tensor:
     _require_triton_tensor(x, "packed AdaLN matmul")
@@ -1640,29 +1770,57 @@ def matmul_packed_adaln_int4_with_triton(
         has_bias = True
 
     effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
-    grid = (
-        triton.cdiv(rows, effective_block_m),
-        triton.cdiv(out_features, block_n),
-    )
-    _matmul_packed_adaln_int4_kernel[grid](
-        input_contiguous,
-        packed,
-        scale_values,
-        bias_values,
-        output,
-        rows=rows,
-        out_features=out_features,
-        in_features=in_features,
-        padded_in_features=padded_in_features,
-        num_groups=num_groups,
-        group_size=group_size,
-        has_bias=has_bias,
-        block_m=effective_block_m,
-        block_n=block_n,
-        block_k=block_k,
-        num_warps=num_warps,
-    )
-    return output.reshape(*original_shape[:-1], out_features)
+    out_of_resources = _triton_out_of_resources_error()
+    attempts: list[tuple[int, int]] = [(block_n, block_k)]
+    for candidate in (
+        (block_n, max(16, block_k // 2)),
+        (max(64, block_n // 2), max(16, block_k // 2)),
+    ):
+        if candidate not in attempts:
+            attempts.append(candidate)
+    last_error: Exception | None = None
+    for attempt_n, attempt_k in attempts:
+        grid = (
+            triton.cdiv(rows, effective_block_m),
+            triton.cdiv(out_features, attempt_n),
+        )
+        # When every k-tile stays inside one scale group, the group-aligned
+        # kernel loads scales as a row vector; otherwise keep the generic
+        # per-element gather kernel.
+        use_group_kernel = attempt_k <= group_size and group_size % attempt_k == 0
+        kernel = (
+            _matmul_packed_adaln_int4_group_kernel
+            if use_group_kernel
+            else _matmul_packed_adaln_int4_kernel
+        )
+        try:
+            kernel[grid](
+                input_contiguous,
+                packed,
+                scale_values,
+                bias_values,
+                output,
+                rows=rows,
+                out_features=out_features,
+                in_features=in_features,
+                padded_in_features=padded_in_features,
+                num_groups=num_groups,
+                group_size=group_size,
+                has_bias=has_bias,
+                block_m=effective_block_m,
+                block_n=attempt_n,
+                block_k=attempt_k,
+                num_warps=num_warps,
+            )
+            return output.reshape(*original_shape[:-1], out_features)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a tile overflow
+            if out_of_resources is None or not isinstance(exc, out_of_resources):
+                raise
+            last_error = exc
+    raise RuntimeError(
+        "packed AdaLN matmul exceeded the device shared-memory limit for tile "
+        f"attempts {attempts}; pass smaller block_n/block_k values"
+    ) from last_error
 
 
 def fit_int8_centroid_surrogate(centroids: torch.Tensor) -> tuple[torch.Tensor, float]:
@@ -1783,6 +1941,20 @@ def matmul_packed_w4a4_with_int_mm(
             block_size=decode_block_size,
         )
 
+    # cuBLASLt INT8 GEMM rejects some row counts (every m <= 16 and, on some
+    # torch/CUDA stacks, shape-dependent m values that are not multiples of
+    # 32), so run the GEMM on zero-padded rows and let the epilogue write only
+    # the real ones.
+    gemm_rows = max(32, -(-rows // 32) * 32)
+    if gemm_rows != rows:
+        padded_activations = torch.zeros(
+            (gemm_rows, in_features), device=device, dtype=torch.int8
+        )
+        padded_activations[:rows].copy_(activation_values)
+        gemm_activations = padded_activations
+    else:
+        gemm_activations = activation_values
+
     output = torch.empty((rows, out_features), device=device, dtype=output_dtype)
     if bias is None:
         bias_values = output
@@ -1811,7 +1983,7 @@ def matmul_packed_w4a4_with_int_mm(
             total=weight_total,
             block_size=decode_block_size,
         )
-        accumulator = torch._int_mm(activation_values, weight_storage.t())
+        accumulator = torch._int_mm(gemm_activations, weight_storage.t())
         del weight_storage
         epilogue_grid = (
             triton.cdiv(rows, epilogue_block_m),
@@ -1834,6 +2006,7 @@ def matmul_packed_w4a4_with_int_mm(
             num_warps=4,
         )
         del accumulator
+    del gemm_activations
     del activation_values
     return output.reshape(*original_shape[:-1], out_features)
 
