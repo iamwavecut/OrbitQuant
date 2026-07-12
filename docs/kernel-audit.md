@@ -219,6 +219,15 @@ The earlier llvmpipe run remains build and validation evidence only. Windows
 Vulkan and other AMD architectures are unverified, the path is W4A4-only, and
 it is not selected by `auto_fused`; these limitations keep Vulkan experimental.
 
+Windows x86_64 source portability is covered by the path-filtered
+`Windows Vulkan build` workflow. At OrbitQuant commit `f41ae5e`, run
+`29174664556` used MSVC 19.51, CMake 4.3, shaderc 2026.2, and the pinned
+ExecuTorch commit above to compile the packed shader library, the 9,336,320-byte
+hardware test executable, and the 11,616,768-byte PTE runner. The hosted runner
+did not expose a Vulkan GPU, so this is build evidence rather than Windows
+runtime, correctness, memory, or performance evidence; Windows Vulkan remains
+unverified until the same executables run on an actual AMD device.
+
 ### Experimental ROCm and XPU source candidates
 
 ROCm and Intel XPU share the exact Triton kernel surface with CUDA where the
