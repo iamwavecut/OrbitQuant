@@ -251,7 +251,7 @@ jobs:
             } | Set-Content -Encoding ascii $checksumPath
 
           $bundleBytes = (
-            Get-ChildItem $bundle -File | Measure-Object Length -Sum
+            Get-ChildItem $bundle -File -Recurse | Measure-Object Length -Sum
           ).Sum
           if ($bundleBytes -gt 64MB) {
             throw "Windows Vulkan runner bundle exceeds 64 MiB: $bundleBytes"
