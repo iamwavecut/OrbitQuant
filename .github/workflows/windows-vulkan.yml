@@ -91,11 +91,12 @@ jobs:
             }
           }
           Get-Command cl.exe -ErrorAction Stop | Format-List Source
+          Get-Command ninja.exe -ErrorAction Stop | Format-List Source
           & $glslc --version
           cmake --version
 
           cmake -S $executorch -B $executorchBuild `
-            -G "Visual Studio 17 2022" -A x64 `
+            -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_INSTALL_PREFIX=$executorchInstall" `
             "-DPYTHON_EXECUTABLE=$python" `
@@ -106,11 +107,10 @@ jobs:
             -DEXECUTORCH_BUILD_PYBIND=OFF `
             -DEXECUTORCH_BUILD_XNNPACK=OFF `
             "-DGLSLC_PATH=$glslc"
-          cmake --build $executorchBuild --config Release `
-            --target install --parallel 4
+          cmake --build $executorchBuild --target install --parallel 4
 
           cmake -S native-kernels\orbitquant-vulkan -B $orbitquantBuild `
-            -G "Visual Studio 17 2022" -A x64 `
+            -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_PREFIX_PATH=$executorchInstall" `
             "-DPYTHON_EXECUTABLE=$python" `
@@ -118,10 +118,10 @@ jobs:
             "-DGLSLC_PATH=$glslc" `
             -DORBITQUANT_VULKAN_BUILD_TESTS=ON `
             -DORBITQUANT_VULKAN_BUILD_PTE_RUNNER=ON
-          cmake --build $orbitquantBuild --config Release `
+          cmake --build $orbitquantBuild `
             --target orbitquant_vulkan_test orbitquant_vulkan_pte_runner `
             --parallel 4
 
           Get-Item `
-            "$orbitquantBuild\Release\orbitquant_vulkan_test.exe", `
-            "$orbitquantBuild\Release\orbitquant_vulkan_pte_runner.exe"
+            "$orbitquantBuild\orbitquant_vulkan_test.exe", `
+            "$orbitquantBuild\orbitquant_vulkan_pte_runner.exe"
