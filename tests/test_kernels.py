@@ -1204,6 +1204,133 @@ def test_w4a4_int_mm_path_supports_arbitrary_row_counts(rows):
     assert relative_error <= 3e-2
 
 
+@pytest.mark.parametrize("rows", [32, 400])
+def test_int8_activation_lowbit_fused_matches_packed_fused(rows):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import (
+        matmul_int8_activations_packed_lowbit_fused_with_triton,
+        matmul_packed_w4a4_fused_with_triton,
+        quantize_activations_packed_w4_with_triton,
+    )
+
+    fixture = _build_w4a4_triton_fixture(in_features=512, out_features=512)
+    x = torch.randn(rows, fixture["in_features"], device="cuda", dtype=torch.bfloat16)
+    packed_x, token_norms = quantize_activations_packed_w4_with_triton(
+        x,
+        rotation=fixture["rotation"],
+        codebook=fixture["activation_codebook"],
+        eps=1e-10,
+    )
+    bias = torch.randn(fixture["out_features"], device="cuda", dtype=torch.bfloat16)
+    packed_result = matmul_packed_w4a4_fused_with_triton(
+        packed_x,
+        fixture["packed"],
+        token_norms,
+        fixture["row_norms"],
+        fixture["activation_codes"],
+        fixture["weight_codes"],
+        activation_scale=fixture["activation_scale"],
+        weight_scale=fixture["weight_scale"],
+        out_features=fixture["out_features"],
+        in_features=fixture["in_features"],
+        bias=bias,
+        output_dtype=torch.bfloat16,
+    )
+
+    # Decode the packed nibbles into the same INT8 surrogates the fused
+    # kernel would produce, then run the direct-activation kernel.
+    low = (packed_x & 15).to(torch.long)
+    high = (packed_x >> 4).to(torch.long)
+    int8_x = torch.empty(
+        (rows, fixture["in_features"]), device="cuda", dtype=torch.int8
+    )
+    int8_x[:, 0::2] = fixture["activation_codes"][low]
+    int8_x[:, 1::2] = fixture["activation_codes"][high]
+
+    direct_result = matmul_int8_activations_packed_lowbit_fused_with_triton(
+        int8_x,
+        fixture["packed"],
+        token_norms,
+        fixture["row_norms"],
+        fixture["weight_codes"],
+        weight_bits=4,
+        activation_scale=fixture["activation_scale"],
+        weight_scale=fixture["weight_scale"],
+        out_features=fixture["out_features"],
+        in_features=fixture["in_features"],
+        bias=bias,
+        output_dtype=torch.bfloat16,
+    )
+    torch.testing.assert_close(direct_result, packed_result)
+
+
+@pytest.mark.parametrize("rows", [32, 400])
+def test_w2a4_fused_triton_matmul_matches_int8_emulation(rows):
+    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    from orbitquant.kernels.triton_cuda import (
+        matmul_int8_activations_packed_lowbit_fused_with_triton,
+        matmul_packed_w2a4_fused_with_triton,
+    )
+
+    torch.manual_seed(0)
+    in_features, out_features = 512, 512
+    act_indices = torch.randint(0, 16, (rows, in_features), dtype=torch.uint8)
+    weight_indices = torch.randint(0, 4, (out_features, in_features), dtype=torch.uint8)
+    act_flat = act_indices.flatten()
+    packed_x = (act_flat[0::2] | (act_flat[1::2] << 4)).reshape(
+        rows, in_features // 2
+    ).cuda()
+    w_flat = weight_indices.flatten()
+    packed_w = (
+        w_flat[0::4] | (w_flat[1::4] << 2) | (w_flat[2::4] << 4) | (w_flat[3::4] << 6)
+    ).cuda()
+    activation_codes = torch.arange(-8, 8, dtype=torch.int8, device="cuda")
+    weight_codes = torch.tensor([-7, -2, 2, 7], dtype=torch.int8, device="cuda")
+    token_norms = (torch.rand(rows, device="cuda") + 0.5).float()
+    row_norms = (torch.rand(out_features, device="cuda") + 0.5).float()
+    scale = 0.01
+    act_i8 = activation_codes[act_indices.long().cuda()]
+    w_i8 = weight_codes[weight_indices.long().cuda()]
+    expected = (
+        act_i8.float() @ w_i8.float().t()
+        * token_norms[:, None] * row_norms[None, :] * scale
+    )
+
+    packed_result = matmul_packed_w2a4_fused_with_triton(
+        packed_x,
+        packed_w,
+        token_norms,
+        row_norms,
+        activation_codes,
+        weight_codes,
+        activation_scale=scale,
+        weight_scale=1.0,
+        out_features=out_features,
+        in_features=in_features,
+        output_dtype=torch.bfloat16,
+    )
+    assert (packed_result.float() - expected).abs().max().item() < 0.5
+
+    direct_result = matmul_int8_activations_packed_lowbit_fused_with_triton(
+        act_i8,
+        packed_w,
+        token_norms,
+        row_norms,
+        weight_codes,
+        weight_bits=2,
+        activation_scale=scale,
+        weight_scale=1.0,
+        out_features=out_features,
+        in_features=in_features,
+        output_dtype=torch.bfloat16,
+    )
+    torch.testing.assert_close(direct_result, packed_result)
+
+
 @pytest.mark.parametrize("rows", [17, 48])
 def test_w4a4_int_mm_path_supports_unaligned_rows_on_large_shape(rows):
     if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:

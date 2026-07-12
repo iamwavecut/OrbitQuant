@@ -1923,6 +1923,172 @@ def _matmul_packed_w4a4_fused_int8_kernel(
     )
 
 
+@triton.jit
+def _matmul_int8act_packed_lowbit_fused_kernel(
+    act_ptr,
+    packed_weight_ptr,
+    token_norms_ptr,
+    row_norms_ptr,
+    weight_codes_ptr,
+    bias_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    combined_scale: tl.constexpr,
+    has_bias: tl.constexpr,
+    weight_bits: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+):
+    """Fused low-bit GEMM over INT8-surrogate activations: the activation
+    tile loads directly (no nibble unpack) and the packed W2/W4 weights
+    decode to INT8 surrogates in-register."""
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * block_m + tl.arange(0, block_m)
+    offs_n = pid_n * block_n + tl.arange(0, block_n)
+    offs_k = tl.arange(0, block_k)
+    values_per_byte: tl.constexpr = 8 // weight_bits
+    packed_k: tl.constexpr = in_features // values_per_byte
+    packed_block_k: tl.constexpr = block_k // values_per_byte
+    offs_kb = tl.arange(0, packed_block_k)
+    m_mask = offs_m < rows
+    n_mask = offs_n < out_features
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.int32)
+
+    for k_start in range(0, in_features, block_k):
+        k = k_start + offs_k
+        k_mask = k < in_features
+        act_tile = tl.load(
+            act_ptr + offs_m[:, None] * in_features + k[None, :],
+            mask=m_mask[:, None] & k_mask[None, :],
+            other=0,
+        )
+
+        kb = (k_start // values_per_byte) + offs_kb
+        kb_mask = kb < packed_k
+        weight_bytes = tl.load(
+            packed_weight_ptr + offs_n[:, None] * packed_k + kb[None, :],
+            mask=n_mask[:, None] & kb_mask[None, :],
+            other=0,
+        ).to(tl.int32)
+        if weight_bits == 4:
+            weight_low = tl.load(weight_codes_ptr + (weight_bytes & 15))
+            weight_high = tl.load(weight_codes_ptr + ((weight_bytes >> 4) & 15))
+            weight_tile = tl.reshape(
+                tl.join(weight_low, weight_high), (block_n, block_k)
+            ).to(tl.int8)
+        else:
+            w0 = tl.load(weight_codes_ptr + (weight_bytes & 3))
+            w1 = tl.load(weight_codes_ptr + ((weight_bytes >> 2) & 3))
+            w2 = tl.load(weight_codes_ptr + ((weight_bytes >> 4) & 3))
+            w3 = tl.load(weight_codes_ptr + ((weight_bytes >> 6) & 3))
+            weight_tile = tl.reshape(
+                tl.join(tl.join(w0, w2), tl.join(w1, w3)), (block_n, block_k)
+            ).to(tl.int8)
+
+        accumulator = tl.dot(
+            act_tile, tl.trans(weight_tile), accumulator, out_dtype=tl.int32
+        )
+
+    result = accumulator.to(tl.float32)
+    token_norms = tl.load(token_norms_ptr + offs_m, mask=m_mask, other=0.0).to(tl.float32)
+    row_norms = tl.load(row_norms_ptr + offs_n, mask=n_mask, other=0.0).to(tl.float32)
+    result = result * token_norms[:, None] * row_norms[None, :] * combined_scale
+    if has_bias:
+        bias = tl.load(bias_ptr + offs_n, mask=n_mask, other=0.0).to(tl.float32)
+        result += bias[None, :]
+    tl.store(
+        output_ptr + offs_m[:, None] * out_features + offs_n[None, :],
+        result,
+        mask=m_mask[:, None] & n_mask[None, :],
+    )
+
+
+@triton.jit
+def _matmul_packed_w2a4_fused_int8_kernel(
+    packed_act_ptr,
+    packed_weight_ptr,
+    token_norms_ptr,
+    row_norms_ptr,
+    act_codes_ptr,
+    weight_codes_ptr,
+    bias_ptr,
+    output_ptr,
+    rows: tl.constexpr,
+    out_features: tl.constexpr,
+    in_features: tl.constexpr,
+    combined_scale: tl.constexpr,
+    has_bias: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+):
+    """W2A4 GEMM over packed operands: 4-bit activation nibbles and 2-bit
+    weight fields decode to INT8 surrogates in-register."""
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * block_m + tl.arange(0, block_m)
+    offs_n = pid_n * block_n + tl.arange(0, block_n)
+    packed_act_k: tl.constexpr = in_features // 2
+    act_block_k: tl.constexpr = block_k // 2
+    offs_akb = tl.arange(0, act_block_k)
+    packed_w_k: tl.constexpr = in_features // 4
+    w_block_k: tl.constexpr = block_k // 4
+    offs_wkb = tl.arange(0, w_block_k)
+    m_mask = offs_m < rows
+    n_mask = offs_n < out_features
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.int32)
+
+    for k_start in range(0, in_features, block_k):
+        akb = (k_start // 2) + offs_akb
+        akb_mask = akb < packed_act_k
+        act_bytes = tl.load(
+            packed_act_ptr + offs_m[:, None] * packed_act_k + akb[None, :],
+            mask=m_mask[:, None] & akb_mask[None, :],
+            other=0,
+        ).to(tl.int32)
+        act_low = tl.load(act_codes_ptr + (act_bytes & 15))
+        act_high = tl.load(act_codes_ptr + ((act_bytes >> 4) & 15))
+        act_tile = tl.reshape(
+            tl.join(act_low, act_high), (block_m, block_k)
+        ).to(tl.int8)
+
+        wkb = (k_start // 4) + offs_wkb
+        wkb_mask = wkb < packed_w_k
+        weight_bytes = tl.load(
+            packed_weight_ptr + offs_n[:, None] * packed_w_k + wkb[None, :],
+            mask=n_mask[:, None] & wkb_mask[None, :],
+            other=0,
+        ).to(tl.int32)
+        w0 = tl.load(weight_codes_ptr + (weight_bytes & 3))
+        w1 = tl.load(weight_codes_ptr + ((weight_bytes >> 2) & 3))
+        w2 = tl.load(weight_codes_ptr + ((weight_bytes >> 4) & 3))
+        w3 = tl.load(weight_codes_ptr + ((weight_bytes >> 6) & 3))
+        weight_tile = tl.reshape(
+            tl.join(tl.join(w0, w2), tl.join(w1, w3)), (block_n, block_k)
+        ).to(tl.int8)
+
+        accumulator = tl.dot(
+            act_tile, tl.trans(weight_tile), accumulator, out_dtype=tl.int32
+        )
+
+    result = accumulator.to(tl.float32)
+    token_norms = tl.load(token_norms_ptr + offs_m, mask=m_mask, other=0.0).to(tl.float32)
+    row_norms = tl.load(row_norms_ptr + offs_n, mask=n_mask, other=0.0).to(tl.float32)
+    result = result * token_norms[:, None] * row_norms[None, :] * combined_scale
+    if has_bias:
+        bias = tl.load(bias_ptr + offs_n, mask=n_mask, other=0.0).to(tl.float32)
+        result += bias[None, :]
+    tl.store(
+        output_ptr + offs_m[:, None] * out_features + offs_n[None, :],
+        result,
+        mask=m_mask[:, None] & n_mask[None, :],
+    )
+
+
 def _fused_w4a4_tile_config(rows: int) -> tuple[int, int, int, int]:
     """Measured tile table (A40/sm_86 and RTX 4090/sm_89 grids, 2026-07):
     large batches want a taller M tile and a narrower K tile."""
@@ -2037,6 +2203,215 @@ def matmul_packed_w4a4_fused_with_triton(
             last_error = exc
     raise RuntimeError(
         "fused packed W4A4 matmul exceeded the device shared-memory limit for "
+        f"tile attempts {attempts}"
+    ) from last_error
+
+
+def matmul_int8_activations_packed_lowbit_fused_with_triton(
+    int8_activations: torch.Tensor,
+    packed_weight_indices: torch.Tensor,
+    token_norms: torch.Tensor,
+    row_norms: torch.Tensor,
+    weight_codes: torch.Tensor,
+    *,
+    weight_bits: int,
+    activation_scale: float,
+    weight_scale: float,
+    out_features: int,
+    in_features: int,
+    bias: torch.Tensor | None = None,
+    output_dtype: torch.dtype = torch.bfloat16,
+) -> torch.Tensor:
+    """Fused low-bit GEMM over INT8-surrogate activations (W2/W4 weights).
+
+    Measured on RTX 4090: skipping the packed-activation round trip is
+    13-20% faster than the packed-activation fused kernel at 64-2048 rows.
+    """
+    if not int8_activations.is_cuda:
+        raise RuntimeError("fused low-bit matmul requires CUDA tensors")
+    if weight_bits not in (2, 4):
+        raise ValueError("fused low-bit matmul supports weight_bits 2 or 4")
+    if output_dtype not in {torch.float16, torch.bfloat16}:
+        raise ValueError("output_dtype must be float16 or bfloat16")
+    if in_features <= 0 or in_features % 64 != 0:
+        raise ValueError("in_features must be positive and divisible by 64")
+    if out_features <= 0 or out_features % 16 != 0:
+        raise ValueError("out_features must be positive and divisible by 16")
+
+    triton, _ = _load_triton()
+    original_shape = int8_activations.shape
+    if original_shape[-1] != in_features:
+        raise ValueError(
+            f"expected activation last dimension {in_features}, got {original_shape[-1]}"
+        )
+    activations = int8_activations.to(dtype=torch.int8).contiguous().reshape(-1, in_features)
+    rows = activations.shape[0]
+    device = int8_activations.device
+    values_per_byte = 8 // weight_bits
+    packed_k = in_features // values_per_byte
+    if packed_weight_indices.numel() != out_features * packed_k:
+        raise ValueError("packed weights have an unexpected size")
+    output = torch.empty((rows, out_features), device=device, dtype=output_dtype)
+    if rows == 0:
+        return output.reshape(*original_shape[:-1], out_features)
+
+    weights = packed_weight_indices.to(device=device, dtype=torch.uint8).contiguous().flatten()
+    weight_code_values = weight_codes.to(device=device, dtype=torch.int8).contiguous()
+    token_norm_values = token_norms.to(device=device, dtype=torch.float32).contiguous().reshape(-1)
+    row_norm_values = row_norms.to(device=device, dtype=torch.float32).contiguous().reshape(-1)
+    if bias is None:
+        bias_values = output
+        has_bias = False
+    else:
+        bias_values = bias.to(device=device, dtype=output_dtype).contiguous()
+        has_bias = True
+    combined_scale = float(activation_scale * weight_scale)
+
+    block_m, block_n, block_k, num_warps = _fused_w4a4_tile_config(rows)
+    effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
+    out_of_resources = _triton_out_of_resources_error()
+    attempts: list[tuple[int, int]] = [(block_n, block_k)]
+    for candidate in (
+        (block_n, max(32, block_k // 2)),
+        (max(64, block_n // 2), max(32, block_k // 2)),
+    ):
+        if candidate not in attempts:
+            attempts.append(candidate)
+    last_error: Exception | None = None
+    for attempt_n, attempt_k in attempts:
+        grid = (
+            triton.cdiv(rows, effective_block_m),
+            triton.cdiv(out_features, attempt_n),
+        )
+        try:
+            _matmul_int8act_packed_lowbit_fused_kernel[grid](
+                activations,
+                weights,
+                token_norm_values,
+                row_norm_values,
+                weight_code_values,
+                bias_values,
+                output,
+                rows=rows,
+                out_features=out_features,
+                in_features=in_features,
+                combined_scale=combined_scale,
+                has_bias=has_bias,
+                weight_bits=weight_bits,
+                block_m=effective_block_m,
+                block_n=attempt_n,
+                block_k=attempt_k,
+                num_warps=num_warps,
+            )
+            return output.reshape(*original_shape[:-1], out_features)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a tile overflow
+            if out_of_resources is None or not isinstance(exc, out_of_resources):
+                raise
+            last_error = exc
+    raise RuntimeError(
+        "fused low-bit matmul exceeded the device shared-memory limit for "
+        f"tile attempts {attempts}"
+    ) from last_error
+
+
+def matmul_packed_w2a4_fused_with_triton(
+    packed_activations: torch.Tensor,
+    packed_weight_indices: torch.Tensor,
+    token_norms: torch.Tensor,
+    row_norms: torch.Tensor,
+    activation_codes: torch.Tensor,
+    weight_codes: torch.Tensor,
+    *,
+    activation_scale: float,
+    weight_scale: float,
+    out_features: int,
+    in_features: int,
+    bias: torch.Tensor | None = None,
+    output_dtype: torch.dtype = torch.bfloat16,
+) -> torch.Tensor:
+    """Single-kernel W2A4 matmul over packed operands (no INT8 materialization)."""
+    if not packed_activations.is_cuda:
+        raise RuntimeError("fused packed W2A4 matmul requires CUDA tensors")
+    if output_dtype not in {torch.float16, torch.bfloat16}:
+        raise ValueError("output_dtype must be float16 or bfloat16")
+    if in_features <= 0 or in_features % 64 != 0:
+        raise ValueError("in_features must be positive and divisible by 64")
+    if out_features <= 0 or out_features % 16 != 0:
+        raise ValueError("out_features must be positive and divisible by 16")
+
+    triton, _ = _load_triton()
+    original_shape = packed_activations.shape
+    packed_act_k = in_features // 2
+    if original_shape[-1] != packed_act_k:
+        raise ValueError(
+            f"expected packed activation last dimension {packed_act_k}, got {original_shape[-1]}"
+        )
+    activations = packed_activations.to(dtype=torch.uint8).contiguous().reshape(-1, packed_act_k)
+    rows = activations.shape[0]
+    device = packed_activations.device
+    packed_w_k = in_features // 4
+    if packed_weight_indices.numel() != out_features * packed_w_k:
+        raise ValueError("packed weights have an unexpected size")
+    output = torch.empty((rows, out_features), device=device, dtype=output_dtype)
+    if rows == 0:
+        return output.reshape(*original_shape[:-1], out_features)
+
+    weights = packed_weight_indices.to(device=device, dtype=torch.uint8).contiguous().flatten()
+    activation_code_values = activation_codes.to(device=device, dtype=torch.int8).contiguous()
+    weight_code_values = weight_codes.to(device=device, dtype=torch.int8).contiguous()
+    token_norm_values = token_norms.to(device=device, dtype=torch.float32).contiguous().reshape(-1)
+    row_norm_values = row_norms.to(device=device, dtype=torch.float32).contiguous().reshape(-1)
+    if bias is None:
+        bias_values = output
+        has_bias = False
+    else:
+        bias_values = bias.to(device=device, dtype=output_dtype).contiguous()
+        has_bias = True
+    combined_scale = float(activation_scale * weight_scale)
+
+    block_m, block_n, block_k, num_warps = _fused_w4a4_tile_config(rows)
+    effective_block_m = min(block_m, 16 if rows < 16 else triton.next_power_of_2(rows))
+    out_of_resources = _triton_out_of_resources_error()
+    attempts: list[tuple[int, int]] = [(block_n, block_k)]
+    for candidate in (
+        (block_n, max(32, block_k // 2)),
+        (max(64, block_n // 2), max(32, block_k // 2)),
+    ):
+        if candidate not in attempts:
+            attempts.append(candidate)
+    last_error: Exception | None = None
+    for attempt_n, attempt_k in attempts:
+        grid = (
+            triton.cdiv(rows, effective_block_m),
+            triton.cdiv(out_features, attempt_n),
+        )
+        try:
+            _matmul_packed_w2a4_fused_int8_kernel[grid](
+                activations,
+                weights,
+                token_norm_values,
+                row_norm_values,
+                activation_code_values,
+                weight_code_values,
+                bias_values,
+                output,
+                rows=rows,
+                out_features=out_features,
+                in_features=in_features,
+                combined_scale=combined_scale,
+                has_bias=has_bias,
+                block_m=effective_block_m,
+                block_n=attempt_n,
+                block_k=attempt_k,
+                num_warps=num_warps,
+            )
+            return output.reshape(*original_shape[:-1], out_features)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a tile overflow
+            if out_of_resources is None or not isinstance(exc, out_of_resources):
+                raise
+            last_error = exc
+    raise RuntimeError(
+        "fused packed W2A4 matmul exceeded the device shared-memory limit for "
         f"tile attempts {attempts}"
     ) from last_error
 

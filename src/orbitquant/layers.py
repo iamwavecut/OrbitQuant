@@ -688,6 +688,34 @@ class OrbitQuantLinear(nn.Module):
                 f"got {x.device.type}."
             )
 
+    def _fused_w2a4_available(self, x: torch.Tensor) -> bool:
+        if (
+            x.device.type != "cuda"
+            or _torch_uses_hip()
+            or x.dtype not in {torch.bfloat16, torch.float16}
+            or self.weight_bits != 2
+            or self.activation_bits != 4
+            or self.in_features % 64 != 0
+            or self.out_features % 16 != 0
+            or self.packed_weight_indices is None
+            or self.row_norms is None
+        ):
+            return False
+        rows = x.numel() // self.in_features
+        if not (32 <= rows < _W4A4_FUSED_MAX_ROWS):
+            return False
+
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels.triton_cuda import _load_triton
+
+                _load_triton()
+            except Exception:
+                return False
+            return True
+
+        return self._cached_runtime_probe("triton_fused_lowbit", probe)
+
     def _native_w4a4_available(self, x: torch.Tensor) -> bool:
         if (
             x.device.type != "cuda"
@@ -1003,6 +1031,75 @@ class OrbitQuantLinear(nn.Module):
         elif runtime_mode == "native_packed_matmul":
             self._validate_native_packed_matmul_input(x)
 
+        if runtime_mode == "native_packed_matmul" and self._fused_w2a4_available(x):
+            activation_constants = self._activation_kernel_constant_tensors(x.device)
+            activation_codes, activation_scale, weight_codes, weight_scale = (
+                self._int8_surrogate_constants(x.device)
+            )
+            bias = self._bias_for(x.device, x.dtype)
+            if self._native_int8_activation_available(x):
+                from orbitquant.kernels.native_packed_matmul import (
+                    quantize_activations_int8_with_native_kernel,
+                )
+                from orbitquant.kernels.triton_cuda import (
+                    matmul_int8_activations_packed_lowbit_fused_with_triton,
+                )
+
+                capability = torch.cuda.get_device_capability(x.device)
+                int8_x, token_norms = quantize_activations_int8_with_native_kernel(
+                    x,
+                    activation_constants["permutation"],
+                    activation_constants["signs"],
+                    activation_constants["boundaries"],
+                    activation_codes,
+                    eps=self.activation_eps,
+                    inv_sqrt_block=self.rotation.normalization,
+                    threads=512 if capability == (8, 9) else 256,
+                )
+                self.last_activation_kernel_backend = "native_cuda_int8_surrogate"
+                self.last_native_int8_activation_enabled = True
+                return matmul_int8_activations_packed_lowbit_fused_with_triton(
+                    int8_x,
+                    self.packed_weight_indices,
+                    token_norms,
+                    self.row_norms,
+                    weight_codes,
+                    weight_bits=2,
+                    activation_scale=activation_scale,
+                    weight_scale=weight_scale,
+                    out_features=self.out_features,
+                    in_features=self.in_features,
+                    bias=bias,
+                    output_dtype=x.dtype,
+                )
+            from orbitquant.kernels.triton_cuda import (
+                matmul_packed_w2a4_fused_with_triton,
+                quantize_activations_packed_w4_with_triton,
+            )
+
+            packed_x, token_norms = quantize_activations_packed_w4_with_triton(
+                x,
+                rotation=self.rotation,
+                codebook=self.activation_codebook,
+                eps=self.activation_eps,
+                constant_tensors=activation_constants,
+            )
+            self.last_activation_kernel_backend = "triton_cuda_packed_w4"
+            return matmul_packed_w2a4_fused_with_triton(
+                packed_x,
+                self.packed_weight_indices,
+                token_norms,
+                self.row_norms,
+                activation_codes,
+                weight_codes,
+                activation_scale=activation_scale,
+                weight_scale=weight_scale,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                bias=bias,
+                output_dtype=x.dtype,
+            )
+
         if runtime_mode == "native_packed_matmul" and self._native_w4a4_available(x):
             if self.packed_weight_indices is None or self.row_norms is None:
                 raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
@@ -1028,11 +1125,7 @@ class OrbitQuantLinear(nn.Module):
                 use_cutlass_tn and int8_weight is None and rows < _W4A4_FUSED_MAX_ROWS
             )
             int8_x: torch.Tensor | None = None
-            if (
-                use_cutlass_tn
-                and not use_fused_triton
-                and self._native_int8_activation_available(x)
-            ):
+            if use_cutlass_tn and self._native_int8_activation_available(x):
                 from orbitquant.kernels.native_packed_matmul import (
                     quantize_activations_int8_with_native_kernel,
                 )
@@ -1082,6 +1175,25 @@ class OrbitQuantLinear(nn.Module):
             bias = self._bias_for(x.device, x.dtype)
             self.last_native_w4a4_enabled = True
             if use_fused_triton:
+                if int8_x is not None:
+                    from orbitquant.kernels.triton_cuda import (
+                        matmul_int8_activations_packed_lowbit_fused_with_triton,
+                    )
+
+                    return matmul_int8_activations_packed_lowbit_fused_with_triton(
+                        int8_x,
+                        self.packed_weight_indices,
+                        token_norms,
+                        self.row_norms,
+                        weight_codes,
+                        weight_bits=4,
+                        activation_scale=activation_scale,
+                        weight_scale=weight_scale,
+                        out_features=self.out_features,
+                        in_features=self.in_features,
+                        bias=bias,
+                        output_dtype=x.dtype,
+                    )
                 from orbitquant.kernels.triton_cuda import (
                     matmul_packed_w4a4_fused_with_triton,
                 )
