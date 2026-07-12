@@ -40,7 +40,16 @@ def _quantize_adaln_weight(
     *,
     group_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if weight.is_cuda:
+    if weight.device.type == "xpu":
+        try:
+            from orbitquant.kernels.triton_cuda import quantize_adaln_weight_with_triton
+        except Exception as exc:
+            raise RuntimeError(
+                "XPU AdaLN quantization requires the Intel XPU Triton backend; "
+                "use CPU quantization for the reference path"
+            ) from exc
+        return quantize_adaln_weight_with_triton(weight, group_size=group_size)
+    if weight.device.type == "cuda":
         try:
             from orbitquant.kernels.triton_cuda import quantize_adaln_weight_with_triton
         except Exception:
@@ -134,7 +143,23 @@ class RTNInt4Linear(nn.Module):
             self.bias = nn.Parameter(bias.detach().clone(), requires_grad=False)
         self._dequantized_weight_cache: torch.Tensor | None = None
         self._dequantized_weight_cache_key: tuple[str, torch.dtype] | None = None
+        self._bias_cache: tuple[tuple[str, torch.dtype], torch.Tensor] | None = None
         self.last_effective_runtime_mode: str | None = None
+        from orbitquant.layers import _compile_registry_register
+
+        self._compile_handle = _compile_registry_register(self)
+
+    def _bias_for(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor | None:
+        if self.bias is None:
+            return None
+        if self.bias.device == device and self.bias.dtype == dtype:
+            return self.bias
+        key = (str(device), dtype)
+        if self._bias_cache is not None and self._bias_cache[0] == key:
+            return self._bias_cache[1]
+        value = self.bias.to(device=device, dtype=dtype)
+        self._bias_cache = (key, value)
+        return value
 
     def clear_dequantized_cache(self) -> None:
         self._dequantized_weight_cache = None
@@ -255,7 +280,7 @@ class RTNInt4Linear(nn.Module):
         ):
             return self._dequantized_weight_cache
 
-        if device.type == "cuda":
+        if device.type in {"cuda", "xpu"}:
             try:
                 from orbitquant.kernels.triton_cuda import dequantize_adaln_weight_with_triton
             except Exception:
@@ -285,7 +310,79 @@ class RTNInt4Linear(nn.Module):
         return self._remember_dequantized_weight(dequantized, cache_key)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.compiler.is_compiling():
+            return torch.ops.orbitquant.packed_linear_forward(
+                x, self._compile_handle, self.out_features, True
+            )
+        return self._forward_impl(x)
+
+    def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
         activation = x.to(torch.bfloat16)
+        uses_hip = bool(getattr(torch.version, "hip", None))
+        if x.device.type == "xpu":
+            if self.runtime_mode == "auto_fused":
+                raise RuntimeError(
+                    "auto_fused XPU AdaLN dispatch remains experimental until real "
+                    "Intel GPU correctness, memory, profiler, and performance proof is "
+                    "recorded. For explicit validation, set "
+                    "runtime_mode='triton_packed_matmul'. Set "
+                    "runtime_mode='dequant_bf16' for the reference/debug path."
+                )
+            if self.runtime_mode == "native_packed_matmul":
+                raise RuntimeError(
+                    "native_packed_matmul AdaLN has no XPU kernel. Use "
+                    "runtime_mode='triton_packed_matmul' for explicit XPU validation "
+                    "or runtime_mode='dequant_bf16' for the reference/debug path."
+                )
+        if x.device.type == "cuda" and uses_hip:
+            if self.runtime_mode == "auto_fused":
+                raise RuntimeError(
+                    "auto_fused ROCm AdaLN dispatch remains experimental until real "
+                    "supported AMD hardware correctness, memory, and performance proof "
+                    "is recorded. For explicit validation, set "
+                    "runtime_mode='triton_packed_matmul'. Set "
+                    "runtime_mode='dequant_bf16' for the reference/debug path."
+                )
+            if self.runtime_mode == "native_packed_matmul":
+                raise RuntimeError(
+                    "native_packed_matmul AdaLN currently provides CUDA, not HIP, "
+                    "accelerator kernels. Use runtime_mode='triton_packed_matmul' for "
+                    "explicit ROCm validation or runtime_mode='dequant_bf16' for the "
+                    "reference/debug path."
+                )
+        if x.device.type in {"cuda", "xpu"} and self.runtime_mode in {
+            "auto_fused",
+            "native_packed_matmul",
+            "triton_packed_matmul",
+        }:
+            try:
+                from orbitquant.kernels.triton_cuda import (
+                    matmul_packed_adaln_int4_with_triton,
+                )
+            except Exception as exc:
+                backend = (
+                    "XPU"
+                    if x.device.type == "xpu"
+                    else "ROCm"
+                    if getattr(torch.version, "hip", None)
+                    else "CUDA"
+                )
+                raise RuntimeError(
+                    f"{self.runtime_mode} AdaLN on {backend} requires the Triton "
+                    "packed INT4 group kernel and will not materialize a full BF16 "
+                    "weight. Install the matching PyTorch Triton package or use "
+                    "runtime_mode='dequant_bf16'."
+                ) from exc
+            self.last_effective_runtime_mode = "triton_packed_adaln_int4"
+            return matmul_packed_adaln_int4_with_triton(
+                activation,
+                self.packed_weight,
+                self.scales,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                group_size=self.group_size,
+                bias=self._bias_for(x.device, torch.bfloat16),
+            )
         if x.device.type == "cpu" and self.runtime_mode in {
             "auto_fused",
             "native_packed_matmul",
@@ -325,5 +422,5 @@ class RTNInt4Linear(nn.Module):
 
         self.last_effective_runtime_mode = "dequant_bf16"
         weight = self._dequantize_weight(device=x.device, dtype=torch.bfloat16)
-        bias = None if self.bias is None else self.bias.to(device=x.device, dtype=torch.bfloat16)
+        bias = self._bias_for(x.device, torch.bfloat16)
         return F.linear(activation, weight, bias)

@@ -14,6 +14,22 @@ def _pack_lowbit_cpu(values: torch.Tensor, bits: int, *, validate: bool) -> torc
         raise ValueError(f"all values must fit in {bits} bits")
     values_cpu = values_cpu_raw.to(dtype=torch.uint8)
 
+    # Byte-aligned widths pack with a couple of vectorized shift/or passes
+    # instead of the generic per-bit scatter_add loop below.
+    if bits in {2, 4, 8}:
+        fields_per_byte = 8 // bits
+        count = values_cpu.numel()
+        remainder = count % fields_per_byte
+        if remainder:
+            padded = torch.zeros(count + fields_per_byte - remainder, dtype=torch.uint8)
+            padded[:count] = values_cpu
+            values_cpu = padded
+        fields = values_cpu.reshape(-1, fields_per_byte).to(torch.int16)
+        packed_bytes = fields[:, 0].clone()
+        for field in range(1, fields_per_byte):
+            packed_bytes |= fields[:, field] << (field * bits)
+        return packed_bytes.to(dtype=torch.uint8)
+
     total_bits = values_cpu.numel() * bits
     packed = torch.zeros((total_bits + 7) // 8, dtype=torch.int16)
     bit_ids = torch.arange(bits, dtype=torch.int64)
@@ -58,6 +74,15 @@ def unpack_lowbit(packed: torch.Tensor, bits: int, length: int) -> torch.Tensor:
             return unpack_lowbit_with_triton(packed, bits=bits, length=length)
 
     packed_cpu = packed.detach().to(device="cpu", dtype=torch.uint8).flatten()
+
+    if bits in {2, 4, 8}:
+        fields_per_byte = 8 // bits
+        mask = (1 << bits) - 1
+        expanded = torch.empty(packed_cpu.numel() * fields_per_byte, dtype=torch.uint8)
+        for field in range(fields_per_byte):
+            expanded[field::fields_per_byte] = (packed_cpu >> (field * bits)) & mask
+        return expanded[:length]
+
     values = torch.zeros(length, dtype=torch.uint8)
     bit_ids = torch.arange(bits, dtype=torch.int64)
 

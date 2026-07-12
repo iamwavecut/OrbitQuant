@@ -161,7 +161,7 @@ orbitquant kernel-bench \
   --activation-bits 4 \
   --block-size "$BLOCK_SIZE" \
   --activation-kernel-backend mps \
-  "${BENCH_RUNTIME_ARGS[@]}" \
+  ${BENCH_RUNTIME_ARGS[@]+"${BENCH_RUNTIME_ARGS[@]}"} \
   --device mps \
   --dtype bfloat16 \
   --warmup "$WARMUP" \

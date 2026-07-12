@@ -1,0 +1,269 @@
+name: Windows Vulkan build
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/windows-vulkan.yml"
+      - "native-kernels/orbitquant-vulkan/**"
+  pull_request:
+    paths:
+      - ".github/workflows/windows-vulkan.yml"
+      - "native-kernels/orbitquant-vulkan/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-vulkan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXECUTORCH_COMMIT: a6d812a082df57898b8608f56c867140cc9da32c
+  ORBITQUANT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  build:
+    name: MSVC Vulkan source build
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - name: Check out OrbitQuant
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Build the ExecuTorch and OrbitQuant Vulkan targets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $executorch = Join-Path $env:RUNNER_TEMP "executorch"
+          $executorchBuild = Join-Path $env:RUNNER_TEMP "executorch-build"
+          $executorchInstall = Join-Path $env:RUNNER_TEMP "executorch-install"
+          $orbitquantBuild = Join-Path $env:RUNNER_TEMP "orbitquant-vulkan-build"
+          $python = Join-Path $env:pythonLocation "python.exe"
+
+          git config --global core.autocrlf false
+          git config --global core.symlinks true
+          git clone --filter=blob:none --no-checkout `
+            https://github.com/pytorch/executorch.git $executorch
+          git -C $executorch fetch --depth=1 origin $env:EXECUTORCH_COMMIT
+          git -C $executorch config core.autocrlf false
+          git -C $executorch config core.symlinks true
+          git -C $executorch checkout --detach $env:EXECUTORCH_COMMIT
+          if ((git -C $executorch rev-parse HEAD) -ne $env:EXECUTORCH_COMMIT) {
+            throw "ExecuTorch checkout does not match the pinned commit"
+          }
+          git -C $executorch submodule update --init `
+            backends/vulkan/third-party/Vulkan-Headers `
+            backends/vulkan/third-party/VulkanMemoryAllocator `
+            backends/vulkan/third-party/volk
+          git -C $executorch submodule update --init
+
+          $env:PATH = `
+            "$env:CONDA;$env:CONDA\Scripts;$env:CONDA\Library\bin;$env:PATH"
+          Push-Location $executorch
+          & .ci\scripts\setup-vulkan-windows-deps.ps1
+          Pop-Location
+          $glslc = (Get-Command glslc.exe -ErrorAction Stop).Source
+          & $python -m pip install PyYAML==6.0.1
+          & $python -m pip install torch==2.12.1
+          $env:PYTHONPATH = `
+            "$executorch\src;$executorch;$(Split-Path $executorch -Parent)"
+          & $python -c `
+            "import executorch.codegen, torchgen; print('codegen imports ok')"
+
+          $vswhere = `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
+          }
+          $vsVersion = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationVersion
+          $vsMajor = [int](($vsVersion -split "\.")[0])
+          $cmakeGenerator = switch ($vsMajor) {
+            17 { "Visual Studio 17 2022" }
+            18 { "Visual Studio 18 2026" }
+            default { throw "Unsupported Visual Studio major version $vsMajor" }
+          }
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
+          Get-Command cl.exe -ErrorAction Stop | Format-List Source
+          Write-Host "Using CMake generator: $cmakeGenerator"
+          $glslcVersion = (& $glslc --version | Select-Object -First 1)
+          Write-Host $glslcVersion
+          cmake --version
+
+          cmake -S $executorch -B $executorchBuild `
+            -G $cmakeGenerator -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_INSTALL_PREFIX=$executorchInstall" `
+            "-DPYTHON_EXECUTABLE=$python" `
+            -DEXECUTORCH_BUILD_VULKAN=ON `
+            -DEXECUTORCH_BUILD_PORTABLE_OPS=ON `
+            -DEXECUTORCH_BUILD_EXECUTOR_RUNNER=OFF `
+            -DEXECUTORCH_BUILD_TESTS=OFF `
+            -DEXECUTORCH_BUILD_PYBIND=OFF `
+            -DEXECUTORCH_BUILD_XNNPACK=OFF `
+            "-DGLSLC_PATH=$glslc"
+          cmake --build $executorchBuild --config Release `
+            --target install --parallel 4
+
+          cmake -S native-kernels\orbitquant-vulkan -B $orbitquantBuild `
+            -G $cmakeGenerator -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_PREFIX_PATH=$executorchInstall" `
+            "-DPYTHON_EXECUTABLE=$python" `
+            "-DORBITQUANT_EXECUTORCH_ROOT=$executorch" `
+            "-DGLSLC_PATH=$glslc" `
+            -DORBITQUANT_VULKAN_BUILD_TESTS=ON `
+            -DORBITQUANT_VULKAN_BUILD_PTE_RUNNER=ON
+          cmake --build $orbitquantBuild --config Release `
+            --target orbitquant_vulkan_test orbitquant_vulkan_pte_runner `
+            --parallel 4
+
+          Get-Item `
+            "$orbitquantBuild\Release\orbitquant_vulkan_test.exe", `
+            "$orbitquantBuild\Release\orbitquant_vulkan_pte_runner.exe"
+
+          $bundle = Join-Path `
+            $env:RUNNER_TEMP "orbitquant-vulkan-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          Copy-Item `
+            "$orbitquantBuild\Release\orbitquant_vulkan_test.exe", `
+            "$orbitquantBuild\Release\orbitquant_vulkan_pte_runner.exe" `
+            -Destination $bundle
+
+          $runtimeDirs = @(
+            "$orbitquantBuild\Release",
+            "$executorchInstall\bin"
+          )
+          foreach ($runtimeDir in $runtimeDirs) {
+            if (Test-Path $runtimeDir) {
+              Get-ChildItem $runtimeDir -Filter "*.dll" -File |
+                Copy-Item -Destination $bundle -Force
+            }
+          }
+
+          $licenseFiles = @(
+            @{
+              Source = "$env:GITHUB_WORKSPACE\LICENSE"
+              Destination = "LICENSE-OrbitQuant.txt"
+            },
+            @{
+              Source = "$executorch\LICENSE"
+              Destination = "LICENSE-ExecuTorch.txt"
+            },
+            @{
+              Source = "$executorch\third-party\flatbuffers\LICENSE"
+              Destination = "LICENSE-FlatBuffers.txt"
+            },
+            @{
+              Source = "$executorch\third-party\gflags\COPYING.txt"
+              Destination = "LICENSE-gflags.txt"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\Vulkan-Headers\LICENSE.md"
+              Destination = "LICENSE-Vulkan-Headers.md"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\VulkanMemoryAllocator\LICENSE.txt"
+              Destination = "LICENSE-VulkanMemoryAllocator.txt"
+            },
+            @{
+              Source = "$executorch\backends\vulkan\third-party\volk\LICENSE.md"
+              Destination = "LICENSE-volk.md"
+            }
+          )
+          foreach ($licenseFile in $licenseFiles) {
+            if (-not (Test-Path $licenseFile.Source)) {
+              throw "Required license is missing: $($licenseFile.Source)"
+            }
+            Copy-Item `
+              $licenseFile.Source `
+              (Join-Path $bundle $licenseFile.Destination)
+          }
+
+          @(
+            "Install the current Microsoft Visual C++ v14 x64 Redistributable:",
+            "https://aka.ms/vc14/vc_redist.x64.exe",
+            "",
+            "Prerequisite: install the hardware vendor Vulkan driver.",
+            "The bundle intentionally does not ship vulkan-1.dll.",
+            "",
+            "Run native correctness and realistic-shape benchmarks:",
+            ".\orbitquant_vulkan_test.exe",
+            "",
+            "Run an exported PTE with one raw tensor input:",
+            ".\orbitquant_vulkan_pte_runner.exe --model_path model.pte --inputs input0.bin --output_file actual --print_output=none",
+            "The output tensor is written to actual-0.bin."
+          ) | Set-Content `
+            -Encoding ascii (Join-Path $bundle "README.txt")
+
+          $dependencyReport = Join-Path $bundle "DEPENDENCIES.txt"
+          foreach ($executable in Get-ChildItem $bundle -Filter "*.exe") {
+            "[$($executable.Name)]" | Add-Content $dependencyReport
+            dumpbin.exe /dependents $executable.FullName |
+              Add-Content $dependencyReport
+          }
+          @(
+            "orbitquant_source_commit=$env:ORBITQUANT_SOURCE_SHA",
+            "orbitquant_checkout_commit=$(git rev-parse HEAD)",
+            "executorch_commit=$env:EXECUTORCH_COMMIT",
+            "cmake_generator=$cmakeGenerator",
+            "visual_studio_version=$vsVersion",
+            "python_version=3.12",
+            "pytorch_version=2.12.1",
+            "glslc_version=$glslcVersion"
+          ) | Set-Content `
+            -Encoding ascii (Join-Path $bundle "BUILD-METADATA.txt")
+          $checksumPath = Join-Path $bundle "SHA256SUMS"
+          Get-ChildItem $bundle -File -Recurse |
+            Where-Object { $_.FullName -ne $checksumPath } |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+              $relativePath = [IO.Path]::GetRelativePath(
+                $bundle, $_.FullName
+              ).Replace("\", "/")
+              "$hash  $relativePath"
+            } | Set-Content -Encoding ascii $checksumPath
+
+          $bundleBytes = (
+            Get-ChildItem $bundle -File -Recurse | Measure-Object Length -Sum
+          ).Sum
+          if ($bundleBytes -gt 64MB) {
+            throw "Windows Vulkan runner bundle exceeds 64 MiB: $bundleBytes"
+          }
+          Write-Host "Windows Vulkan runner bundle bytes: $bundleBytes"
+          Get-ChildItem $bundle | Format-Table Name, Length
+
+      - name: Upload Windows Vulkan runner bundle
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: orbitquant-vulkan-windows-x86_64-${{ env.ORBITQUANT_SOURCE_SHA }}
+          path: ${{ runner.temp }}/orbitquant-vulkan-windows-x86_64
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9

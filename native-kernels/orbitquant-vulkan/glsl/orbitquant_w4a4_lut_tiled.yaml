@@ -1,0 +1,13 @@
+orbitquant_w4a4_lut_tiled:
+  parameter_names_with_default_values:
+    DTYPE: float
+    K_TILE_WORDS: 8
+    USE_SHARED_LUT: 1
+  generate_variant_forall:
+    DTYPE:
+      - VALUE: half
+      - VALUE: float
+  shader_variants:
+    - NAME: orbitquant_w4a4_lut_tiled_t8
+      K_TILE_WORDS: 8
+      USE_SHARED_LUT: 1

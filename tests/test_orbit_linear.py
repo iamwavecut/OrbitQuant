@@ -423,8 +423,56 @@ def test_orbit_linear_triton_packed_matmul_runtime_rejects_non_cuda_before_quant
         fail_activation_quantization,
     )
 
-    with pytest.raises(RuntimeError, match="requires CUDA input tensors"):
+    with pytest.raises(RuntimeError, match="requires CUDA, HIP, or XPU input tensors"):
         quantized(x)
+
+
+def test_orbit_linear_auto_fused_on_hip_stays_disabled_until_hardware_proof(monkeypatch):
+    source = torch.nn.Linear(16, 7)
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(block_size=8),
+        module_name="block.ff.linear",
+    )
+    fake_hip_input = SimpleNamespace(device=torch.device("cuda"))
+
+    monkeypatch.setattr(layers_module, "_torch_uses_hip", lambda: True)
+    monkeypatch.setattr(
+        layers_module,
+        "_native_packed_matmul_load_error",
+        lambda: (_ for _ in ()).throw(AssertionError("CUDA native probe must be skipped on HIP")),
+    )
+    monkeypatch.setattr(layers_module, "_triton_packed_matmul_import_error", lambda: None)
+
+    with pytest.raises(RuntimeError, match="remains experimental"):
+        quantized._resolve_auto_fused_runtime(fake_hip_input)
+
+
+def test_orbit_linear_auto_fused_on_xpu_stays_disabled_until_hardware_proof():
+    source = torch.nn.Linear(16, 7)
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(block_size=8),
+        module_name="block.ff.linear",
+    )
+    fake_xpu_input = SimpleNamespace(device=torch.device("xpu"))
+
+    with pytest.raises(RuntimeError, match="auto_fused XPU dispatch remains experimental"):
+        quantized._resolve_auto_fused_runtime(fake_xpu_input)
+
+
+def test_orbit_linear_explicit_native_runtime_rejects_hip(monkeypatch):
+    source = torch.nn.Linear(16, 7)
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(block_size=8, runtime_mode="native_packed_matmul"),
+        module_name="block.ff.linear",
+    )
+    fake_hip_input = SimpleNamespace(device=torch.device("cuda"))
+    monkeypatch.setattr(layers_module, "_torch_uses_hip", lambda: True)
+
+    with pytest.raises(RuntimeError, match="not HIP"):
+        quantized._validate_native_packed_matmul_input(fake_hip_input)
 
 
 def test_orbit_linear_triton_packed_matmul_runtime_avoids_weight_dequant_cache(monkeypatch):

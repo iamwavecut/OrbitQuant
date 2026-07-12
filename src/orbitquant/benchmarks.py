@@ -37,6 +37,10 @@ def _synchronize(device: torch.device) -> None:
         torch.cuda.synchronize(device)
     elif device.type == "mps" and torch.backends.mps.is_available():
         torch.mps.synchronize()
+    elif device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            xpu.synchronize(device)
 
 
 def _mean_time_ms(
@@ -64,6 +68,17 @@ def _mean_time_ms(
         end.record()
         end.synchronize()
         return float(start.elapsed_time(end) / iterations)
+    if device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            start = xpu.Event(enable_timing=True)
+            end = xpu.Event(enable_timing=True)
+            start.record()
+            for _ in range(iterations):
+                fn()
+            end.record()
+            end.synchronize()
+            return float(start.elapsed_time(end) / iterations)
 
     started_at = time.perf_counter()
     for _ in range(iterations):
@@ -82,6 +97,16 @@ def _time_once_ms(fn: Callable[[], Any], *, device: torch.device) -> tuple[Any, 
         end.record()
         end.synchronize()
         return result, float(start.elapsed_time(end))
+    if device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            start = xpu.Event(enable_timing=True)
+            end = xpu.Event(enable_timing=True)
+            start.record()
+            result = fn()
+            end.record()
+            end.synchronize()
+            return result, float(start.elapsed_time(end))
 
     started_at = time.perf_counter()
     result = fn()
@@ -94,13 +119,22 @@ def _device_name(device: torch.device) -> str:
         return torch.cuda.get_device_name(device)
     if device.type == "mps":
         return "mps"
+    if device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            return str(xpu.get_device_name(device))
+        return "xpu"
     return "cpu"
 
 
 def _peak_memory_bytes(device: torch.device) -> int | None:
-    if device.type != "cuda" or not torch.cuda.is_available():
-        return None
-    return int(torch.cuda.max_memory_allocated(device))
+    if device.type == "cuda" and torch.cuda.is_available():
+        return int(torch.cuda.max_memory_allocated(device))
+    if device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            return int(xpu.max_memory_allocated(device))
+    return None
 
 
 def _runtime_uses_packed_matmul(runtime_mode: str, device: torch.device) -> bool:
@@ -110,10 +144,14 @@ def _runtime_uses_packed_matmul(runtime_mode: str, device: torch.device) -> bool
 
 
 def _weight_quantization_backend_label(device: torch.device) -> str:
-    if device.type == "cuda" and backend_capabilities()["triton_cuda"]["available"]:
-        return "triton_cuda"
+    if device.type == "cuda":
+        backend = "triton_rocm" if getattr(torch.version, "hip", None) else "triton_cuda"
+        if backend_capabilities()[backend]["available"]:
+            return backend
     if device.type == "mps":
         return "torch_reference_mps"
+    if device.type == "xpu" and backend_capabilities()["triton_xpu"]["available"]:
+        return "triton_xpu"
     return "torch_reference"
 
 
@@ -147,11 +185,18 @@ def benchmark_orbit_linear(
         raise RuntimeError("CUDA benchmark requested but CUDA is not available")
     if target_device.type == "mps" and not torch.backends.mps.is_available():
         raise RuntimeError("MPS benchmark requested but MPS is not available")
+    if target_device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is None or not xpu.is_available():
+            raise RuntimeError("XPU benchmark requested but XPU is not available")
 
     torch.manual_seed(seed)
     if target_device.type == "cuda":
         torch.cuda.manual_seed_all(seed)
         torch.cuda.reset_peak_memory_stats(target_device)
+    elif target_device.type == "xpu":
+        torch.xpu.manual_seed_all(seed)
+        torch.xpu.reset_peak_memory_stats(target_device)
 
     config = OrbitQuantConfig(
         weight_bits=weight_bits,
@@ -319,6 +364,7 @@ def benchmark_orbit_linear(
         "peak_memory_bytes": _peak_memory_bytes(target_device),
         "quantization_buffers": {
             "source_weight_device": str(source.weight.device),
+            "source_weight_device_type": source.weight.device.type,
             "source_weight_is_cuda": bool(source.weight.is_cuda),
             "packed_weight_indices_device": (
                 None
@@ -336,16 +382,24 @@ def benchmark_orbit_linear(
                 if quantized.packed_weight_indices is None
                 else bool(quantized.packed_weight_indices.is_cuda)
             ),
+            "packed_weight_indices_device_type": (
+                None
+                if quantized.packed_weight_indices is None
+                else quantized.packed_weight_indices.device.type
+            ),
             "row_norms_is_cuda": (
                 None if quantized.row_norms is None else bool(quantized.row_norms.is_cuda)
+            ),
+            "row_norms_device_type": (
+                None if quantized.row_norms is None else quantized.row_norms.device.type
             ),
         },
         "backend_capabilities": backend_capabilities(),
         "notes": (
             "weight_quantize_pack_cold_ms includes first-use backend compilation "
-            "where applicable. On Triton/CUDA this can be CPU-heavy and show low "
-            "GPU utilization; weight_quantize_pack_hot_ms measures the already "
-            "compiled CUDA path. In dequant_bf16 mode, forward_prewarmed_ms uses "
+            "where applicable. On Triton accelerators this can be CPU-heavy and show "
+            "low device utilization; weight_quantize_pack_hot_ms measures the already "
+            "compiled path. In dequant_bf16 mode, forward_prewarmed_ms uses "
             "OrbitQuant activation kernels plus cached dequantized weights and "
             "PyTorch linear. In auto_fused and packed matmul runtime modes, "
             "forward_prewarmed_ms uses packed-weight matmul instead of the cached "
@@ -433,12 +487,20 @@ def benchmark_model_quantization(
         raise RuntimeError("CUDA source device requested but CUDA is not available")
     if target.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA quantization device requested but CUDA is not available")
+    for label, selected in (("source", source), ("quantization", target)):
+        if selected.type == "xpu":
+            xpu = getattr(torch, "xpu", None)
+            if xpu is None or not xpu.is_available():
+                raise RuntimeError(f"XPU {label} device requested but XPU is not available")
 
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     if target.type == "cuda":
         torch.cuda.reset_peak_memory_stats(target)
+    elif target.type == "xpu":
+        torch.xpu.manual_seed_all(seed)
+        torch.xpu.reset_peak_memory_stats(target)
 
     model = _QuantizeBenchModel(
         layers=layers,
@@ -453,7 +515,15 @@ def benchmark_model_quantization(
         activation_bits=activation_bits,
         block_size=block_size,
         target_policy="flux2",
-        activation_kernel_backend="triton_cuda" if target.type == "cuda" else "auto",
+        activation_kernel_backend=(
+            "triton_rocm"
+            if target.type == "cuda" and getattr(torch.version, "hip", None)
+            else "triton_cuda"
+            if target.type == "cuda"
+            else "triton_xpu"
+            if target.type == "xpu"
+            else "auto"
+        ),
         runtime_mode="dequant_bf16",
     )
 
@@ -488,7 +558,7 @@ def benchmark_model_quantization(
         "notes": (
             "This benchmark measures the full model replacement loop, including "
             "host-to-device staging when source_device is cpu and quantization_device "
-            "is cuda. The OrbitQuant/AdaLN compute fields exclude explicit transfer "
+            "is an accelerator. The OrbitQuant/AdaLN compute fields exclude explicit transfer "
             "time; device_transfer_seconds is reported separately."
         ),
     }

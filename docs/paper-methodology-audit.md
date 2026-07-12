@@ -171,11 +171,15 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 
 | Backend | Status | Evidence | Claim boundary |
 | --- | --- | --- | --- |
-| CPU | Pass as reference | `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/functional.py` | Correctness baseline only; no optimized CPU kernel claim. |
+| CPU | Pass for native packed inference when the optional CPU package is importable; reference fallback otherwise | `native-kernels/orbitquant-packed-matmul`, `src/orbitquant/kernels/dispatch.py`, `src/orbitquant/kernels/native_packed_matmul.py`, `src/orbitquant/functional.py`, `docs/kernel-audit.md` | Runtime ISA dispatch covers scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON for exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN. Native builds are hardware-verified with CI wheels; wheel publication is pending. Without the native package, CPU remains the correctness reference baseline. |
 | CUDA/native/Triton | Pass for optimized W4A4 and packed fallback | `native-kernels/orbitquant-packed-matmul`, `src/orbitquant/kernels/native_packed_matmul.py`, `src/orbitquant/kernels/triton_cuda.py`, `tests/test_native_packed_matmul.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | The selected W4A4 path fuses norm/RPBH/FWHT/codebook assignment to INT8 surrogate activations, decodes bounded W4 chunks, uses CUTLASS INT8 matmul, and applies a fused epilogue. Direct packed CUDA MMA and generic Triton packed matmul remain fallbacks. No path selected by `auto_fused` materializes a full BF16/FP16 weight matrix. |
 | MPS/Metal | Pass for native packed inference | `src/orbitquant/kernels/mps.py`, `src/orbitquant/kernels/dispatch.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `docs/kernel-audit.md` | A fused Metal shader performs activation norm, RPBH/FWHT, codebook lookup, and rescale. The native package performs packed matmul for generic leading dimensions, including short decode rows and partial matrix tiles, without full weight materialization. Offline weight and AdaLN quantization remain reference paths on MPS. |
-| ROCm | Blocked for backend claim | No implementation in current tree | Do not claim ROCm optimization. |
-| XPU | Blocked for backend claim | No implementation in current tree | Do not claim XPU optimization. |
+| ROCm | Experimental source candidate; supported-hardware proof pending | `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/dispatch.py`, `docs/kernel-audit.md` | The exact Triton pipeline is reused on HIP, explicit-only, never selected by `auto_fused`, and reports `experimental_unverified`. Do not claim verified ROCm optimization without evidence on supported AMD hardware. |
+| XPU | Experimental source candidate; Intel hardware proof pending | `src/orbitquant/kernels/triton_cuda.py`, `src/orbitquant/kernels/dispatch.py`, `docs/kernel-audit.md` | The exact Triton pipeline is reused on `torch.xpu`, explicit-only, never selected by `auto_fused`, and reports `experimental_unverified`. Do not claim verified XPU optimization without evidence on real Intel GPU hardware. |
+
+Backend status is canonically reported by
+`orbitquant.kernels.dispatch.backend_capabilities()` and audited in
+[`docs/kernel-audit.md`](kernel-audit.md).
 
 ## Acceleration Claim Boundary
 
@@ -229,7 +233,7 @@ not silently substitute a different quantization method.
 | Published checkpoints use converged Lloyd-Max codebook version 2 and `activation_eps=1e-10`. | Pass | All 14 canonical FLUX.2 4B, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 manifests expose these values. The FLUX.2 Klein 9B comparison checkpoint records them in both quantized component configs. Legacy version 1 artifacts remain loadable but are no longer the published release checkpoints. |
 | Full config-derived inventories are audit artifacts, not committed source files. | Accepted artifact hygiene choice | Inventory summaries are recorded above; raw JSON may remain unpublished to avoid turning the repository into an artifact store. |
 | Release-grade GenEval/VBench metrics are required only for metric claims. | Accepted claim boundary | Missing full metrics block paper metric/reproduction claims only. |
-| ROCm and XPU kernels are not implemented. | Backend claim blocker | The release must either implement and verify them or explicitly exclude them. |
+| ROCm and XPU are experimental source candidates without supported-hardware proof. | Accepted claim boundary | Both reuse the exact Triton pipeline, stay explicit-only, and report `experimental_unverified`. Verified backend claims require correctness, memory, profiler, and performance evidence on supported AMD or Intel hardware. |
 
 GenEval/VBench scores are not claimed without their corresponding external
 metric runs. Any changed checkpoint must pass manifest, policy-inventory,

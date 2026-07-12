@@ -164,6 +164,10 @@ def _quantization_device(device: str | torch.device | None) -> torch.device | No
         raise RuntimeError("CUDA quantization device requested but CUDA is not available")
     if torch_device.type == "mps" and not torch.backends.mps.is_available():
         raise RuntimeError("MPS quantization device requested but MPS is not available")
+    if torch_device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is None or not xpu.is_available():
+            raise RuntimeError("XPU quantization device requested but XPU is not available")
     return torch_device
 
 
@@ -171,14 +175,25 @@ def _weight_quantization_backend(device: torch.device | None) -> str:
     if device is None:
         return "module_device"
     if device.type == "cuda":
-        if not available_backends()["triton_cuda"]:
+        backend = "triton_rocm" if getattr(torch.version, "hip", None) else "triton_cuda"
+        if not available_backends().get(backend, False):
             raise RuntimeError(
-                "CUDA quantization requires the Triton CUDA backend. Install triton "
-                "or use --device cpu for the reference quantization path."
+                f"GPU quantization requires the {backend} backend. Install the "
+                "matching PyTorch Triton package or use --device cpu for the "
+                "reference quantization path."
             )
-        return "triton_cuda"
+        return backend
     if device.type == "mps":
         return "torch_reference_mps"
+    if device.type == "xpu":
+        backend = "triton_xpu"
+        if not available_backends().get(backend, False):
+            raise RuntimeError(
+                "XPU quantization requires the triton_xpu backend. Install the "
+                "PyTorch XPU wheel with its matching Intel Triton package or use "
+                "--device cpu for the reference quantization path."
+            )
+        return backend
     return "torch_reference"
 
 
@@ -396,6 +411,10 @@ def _synchronize_if_needed(device: torch.device) -> None:
         torch.cuda.synchronize(device)
     elif device.type == "mps" and torch.backends.mps.is_available():
         torch.mps.synchronize()
+    elif device.type == "xpu":
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            xpu.synchronize(device)
 
 
 def prewarm_quantized_linear_modules(
@@ -426,7 +445,7 @@ def prewarm_quantized_linear_modules(
         if not (
             isinstance(module, OrbitQuantLinear)
             and module.runtime_mode == "auto_fused"
-            and module_device.type in {"cuda", "mps"}
+            and module_device.type in {"cuda", "mps", "xpu"}
         ):
             module._dequantize_weight(device=module_device, dtype=module_dtype)
         last_device = module_device

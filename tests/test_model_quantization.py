@@ -39,7 +39,12 @@ def test_quantize_linear_modules_replaces_orbit_and_adaln_targets_only():
     assert summary.adaln_modules == ["transformer_blocks.0.modulation"]
     assert summary.skipped_modules == ["proj_out"]
     assert summary.quantization_device == ("cuda" if torch.cuda.is_available() else "cpu")
-    assert summary.weight_quantization_backend in {"torch_reference", "triton_cuda"}
+    assert summary.weight_quantization_backend in {
+        "torch_reference",
+        "triton_cuda",
+        "triton_rocm",
+        "triton_xpu",
+    }
     assert summary.quantization_staging_mode == "streaming"
     assert summary.synchronize_per_module is False
     assert summary.elapsed_seconds >= 0.0
@@ -143,6 +148,19 @@ def test_quantize_linear_modules_fails_loud_for_unavailable_cuda_device(monkeypa
         raise AssertionError("unavailable CUDA quantization device was accepted")
 
 
+def test_quantize_linear_modules_fails_loud_for_unavailable_xpu_device(monkeypatch):
+    model = TinyPipelineTransformer()
+    config = OrbitQuantConfig(block_size=8)
+    monkeypatch.setattr(torch.xpu, "is_available", lambda: False)
+
+    try:
+        quantize_linear_modules(model, config, quantization_device="xpu")
+    except RuntimeError as exc:
+        assert "XPU quantization device requested" in str(exc)
+    else:
+        raise AssertionError("unavailable XPU quantization device was accepted")
+
+
 def test_quantize_linear_modules_fails_loud_for_cuda_without_triton(monkeypatch):
     model = TinyPipelineTransformer()
     config = OrbitQuantConfig(block_size=8)
@@ -150,22 +168,60 @@ def test_quantize_linear_modules_fails_loud_for_cuda_without_triton(monkeypatch)
     monkeypatch.setattr(
         modeling_module,
         "available_backends",
-        lambda: {"cpu": True, "mps": False, "triton_cuda": False},
+        lambda: {
+            "cpu": True,
+            "mps": False,
+            "triton_cuda": False,
+            "triton_rocm": False,
+        },
     )
 
     try:
         quantize_linear_modules(model, config, quantization_device="cuda")
     except RuntimeError as exc:
-        assert "Triton CUDA backend" in str(exc)
+        assert "triton_cuda backend" in str(exc)
     else:
         raise AssertionError("CUDA quantization without Triton was accepted")
 
 
-def test_auto_quantization_device_prefers_cuda_and_falls_back_to_cpu(monkeypatch):
+def test_weight_quantization_backend_labels_hip_as_rocm(monkeypatch):
+    monkeypatch.setattr(modeling_module.torch.version, "hip", "7.2", raising=False)
+    monkeypatch.setattr(
+        modeling_module,
+        "available_backends",
+        lambda: {
+            "cpu": True,
+            "mps": False,
+            "triton_cuda": False,
+            "triton_rocm": True,
+        },
+    )
+
+    assert modeling_module._weight_quantization_backend(torch.device("cuda")) == "triton_rocm"
+
+
+def test_weight_quantization_backend_labels_explicit_xpu(monkeypatch):
+    monkeypatch.setattr(
+        modeling_module,
+        "available_backends",
+        lambda: {
+            "cpu": True,
+            "mps": False,
+            "triton_cuda": False,
+            "triton_rocm": False,
+            "triton_xpu": True,
+        },
+    )
+
+    assert modeling_module._weight_quantization_backend(torch.device("xpu")) == "triton_xpu"
+
+
+def test_auto_quantization_device_prefers_verified_cuda_and_keeps_xpu_explicit(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     assert modeling_module._quantization_device("auto") == torch.device("cuda")
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.xpu, "is_available", lambda: True)
     assert modeling_module._quantization_device("auto") == torch.device("cpu")
 
 

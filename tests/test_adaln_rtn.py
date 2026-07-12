@@ -15,17 +15,19 @@ def _independent_packed_adaln_weight(layer: RTNInt4Linear) -> torch.Tensor:
     packed = layer.packed_weight.detach().cpu()
     unsigned = torch.tensor(
         [
-            int(packed[index // 2]) & 15
-            if index % 2 == 0
-            else (int(packed[index // 2]) >> 4) & 15
+            int(packed[index // 2]) & 15 if index % 2 == 0 else (int(packed[index // 2]) >> 4) & 15
             for index in range(count)
         ],
         dtype=torch.int16,
     )
-    signed = unsigned.sub(8).float().reshape(
-        layer.out_features,
-        layer.num_groups,
-        layer.group_size,
+    signed = (
+        unsigned.sub(8)
+        .float()
+        .reshape(
+            layer.out_features,
+            layer.num_groups,
+            layer.group_size,
+        )
     )
     weight = signed * layer.scales.detach().cpu().float()[..., None]
     return weight.reshape(layer.out_features, -1)[:, : layer.in_features].to(torch.bfloat16)
@@ -158,34 +160,54 @@ def test_int4_rtn_rejects_non_positive_group_size():
     assert quantized.packed_weight.dtype == torch.uint8
 
 
-def test_int4_rtn_cuda_quantize_path_matches_reference():
-    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
-        pytest.skip("CUDA/Triton backend is not available")
+def _active_triton_device_and_backend() -> tuple[torch.device, str] | None:
+    if torch.cuda.is_available():
+        backend = "triton_rocm" if getattr(torch.version, "hip", None) else "triton_cuda"
+        return torch.device("cuda"), backend
+    xpu = getattr(torch, "xpu", None)
+    if xpu is not None and xpu.is_available():
+        return torch.device("xpu"), "triton_xpu"
+    return None
+
+
+def test_int4_rtn_triton_quantize_path_matches_reference():
+    active = _active_triton_device_and_backend()
+    if active is None:
+        pytest.skip("no Triton accelerator is available")
+    device, backend = active
+    if not available_backends().get(backend, False):
+        pytest.skip(f"{backend} backend is not available")
 
     from orbitquant.kernels.triton_cuda import quantize_adaln_weight_with_triton
 
     torch.manual_seed(1)
-    weight = torch.randn(7, 19, device="cuda", dtype=torch.float32)
+    weight_cpu = torch.randn(7, 19, dtype=torch.float32)
+    weight = weight_cpu.to(device)
 
     expected_packed, expected_scales = _quantize_adaln_weight_reference(
-        weight.cpu(), group_size=8
+        weight_cpu,
+        group_size=8,
     )
     actual_packed, actual_scales = quantize_adaln_weight_with_triton(weight, group_size=8)
 
-    assert actual_packed.is_cuda
-    assert actual_scales.is_cuda
+    assert actual_packed.device.type == device.type
+    assert actual_scales.device.type == device.type
     assert torch.equal(actual_packed.cpu(), expected_packed)
     assert torch.allclose(actual_scales.cpu(), expected_scales)
 
 
-def test_int4_rtn_cuda_dequant_path_matches_reference():
-    if not torch.cuda.is_available() or not available_backends()["triton_cuda"]:
-        pytest.skip("CUDA/Triton backend is not available")
+def test_int4_rtn_triton_dequant_path_matches_reference():
+    active = _active_triton_device_and_backend()
+    if active is None:
+        pytest.skip("no Triton accelerator is available")
+    device, backend = active
+    if not available_backends().get(backend, False):
+        pytest.skip(f"{backend} backend is not available")
 
     from orbitquant.kernels.triton_cuda import dequantize_adaln_weight_with_triton
 
     torch.manual_seed(2)
-    source = torch.nn.Linear(19, 7).to("cuda")
+    source = torch.nn.Linear(19, 7).to(device)
     config = OrbitQuantConfig(adaln_group_size=8)
     quantized = RTNInt4Linear.from_linear(source, config=config, module_name="block.modulation")
 
@@ -197,8 +219,42 @@ def test_int4_rtn_cuda_dequant_path_matches_reference():
         out_features=quantized.out_features,
         in_features=quantized.in_features,
         group_size=quantized.group_size,
-        device="cuda",
+        device=device,
     )
 
-    assert actual.is_cuda
+    assert actual.device.type == device.type
     assert torch.allclose(actual.cpu(), expected)
+
+
+def test_int4_rtn_triton_packed_forward_matches_independent_reference_without_dense_cache():
+    active = _active_triton_device_and_backend()
+    if active is None:
+        pytest.skip("no Triton accelerator is available")
+    device, backend = active
+    if not available_backends().get(backend, False):
+        pytest.skip(f"{backend} backend is not available")
+
+    torch.manual_seed(4)
+    source = torch.nn.Linear(65, 33).to(device)
+    x = torch.randn(3, 5, 65, dtype=torch.float32).to(device)
+    config = OrbitQuantConfig(
+        adaln_group_size=8,
+        runtime_mode="triton_packed_matmul",
+    )
+    quantized = RTNInt4Linear.from_linear(
+        source,
+        config=config,
+        module_name="block.modulation",
+    )
+    expected = F.linear(
+        x.cpu().to(torch.bfloat16),
+        _independent_packed_adaln_weight(quantized),
+        source.bias.detach().cpu().to(torch.bfloat16),
+    )
+
+    actual = quantized(x)
+
+    torch.testing.assert_close(actual.cpu(), expected, atol=2e-2, rtol=2e-2)
+    assert quantized.last_effective_runtime_mode == "triton_packed_adaln_int4"
+    assert quantized._dequantized_weight_cache is None
+    assert quantized._dequantized_weight_cache_key is None

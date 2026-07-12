@@ -11,8 +11,33 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 
 using namespace nvcuda;
+
+namespace {
+
+// Escape hatch (and A/B benchmarking toggle) for the cp.async-pipelined mma64
+// path: set ORBITQUANT_MMA64_DISABLE_PIPELINE=1 to force the legacy kernel.
+inline bool orbitquant_mma64_pipeline_disabled() {
+  static const bool disabled = []() {
+    char const *value = std::getenv("ORBITQUANT_MMA64_DISABLE_PIPELINE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return disabled;
+}
+
+// ORBITQUANT_MMA64_FORCE_PIPELINE=1 extends the pipeline to every eligible
+// width (W4/W6) for re-benchmarking on other GPUs.
+inline bool orbitquant_mma64_pipeline_forced() {
+  static const bool forced = []() {
+    char const *value = std::getenv("ORBITQUANT_MMA64_FORCE_PIPELINE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return forced;
+}
+
+}  // namespace
 
 __device__ __forceinline__ uint32_t unpack_lowbit_index(
     uint8_t const *__restrict__ packed_weight_indices,
@@ -99,6 +124,43 @@ __device__ __forceinline__ void decode_mma64_weight_segment(
   }
 }
 
+template <int Bits, int Values, typename mma_t>
+__device__ __forceinline__ void decode_mma64_weight_segment_from_stage(
+    mma_t *__restrict__ destination,
+    uint8_t const *__restrict__ staged_bytes,
+    float const *__restrict__ centroids,
+    float norm,
+    bool valid_segment) {
+  constexpr uint32_t mask = (1u << Bits) - 1u;
+  constexpr int word_count = (Values * Bits + 31) / 32;
+  uint32_t packed_words[word_count] = {};
+  if (valid_segment) {
+    auto const *words = reinterpret_cast<uint32_t const *>(staged_bytes);
+#pragma unroll
+    for (int word = 0; word < word_count; ++word) {
+      packed_words[word] = words[word];
+    }
+  }
+
+#pragma unroll
+  for (int index_offset = 0; index_offset < Values; ++index_offset) {
+    const int bit_start = index_offset * Bits;
+    const int word_index = bit_start >> 5;
+    const int shift = bit_start & 31;
+    uint32_t raw = packed_words[word_index] >> shift;
+    if (shift + Bits > 32) {
+      raw |= packed_words[word_index + 1] << (32 - shift);
+    }
+    const uint32_t codebook_index = raw & mask;
+    const float value = valid_segment ? norm * centroids[codebook_index] : 0.0f;
+    destination[index_offset] = orbitquant_mma_from_float<mma_t>(value);
+  }
+}
+
+// WMMA fragments (and the bf16 variants in particular) only exist on sm80+.
+// Multi-architecture builds still instantiate these templates for older
+// targets, so the bodies compile to empty stubs there; the host dispatch
+// requires compute capability >= 8 before launching either kernel.
 template <typename storage_t, typename mma_t, int Bits>
 __global__ void orbitquant_packed_matmul_mma64_kernel(
     storage_t *__restrict__ out,
@@ -111,6 +173,7 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile_m = 128;
   constexpr int tile_n = 128;
   constexpr int tile_k = 64;
@@ -228,6 +291,7 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
     }
     __syncwarp();
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 __device__ __forceinline__ void copy_async_16(
@@ -257,6 +321,238 @@ __device__ __forceinline__ void wait_for_async_copies() {
 #endif
 }
 
+// cp.async-pipelined variant of the mma64 kernel (sm80+, byte-aligned k-tile
+// strides, i.e. every supported width except W3). Interior blocks double-buffer
+// the X tile and the packed weight bytes so global loads overlap the MMA work;
+// edge blocks keep the guarded synchronous path.
+template <typename storage_t, typename mma_t, int Bits>
+__global__ void orbitquant_packed_matmul_mma64_pipelined_kernel(
+    storage_t *__restrict__ out,
+    storage_t const *__restrict__ x,
+    uint8_t const *__restrict__ packed_weight_indices,
+    c10::BFloat16 const *__restrict__ row_norms,
+    float const *__restrict__ centroids,
+    storage_t const *__restrict__ bias,
+    bool has_bias,
+    int64_t rows,
+    int64_t out_features,
+    int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
+  constexpr int tile_m = 128;
+  constexpr int tile_n = 128;
+  constexpr int tile_k = 64;
+  constexpr int padded_k = 72;
+  constexpr int warps_per_block = 8;
+  constexpr int warp_tile = 16;
+  constexpr int col_tiles = tile_n / warp_tile;
+  constexpr int x_vector_values = 8;
+  constexpr int x_vectors_per_row = tile_k / x_vector_values;
+  constexpr int seg_stride = tile_k * Bits / 8;
+  constexpr int weight_segment_values = 16;
+  constexpr int weight_segments_per_row = tile_k / weight_segment_values;
+  constexpr int segment_bytes = weight_segment_values * Bits / 8;
+  static_assert(sizeof(storage_t) == sizeof(mma_t));
+  static_assert(Bits == 2 || Bits == 4 || Bits == 6);
+
+  extern __shared__ __align__(16) uint8_t dynamic_shared[];
+  mma_t *x_tiles = reinterpret_cast<mma_t *>(dynamic_shared);
+  mma_t *weight_tile = x_tiles + 2 * tile_m * padded_k;
+  float *accumulator_tile =
+      reinterpret_cast<float *>(weight_tile + tile_n * padded_k);
+  uint8_t *packed_stage = reinterpret_cast<uint8_t *>(
+      accumulator_tile + warps_per_block * warp_tile * warp_tile);
+
+  const int warp_id = threadIdx.x / warpSize;
+  const int lane = threadIdx.x & (warpSize - 1);
+  const int64_t block_row = int64_t(blockIdx.y) * tile_m;
+  const int64_t block_col = int64_t(blockIdx.x) * tile_n;
+  const int64_t packed_row_bytes = in_features * Bits / 8;
+
+  wmma::fragment<wmma::accumulator, warp_tile, warp_tile, warp_tile, float>
+      accumulators[col_tiles];
+#pragma unroll
+  for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+    wmma::fill_fragment(accumulators[col_tile], 0.0f);
+  }
+
+  const bool interior =
+      block_row + tile_m <= rows && block_col + tile_n <= out_features;
+
+  if (interior) {
+    constexpr int x_copies = tile_m * x_vectors_per_row;
+    constexpr int w_copies = tile_n * seg_stride / 16;
+    auto stage_tile = [&](int buffer, int64_t k_start) {
+      mma_t *x_destination = x_tiles + buffer * tile_m * padded_k;
+      for (int task = threadIdx.x; task < x_copies; task += blockDim.x) {
+        const int local_row = task / x_vectors_per_row;
+        const int local_vector = task - local_row * x_vectors_per_row;
+        copy_async_16(
+            x_destination + local_row * padded_k + local_vector * x_vector_values,
+            x + (block_row + local_row) * in_features + k_start +
+                local_vector * x_vector_values);
+      }
+      uint8_t *stage_destination = packed_stage + buffer * tile_n * seg_stride;
+      for (int task = threadIdx.x; task < w_copies; task += blockDim.x) {
+        const int byte_offset = task * 16;
+        const int local_col = byte_offset / seg_stride;
+        const int seg_byte = byte_offset - local_col * seg_stride;
+        copy_async_16(
+            stage_destination + byte_offset,
+            packed_weight_indices + (block_col + local_col) * packed_row_bytes +
+                (k_start * Bits) / 8 + seg_byte);
+      }
+      commit_async_copies();
+    };
+
+    stage_tile(0, 0);
+    wait_for_async_copies();
+    __syncthreads();
+
+    for (int64_t k_start = 0; k_start < in_features; k_start += tile_k) {
+      const int buffer = static_cast<int>((k_start / tile_k) & 1);
+      const bool has_next = k_start + tile_k < in_features;
+      if (has_next) {
+        stage_tile(buffer ^ 1, k_start + tile_k);
+      }
+
+      uint8_t const *stage_source = packed_stage + buffer * tile_n * seg_stride;
+      constexpr int weight_tasks = tile_n * weight_segments_per_row;
+      for (int task = threadIdx.x; task < weight_tasks; task += blockDim.x) {
+        const int local_col = task / weight_segments_per_row;
+        const int local_segment = task - local_col * weight_segments_per_row;
+        decode_mma64_weight_segment_from_stage<Bits, weight_segment_values>(
+            weight_tile + local_col * padded_k +
+                local_segment * weight_segment_values,
+            stage_source + local_col * seg_stride + local_segment * segment_bytes,
+            centroids,
+            static_cast<float>(row_norms[block_col + local_col]),
+            true);
+      }
+      __syncthreads();
+
+      mma_t const *x_source = x_tiles + buffer * tile_m * padded_k;
+#pragma unroll
+      for (int local_k = 0; local_k < tile_k; local_k += warp_tile) {
+        wmma::fragment<wmma::matrix_a, warp_tile, warp_tile, warp_tile, mma_t,
+                       wmma::row_major>
+            lhs;
+        wmma::load_matrix_sync(
+            lhs,
+            x_source + warp_id * warp_tile * padded_k + local_k,
+            padded_k);
+#pragma unroll
+        for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+          wmma::fragment<wmma::matrix_b, warp_tile, warp_tile, warp_tile, mma_t,
+                         wmma::col_major>
+              rhs;
+          wmma::load_matrix_sync(
+              rhs,
+              weight_tile + col_tile * warp_tile * padded_k + local_k,
+              padded_k);
+          wmma::mma_sync(
+              accumulators[col_tile], lhs, rhs, accumulators[col_tile]);
+        }
+      }
+      __syncthreads();
+      if (has_next) {
+        wait_for_async_copies();
+        __syncthreads();
+      }
+    }
+  } else {
+    mma_t *x_tile = x_tiles;
+    for (int64_t k_start = 0; k_start < in_features; k_start += tile_k) {
+      constexpr int x_vector_tasks = tile_m * x_vectors_per_row;
+      for (int task = threadIdx.x; task < x_vector_tasks; task += blockDim.x) {
+        const int local_row = task / x_vectors_per_row;
+        const int local_vector = task - local_row * x_vectors_per_row;
+        const int local_k = local_vector * x_vector_values;
+        const int64_t global_row = block_row + local_row;
+        auto *destination = reinterpret_cast<uint4 *>(
+            x_tile + local_row * padded_k + local_k);
+        if (global_row < rows) {
+          auto const *source = reinterpret_cast<uint4 const *>(
+              x + global_row * in_features + k_start + local_k);
+          *destination = *source;
+        } else {
+          *destination = make_uint4(0, 0, 0, 0);
+        }
+      }
+
+      constexpr int weight_tasks = tile_n * weight_segments_per_row;
+      for (int weight_task = threadIdx.x; weight_task < weight_tasks;
+           weight_task += blockDim.x) {
+        const int local_col = weight_task / weight_segments_per_row;
+        const int local_segment =
+            weight_task - local_col * weight_segments_per_row;
+        const int local_k = local_segment * weight_segment_values;
+        const int64_t global_col = block_col + local_col;
+        decode_mma64_weight_segment<Bits, weight_segment_values>(
+            weight_tile + local_col * padded_k + local_k,
+            packed_weight_indices,
+            row_norms,
+            centroids,
+            global_col,
+            k_start + local_k,
+            in_features,
+            global_col < out_features);
+      }
+      __syncthreads();
+
+#pragma unroll
+      for (int local_k = 0; local_k < tile_k; local_k += warp_tile) {
+        wmma::fragment<wmma::matrix_a, warp_tile, warp_tile, warp_tile, mma_t,
+                       wmma::row_major>
+            lhs;
+        wmma::load_matrix_sync(
+            lhs,
+            x_tile + warp_id * warp_tile * padded_k + local_k,
+            padded_k);
+#pragma unroll
+        for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+          wmma::fragment<wmma::matrix_b, warp_tile, warp_tile, warp_tile, mma_t,
+                         wmma::col_major>
+              rhs;
+          wmma::load_matrix_sync(
+              rhs,
+              weight_tile + col_tile * warp_tile * padded_k + local_k,
+              padded_k);
+          wmma::mma_sync(
+              accumulators[col_tile], lhs, rhs, accumulators[col_tile]);
+        }
+      }
+      __syncthreads();
+    }
+  }
+
+  float *warp_accumulator = accumulator_tile + warp_id * warp_tile * warp_tile;
+#pragma unroll
+  for (int col_tile = 0; col_tile < col_tiles; ++col_tile) {
+    wmma::store_matrix_sync(
+        warp_accumulator,
+        accumulators[col_tile],
+        warp_tile,
+        wmma::mem_row_major);
+    __syncwarp();
+    for (int offset = lane; offset < warp_tile * warp_tile; offset += warpSize) {
+      const int local_row = offset / warp_tile;
+      const int local_col = offset - local_row * warp_tile;
+      const int64_t global_row = block_row + warp_id * warp_tile + local_row;
+      const int64_t global_col = block_col + col_tile * warp_tile + local_col;
+      if (global_row < rows && global_col < out_features) {
+        float value = warp_accumulator[offset];
+        if (has_bias) {
+          value += static_cast<float>(bias[global_col]);
+        }
+        out[global_row * out_features + global_col] =
+            static_cast<storage_t>(value);
+      }
+    }
+    __syncwarp();
+  }
+#endif  // __CUDA_ARCH__ >= 800
+}
+
 __device__ __forceinline__ uint8_t orbitquant_bucketize_w4(
     float value,
     float const *__restrict__ boundaries) {
@@ -267,12 +563,12 @@ __device__ __forceinline__ uint8_t orbitquant_bucketize_w4(
   return static_cast<uint8_t>(index);
 }
 
-template <typename storage_t, int Dim>
+template <typename storage_t, typename index_t, int Dim>
 __global__ void orbitquant_rpbh_quantize_pack_w4_kernel(
     uint8_t *__restrict__ packed_out,
     float *__restrict__ norms_out,
     storage_t const *__restrict__ x,
-    int64_t const *__restrict__ permutation,
+    index_t const *__restrict__ permutation,
     int8_t const *__restrict__ signs,
     float const *__restrict__ boundaries,
     float eps,
@@ -345,12 +641,12 @@ __global__ void orbitquant_rpbh_quantize_pack_w4_kernel(
   }
 }
 
-template <typename storage_t, int Dim, int OrbitBlock>
+template <typename storage_t, typename index_t, int Dim, int OrbitBlock>
 __global__ void orbitquant_rpbh_quantize_int8_kernel(
     int8_t *__restrict__ int8_out,
     float *__restrict__ norms_out,
     storage_t const *__restrict__ x,
-    int64_t const *__restrict__ permutation,
+    index_t const *__restrict__ permutation,
     int8_t const *__restrict__ signs,
     float const *__restrict__ boundaries,
     int8_t const *__restrict__ codes,
@@ -451,6 +747,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile_k = 64;
   constexpr int packed_tile_k = tile_k / 2;
   constexpr int padded_k = 80;
@@ -693,6 +990,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
     }
     __syncwarp();
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 template <int Bits>
@@ -707,6 +1005,7 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
     int64_t rows,
     int64_t out_features,
     int64_t in_features) {
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
   constexpr int tile = 16;
   constexpr int col_tiles = 4;
   constexpr int warps_per_block = 8;
@@ -788,6 +1087,7 @@ __global__ void orbitquant_packed_matmul_wmma_bf16_kernel(
       }
     }
   }
+#endif  // __CUDA_ARCH__ >= 800
 }
 
 template <int Bits>
@@ -1081,6 +1381,7 @@ void matmul_packed_weight(
       sizeof(float);
   const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  const cudaDeviceProp *mma_properties = at::cuda::getCurrentDeviceProperties();
 
   if (x.size(0) <= 8) {
     constexpr int channels_per_warp = 4;
@@ -1109,7 +1410,8 @@ void matmul_packed_weight(
     return;
   }
 
-  if (x.scalar_type() == at::kBFloat16 && x.size(0) >= 9) {
+  if (x.scalar_type() == at::kBFloat16 && x.size(0) >= 9 &&
+      mma_properties->major >= 8) {
     if (in_features % 64 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
       constexpr int mma_tile_m = 128;
@@ -1118,6 +1420,53 @@ void matmul_packed_weight(
       const dim3 mma_grid(
           (out_features + mma_tile_n - 1) / mma_tile_n,
           (x.size(0) + mma_tile_m - 1) / mma_tile_m);
+
+#define ORBITQUANT_LAUNCH_MMA64_PIPELINED(STORAGE_TYPE, MMA_TYPE, BITS_VALUE)   \
+  do {                                                                          \
+    constexpr int kSegStride = 64 * (BITS_VALUE) / 8;                           \
+    const int pipelined_shared_bytes = static_cast<int>(                        \
+        2 * 128 * 72 * sizeof(MMA_TYPE) + 128 * 72 * sizeof(MMA_TYPE) +         \
+        8 * 16 * 16 * sizeof(float) + 2 * 128 * kSegStride);                    \
+    if (pipelined_shared_bytes > mma_properties->sharedMemPerBlock) {           \
+      C10_CUDA_CHECK(cudaFuncSetAttribute(                                      \
+          orbitquant_packed_matmul_mma64_pipelined_kernel<STORAGE_TYPE,         \
+                                                          MMA_TYPE,             \
+                                                          BITS_VALUE>,          \
+          cudaFuncAttributeMaxDynamicSharedMemorySize,                          \
+          pipelined_shared_bytes));                                             \
+    }                                                                           \
+    orbitquant_packed_matmul_mma64_pipelined_kernel<STORAGE_TYPE, MMA_TYPE,     \
+                                                    BITS_VALUE>                 \
+        <<<mma_grid, mma_block, pipelined_shared_bytes, stream>>>(              \
+            reinterpret_cast<STORAGE_TYPE *>(out.data_ptr()),                   \
+            reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),               \
+            packed_weight_indices.data_ptr<uint8_t>(),                          \
+            row_norms.data_ptr<c10::BFloat16>(),                                \
+            centroids.data_ptr<float>(),                                        \
+            has_bias ? bias.data_ptr<STORAGE_TYPE>() : nullptr,                  \
+            has_bias,                                                            \
+            x.size(0),                                                           \
+            out_features,                                                        \
+            in_features);                                                        \
+  } while (0)
+// The cp.async pipeline wins when the launch is latency-bound: with cold L2
+// (each layer's weights are evicted between calls in a real model) it is
+// 1.35-1.46x faster for W2/W4/W6 on RTX 4060 Ti, A40, and RTX 4090 whenever
+// the grid fits in one wave (blocks <= SM count), and it regresses up to 15%
+// once the grid oversubscribes the device. Gate on grid size; measured
+// 2026-07 across the three architectures above.
+// ORBITQUANT_MMA64_FORCE_PIPELINE=1 bypasses the grid gate,
+// ORBITQUANT_MMA64_DISABLE_PIPELINE=1 forces the legacy kernel everywhere.
+#define ORBITQUANT_MMA64_USE_PIPELINE(BITS_VALUE)                               \
+  ((orbitquant_mma64_pipeline_forced() ||                                       \
+    static_cast<int64_t>(mma_grid.x) * mma_grid.y <=                            \
+        mma_properties->multiProcessorCount) &&                                 \
+   !orbitquant_mma64_pipeline_disabled() &&                                     \
+   mma_properties->major >= 8 &&                                                \
+   (2 * 128 * 72 * 2 + 128 * 72 * 2 + 8 * 16 * 16 * 4 +                        \
+    2 * 128 * (64 * (BITS_VALUE) / 8)) <=                                       \
+       static_cast<int>(mma_properties->sharedMemPerBlockOptin))
+
 #define ORBITQUANT_LAUNCH_MMA64_BF16(BITS_VALUE)                               \
   orbitquant_packed_matmul_mma64_kernel<c10::BFloat16, __nv_bfloat16,          \
                                          BITS_VALUE><<<mma_grid, mma_block, 0,  \
@@ -1134,16 +1483,28 @@ void matmul_packed_weight(
       in_features)
       switch (bits) {
         case 2:
-          ORBITQUANT_LAUNCH_MMA64_BF16(2);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(2)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::BFloat16, __nv_bfloat16, 2);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_BF16(2);
+          }
           break;
         case 3:
           ORBITQUANT_LAUNCH_MMA64_BF16(3);
           break;
         case 4:
-          ORBITQUANT_LAUNCH_MMA64_BF16(4);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(4)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::BFloat16, __nv_bfloat16, 4);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_BF16(4);
+          }
           break;
         case 6:
-          ORBITQUANT_LAUNCH_MMA64_BF16(6);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(6)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::BFloat16, __nv_bfloat16, 6);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_BF16(6);
+          }
           break;
       }
 #undef ORBITQUANT_LAUNCH_MMA64_BF16
@@ -1201,7 +1562,8 @@ void matmul_packed_weight(
     return;
   }
 
-  if (x.scalar_type() == at::kHalf && x.size(0) >= 9) {
+  if (x.scalar_type() == at::kHalf && x.size(0) >= 9 &&
+      mma_properties->major >= 8) {
     if (in_features % 64 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6)) {
       constexpr int mma_tile_m = 128;
@@ -1225,19 +1587,33 @@ void matmul_packed_weight(
           in_features)
       switch (bits) {
         case 2:
-          ORBITQUANT_LAUNCH_MMA64_HALF(2);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(2)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::Half, half, 2);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_HALF(2);
+          }
           break;
         case 3:
           ORBITQUANT_LAUNCH_MMA64_HALF(3);
           break;
         case 4:
-          ORBITQUANT_LAUNCH_MMA64_HALF(4);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(4)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::Half, half, 4);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_HALF(4);
+          }
           break;
         case 6:
-          ORBITQUANT_LAUNCH_MMA64_HALF(6);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(6)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::Half, half, 6);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_HALF(6);
+          }
           break;
       }
 #undef ORBITQUANT_LAUNCH_MMA64_HALF
+#undef ORBITQUANT_MMA64_USE_PIPELINE
+#undef ORBITQUANT_LAUNCH_MMA64_PIPELINED
       C10_CUDA_KERNEL_LAUNCH_CHECK();
       return;
     }
@@ -1520,8 +1896,9 @@ void quantize_activations_packed_w4(
       x.scalar_type() == torch::kBFloat16 || x.scalar_type() == torch::kHalf,
       "x must be bfloat16 or float16");
   TORCH_CHECK(
-      permutation.scalar_type() == torch::kLong,
-      "permutation must be int64");
+      permutation.scalar_type() == torch::kLong ||
+          permutation.scalar_type() == torch::kInt,
+      "permutation must be int32 or int64");
   TORCH_CHECK(signs.scalar_type() == torch::kChar, "signs must be int8");
   TORCH_CHECK(boundaries.scalar_type() == torch::kFloat, "boundaries must be float32");
   TORCH_CHECK(x.dim() == 2, "x must be rank 2");
@@ -1561,49 +1938,59 @@ void quantize_activations_packed_w4(
   const dim3 grid(static_cast<unsigned int>(rows));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-#define ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, DIM_VALUE)                 \
+#define ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, DIM_VALUE)     \
   if (shared_bytes > properties->sharedMemPerBlock) {                           \
     C10_CUDA_CHECK(cudaFuncSetAttribute(                                        \
-        orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, DIM_VALUE>,       \
+        orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, INDEX_TYPE,       \
+                                                DIM_VALUE>,                     \
         cudaFuncAttributeMaxDynamicSharedMemorySize,                            \
         shared_bytes));                                                         \
   }                                                                             \
-  orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, DIM_VALUE>              \
+  orbitquant_rpbh_quantize_pack_w4_kernel<STORAGE_TYPE, INDEX_TYPE, DIM_VALUE>  \
       <<<grid, block, shared_bytes, stream>>>(                                   \
           packed_out.data_ptr<uint8_t>(),                                       \
           norms_out.data_ptr<float>(),                                          \
           reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),                 \
-          permutation.data_ptr<int64_t>(),                                      \
+          permutation.data_ptr<INDEX_TYPE>(),                                   \
           signs.data_ptr<int8_t>(),                                             \
           boundaries.data_ptr<float>(),                                         \
           static_cast<float>(eps),                                              \
           static_cast<float>(inv_sqrt_block),                                   \
           rows)
-#define ORBITQUANT_DISPATCH_RPBH_PACK_W4(STORAGE_TYPE)                          \
+#define ORBITQUANT_DISPATCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE)              \
   switch (dim) {                                                                \
     case 512:                                                                   \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 512);                        \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 512);            \
       break;                                                                    \
     case 1024:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 1024);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 1024);           \
       break;                                                                    \
     case 2048:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 2048);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 2048);           \
       break;                                                                    \
     case 4096:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 4096);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 4096);           \
       break;                                                                    \
     case 8192:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 8192);                       \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 8192);           \
       break;                                                                    \
     case 16384:                                                                 \
-      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, 16384);                      \
+      ORBITQUANT_LAUNCH_RPBH_PACK_W4(STORAGE_TYPE, INDEX_TYPE, 16384);          \
       break;                                                                    \
   }
+  const bool int32_permutation = permutation.scalar_type() == torch::kInt;
   if (x.scalar_type() == torch::kBFloat16) {
-    ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::BFloat16, int64_t);
+    }
   } else {
-    ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_PACK_W4(c10::Half, int64_t);
+    }
   }
 #undef ORBITQUANT_DISPATCH_RPBH_PACK_W4
 #undef ORBITQUANT_LAUNCH_RPBH_PACK_W4
@@ -1641,8 +2028,9 @@ void quantize_activations_int8(
       x.scalar_type() == torch::kBFloat16 || x.scalar_type() == torch::kHalf,
       "x must be bfloat16 or float16");
   TORCH_CHECK(
-      permutation.scalar_type() == torch::kLong,
-      "permutation must be int64");
+      permutation.scalar_type() == torch::kLong ||
+          permutation.scalar_type() == torch::kInt,
+      "permutation must be int32 or int64");
   TORCH_CHECK(signs.scalar_type() == torch::kChar, "signs must be int8");
   TORCH_CHECK(boundaries.scalar_type() == torch::kFloat, "boundaries must be float32");
   TORCH_CHECK(codes.scalar_type() == torch::kChar, "codes must be int8");
@@ -1686,55 +2074,64 @@ void quantize_activations_int8(
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
 #define ORBITQUANT_LAUNCH_RPBH_INT8(                                           \
-    STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE)                                \
+    STORAGE_TYPE, INDEX_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE)                    \
   if (shared_bytes > properties->sharedMemPerBlock) {                           \
     C10_CUDA_CHECK(cudaFuncSetAttribute(                                        \
         orbitquant_rpbh_quantize_int8_kernel<                                   \
-            STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>,                        \
+            STORAGE_TYPE, INDEX_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>,            \
         cudaFuncAttributeMaxDynamicSharedMemorySize,                            \
         shared_bytes));                                                         \
   }                                                                             \
   orbitquant_rpbh_quantize_int8_kernel<                                         \
-      STORAGE_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>                               \
+      STORAGE_TYPE, INDEX_TYPE, DIM_VALUE, ORBIT_BLOCK_VALUE>                   \
       <<<grid, block, shared_bytes, stream>>>(                                   \
           int8_out.data_ptr<int8_t>(),                                          \
           norms_out.data_ptr<float>(),                                          \
           reinterpret_cast<STORAGE_TYPE const *>(x.data_ptr()),                 \
-          permutation.data_ptr<int64_t>(),                                      \
+          permutation.data_ptr<INDEX_TYPE>(),                                   \
           signs.data_ptr<int8_t>(),                                             \
           boundaries.data_ptr<float>(),                                         \
           codes.data_ptr<int8_t>(),                                             \
           static_cast<float>(eps),                                              \
           static_cast<float>(inv_sqrt_block),                                   \
           rows)
-#define ORBITQUANT_DISPATCH_RPBH_INT8(STORAGE_TYPE)                             \
+#define ORBITQUANT_DISPATCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE)                 \
   switch (dim) {                                                                \
     case 512:                                                                   \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 512, 512);                      \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 512, 512);          \
       break;                                                                    \
     case 1024:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 1024, 1024);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 1024, 1024);        \
       break;                                                                    \
     case 2048:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 2048, 2048);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 2048, 2048);        \
       break;                                                                    \
     case 4096:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 4096, 4096);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 4096, 4096);        \
       break;                                                                    \
     case 8192:                                                                  \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 8192, 8192);                    \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 8192, 8192);        \
       break;                                                                    \
     case 12288:                                                                 \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 12288, 4096);                   \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 12288, 4096);       \
       break;                                                                    \
     case 16384:                                                                 \
-      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, 16384, 16384);                  \
+      ORBITQUANT_LAUNCH_RPBH_INT8(STORAGE_TYPE, INDEX_TYPE, 16384, 16384);      \
       break;                                                                    \
   }
+  const bool int32_permutation = permutation.scalar_type() == torch::kInt;
   if (x.scalar_type() == torch::kBFloat16) {
-    ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::BFloat16, int64_t);
+    }
   } else {
-    ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half);
+    if (int32_permutation) {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half, int32_t);
+    } else {
+      ORBITQUANT_DISPATCH_RPBH_INT8(c10::Half, int64_t);
+    }
   }
 #undef ORBITQUANT_DISPATCH_RPBH_INT8
 #undef ORBITQUANT_LAUNCH_RPBH_INT8

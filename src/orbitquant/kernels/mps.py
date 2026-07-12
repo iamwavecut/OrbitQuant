@@ -15,7 +15,7 @@ using namespace metal;
 
 constant uint orbitquant_activation_threads = 256;
 constant uint orbitquant_wide_activation_threads = 512;
-constant uint orbitquant_max_rpbh_block_size = 4096;
+constant uint orbitquant_max_rpbh_block_size = __ORBITQUANT_MAX_BLOCK__;
 
 template <typename scalar_t>
 inline void orbitquant_row_norm_impl(
@@ -26,7 +26,9 @@ inline void orbitquant_row_norm_impl(
     threadgroup float* scratch,
     uint row,
     uint thread_index,
-    uint thread_count) {
+    uint thread_count,
+    uint simd_lane,
+    uint simd_group) {
   if (row >= uint(rows)) {
     return;
   }
@@ -37,17 +39,20 @@ inline void orbitquant_row_norm_impl(
     const float value = float(input[row_offset + col]);
     sum += value * value;
   }
-  scratch[thread_index] = sum;
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-
-  for (uint stride = thread_count >> 1; stride > 0; stride >>= 1) {
-    if (thread_index < stride) {
-      scratch[thread_index] += scratch[thread_index + stride];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+  // One simdgroup reduction plus a single cross-warp pass replaces the
+  // log2(threads) barrier tree.
+  const float warp_sum = simd_sum(sum);
+  if (simd_lane == 0) {
+    scratch[simd_group] = warp_sum;
   }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
   if (thread_index == 0) {
-    norms[row] = sqrt(scratch[0]);
+    float total = 0.0f;
+    const uint warps = (thread_count + 31) / 32;
+    for (uint warp = 0; warp < warps; ++warp) {
+      total += scratch[warp];
+    }
+    norms[row] = sqrt(total);
   }
 }
 
@@ -122,10 +127,13 @@ kernel void NAME(                                                            \
     constant int& dim [[buffer(3)]],                                          \
     uint3 group_id [[threadgroup_position_in_grid]],                          \
     uint thread_index [[thread_index_in_threadgroup]],                        \
+    uint simd_lane [[thread_index_in_simdgroup]],                             \
+    uint simd_group [[simdgroup_index_in_threadgroup]],                       \
     uint3 group_size [[threads_per_threadgroup]]) {                           \
-  threadgroup float scratch[THREADS];                                         \
+  threadgroup float scratch[(THREADS + 31) / 32];                             \
   orbitquant_row_norm_impl(                                                   \
-      input, norms, rows, dim, scratch, group_id.x, thread_index, group_size.x); \
+      input, norms, rows, dim, scratch, group_id.x, thread_index,             \
+      group_size.x, simd_lane, simd_group);                                   \
 }
 
 ORBITQUANT_ROW_NORM_KERNEL(
@@ -232,11 +240,21 @@ def mps_metal_available() -> bool:
     return bool(torch.backends.mps.is_available() and hasattr(torch.mps, "compile_shader"))
 
 
-@lru_cache(maxsize=1)
-def _mps_shader():
+@lru_cache(maxsize=8)
+def _mps_shader(max_block_size: int = 512):
+    """Compile the shader library with the fused-kernel threadgroup array
+    sized for the requested RPBH block bucket (over-allocating to the 4096
+    worst case would cap occupancy on every smaller block)."""
     if not mps_metal_available():
         raise RuntimeError("MPS Metal shader backend is not available in this environment")
-    return torch.mps.compile_shader(_MPS_KERNEL_SOURCE)
+    source = _MPS_KERNEL_SOURCE.replace(
+        "__ORBITQUANT_MAX_BLOCK__", str(int(max_block_size))
+    )
+    return torch.mps.compile_shader(source)
+
+
+def _fused_block_bucket(block_size: int) -> int:
+    return max(128, int(block_size))
 
 
 def _activation_kernel_names(dtype: torch.dtype) -> tuple[str, str, str]:
@@ -310,7 +328,7 @@ def quantize_activations_with_mps(
     norms = torch.empty(rows, device=x.device, dtype=torch.float32)
     output = torch.empty_like(flat)
     norm_name, wide_norm_name, activation_name = _activation_kernel_names(x.dtype)
-    shader = _mps_shader()
+    shader = _mps_shader(_fused_block_bucket(rotation.block_size))
     activation_threads = (
         512 if rotation.block_size == 4096 and rotation.num_blocks == 1 else 256
     )

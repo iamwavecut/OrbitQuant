@@ -67,11 +67,7 @@ def _runnable_cpu_isas() -> list[str]:
     isas = ["scalar"]
     if machine in {"x86_64", "amd64"} and capability in {"AVX2", "AVX512"}:
         isas.append("avx2")
-    if (
-        machine in {"x86_64", "amd64"}
-        and capability == "AVX512"
-        and platform.system() != "Windows"
-    ):
+    if machine in {"x86_64", "amd64"} and capability == "AVX512" and platform.system() != "Windows":
         # The MSVC wheel currently ships the separately compiled AVX2 TU; the
         # AVX-512 implementation uses GCC/Clang per-function target attributes.
         isas.append("avx512")
@@ -182,10 +178,105 @@ def test_cpu_runtime_isa_dispatch_matches_scalar_reference(monkeypatch) -> None:
         )
 
     for isa in _runnable_cpu_isas()[1:]:
-        torch.testing.assert_close(
-            activations[isa], activations["scalar"], atol=2e-6, rtol=2e-6
-        )
+        torch.testing.assert_close(activations[isa], activations["scalar"], atol=2e-6, rtol=2e-6)
         torch.testing.assert_close(outputs[isa], outputs["scalar"], atol=2e-5, rtol=2e-5)
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("bits", [2, 3, 6])
+@pytest.mark.parametrize("in_features", [64, 84])
+def test_cpu_isa_matmul_matches_scalar_for_low_bit_widths(
+    monkeypatch, bits: int, in_features: int
+) -> None:
+    if not supports_device("cpu"):
+        pytest.skip("the built variant has no native CPU backend")
+    torch.manual_seed(47 + bits + in_features)
+    rows = 9
+    out_features = 11
+    levels = 2**bits
+    x = torch.randn(rows, in_features)
+    indices = torch.randint(0, levels, (out_features, in_features), dtype=torch.uint8)
+    packed = _pack(indices, bits)
+    row_norms = torch.linspace(0.5, 1.5, out_features)
+    centroids = torch.tanh(torch.linspace(-1.7, 1.7, levels))
+    bias = torch.randn(out_features)
+
+    outputs = {}
+    for isa in _runnable_cpu_isas():
+        monkeypatch.setenv("ORBITQUANT_CPU_ISA", isa)
+        outputs[isa] = matmul_packed_weight(
+            x,
+            packed,
+            row_norms,
+            centroids,
+            bits=bits,
+            out_features=out_features,
+            in_features=in_features,
+            bias=bias,
+        )
+
+    for isa in _runnable_cpu_isas()[1:]:
+        torch.testing.assert_close(outputs[isa], outputs["scalar"], atol=2e-5, rtol=2e-5)
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("rows", [16, 24, 32, 33])
+def test_cpu_avx2_bf16_realistic_row_tiles_match_reference(monkeypatch, rows: int) -> None:
+    if "avx2" not in _runnable_cpu_isas() or not supports_device("cpu"):
+        pytest.skip("the built variant has no runnable AVX2 CPU path")
+    monkeypatch.setenv("ORBITQUANT_CPU_ISA", "avx2")
+    torch.manual_seed(59 + rows)
+    in_features = 1536
+    out_features = 17
+    x = torch.randn(rows, in_features, dtype=torch.bfloat16)
+    indices = torch.randint(0, 16, (out_features, in_features), dtype=torch.uint8)
+    packed = _pack(indices, 4)
+    row_norms = torch.linspace(0.5, 1.5, out_features)
+    centroids = torch.tanh(torch.linspace(-1.7, 1.7, 16))
+
+    expected_weight = (row_norms[:, None] * centroids[indices.long()]).to(torch.bfloat16)
+    expected = torch.nn.functional.linear(x, expected_weight)
+    actual = matmul_packed_weight(
+        x,
+        packed,
+        row_norms,
+        centroids,
+        bits=4,
+        out_features=out_features,
+        in_features=in_features,
+    )
+
+    torch.testing.assert_close(actual, expected, atol=0.25, rtol=3e-2)
+
+
+@pytest.mark.kernels_ci
+def test_cpu_avx512_bf16_realistic_row_tile_matches_reference(monkeypatch) -> None:
+    if "avx512" not in _runnable_cpu_isas() or not supports_device("cpu"):
+        pytest.skip("the built variant has no runnable AVX-512 CPU path")
+    monkeypatch.setenv("ORBITQUANT_CPU_ISA", "avx512")
+    torch.manual_seed(59)
+    rows = 32
+    in_features = 1536
+    out_features = 17
+    x = torch.randn(rows, in_features, dtype=torch.bfloat16)
+    indices = torch.randint(0, 16, (out_features, in_features), dtype=torch.uint8)
+    packed = _pack(indices, 4)
+    row_norms = torch.linspace(0.5, 1.5, out_features)
+    centroids = torch.tanh(torch.linspace(-1.7, 1.7, 16))
+
+    expected_weight = (row_norms[:, None] * centroids[indices.long()]).to(torch.bfloat16)
+    expected = torch.nn.functional.linear(x, expected_weight)
+    actual = matmul_packed_weight(
+        x,
+        packed,
+        row_norms,
+        centroids,
+        bits=4,
+        out_features=out_features,
+        in_features=in_features,
+    )
+
+    torch.testing.assert_close(actual, expected, atol=0.125, rtol=3e-2)
 
 
 @pytest.mark.kernels_ci
@@ -215,9 +306,9 @@ def test_matmul_packed_adaln_cpu_matches_independent_bf16_reference(
     bias = torch.randn(out_features, dtype=torch.bfloat16) if with_bias else None
 
     signed = indices.to(torch.int16).sub(8).float()
-    weight = (signed * scales.float()[..., None]).reshape(
-        out_features, padded_in_features
-    )[:, :in_features]
+    weight = (signed * scales.float()[..., None]).reshape(out_features, padded_in_features)[
+        :, :in_features
+    ]
     expected = torch.nn.functional.linear(x, weight.to(torch.bfloat16), bias)
     actual = matmul_packed_adaln_int4_cpu(
         x,
@@ -268,9 +359,7 @@ def test_cpu_adaln_runtime_isa_dispatch_matches_scalar_reference(monkeypatch) ->
         )
 
     for isa in _runnable_cpu_isas()[1:]:
-        torch.testing.assert_close(
-            outputs[isa], outputs["scalar"], atol=3e-2, rtol=3e-2
-        )
+        torch.testing.assert_close(outputs[isa], outputs["scalar"], atol=3e-2, rtol=3e-2)
 
 
 @pytest.mark.kernels_ci
@@ -347,9 +436,7 @@ def test_matmul_packed_weight_short_sequence_matches_reference(
             bias.cpu(),
         ).float()
     else:
-        expected = torch.nn.functional.linear(
-            x.float().cpu(), expected_weight, bias.float().cpu()
-        )
+        expected = torch.nn.functional.linear(x.float().cpu(), expected_weight, bias.float().cpu())
     actual = matmul_packed_weight(
         x,
         packed,
@@ -647,6 +734,43 @@ def test_quantize_activations_packed_w4_matches_torch_reference(
 
 
 @pytest.mark.kernels_ci
+def test_quantize_activations_packed_w4_accepts_int32_permutation() -> None:
+    device = _cuda_device()
+    dim = 512
+    torch.manual_seed(0)
+    x = torch.randn((3, dim), device=device, dtype=torch.bfloat16)
+    permutation = torch.randperm(dim, device=device)
+    signs = torch.where(
+        torch.arange(dim, device=device) % 2 == 0,
+        torch.ones(dim, device=device, dtype=torch.int8),
+        -torch.ones(dim, device=device, dtype=torch.int8),
+    )
+    boundaries = torch.linspace(-0.2, 0.2, 15, device=device)
+
+    packed_int64, norms_int64 = quantize_activations_packed_w4(
+        x,
+        permutation,
+        signs,
+        boundaries,
+        eps=1e-12,
+        inv_sqrt_block=dim**-0.5,
+        threads=256,
+    )
+    packed_int32, norms_int32 = quantize_activations_packed_w4(
+        x,
+        permutation.to(torch.int32),
+        signs,
+        boundaries,
+        eps=1e-12,
+        inv_sqrt_block=dim**-0.5,
+        threads=256,
+    )
+
+    assert torch.equal(packed_int32, packed_int64)
+    assert torch.equal(norms_int32, norms_int64)
+
+
+@pytest.mark.kernels_ci
 @pytest.mark.parametrize(("dim", "threads"), [(512, 128), (4096, 256), (16384, 512)])
 def test_quantize_activations_int8_matches_packed_codes(
     dim: int,
@@ -736,13 +860,9 @@ def test_quantize_activations_int8_matches_blocked_rpbh_reference() -> None:
         blocks = work.reshape(rows, -1, width * 2)
         left = blocks[..., :width]
         right = blocks[..., width:]
-        work = torch.cat((left + right, left - right), dim=-1).reshape(
-            rows, -1, block_size
-        )
+        work = torch.cat((left + right, left - right), dim=-1).reshape(rows, -1, block_size)
         width *= 2
-    indices = torch.bucketize(
-        work.reshape(rows, dim) * (block_size**-0.5), boundaries
-    )
+    indices = torch.bucketize(work.reshape(rows, dim) * (block_size**-0.5), boundaries)
     expected = codes[indices]
 
     assert torch.equal(quantized, expected)

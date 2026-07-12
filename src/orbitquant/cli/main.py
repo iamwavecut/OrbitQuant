@@ -162,6 +162,10 @@ def _release_generation_pipeline(pipeline: Any, *, device: str) -> None:
         empty_cache = getattr(torch.mps, "empty_cache", None)
         if callable(empty_cache):
             empty_cache()
+    elif torch_device.type == "xpu" and hasattr(torch, "xpu"):
+        empty_cache = getattr(torch.xpu, "empty_cache", None)
+        if callable(empty_cache):
+            empty_cache()
 
 
 def _with_runtime_overrides(
@@ -749,7 +753,7 @@ def main(argv: list[str] | None = None) -> int:
     kernel_bench_parser.add_argument(
         "--activation-kernel-backend",
         default="auto",
-        choices=["auto", "cpu", "mps", "triton_cuda"],
+        choices=["auto", "cpu", "mps", "triton_cuda", "triton_rocm", "triton_xpu"],
     )
     kernel_bench_parser.add_argument(
         "--runtime-mode",
@@ -874,7 +878,7 @@ def main(argv: list[str] | None = None) -> int:
     native_script_parser.add_argument(
         "--activation-kernel-backend",
         default="triton_cuda",
-        choices=["auto", "cpu", "mps", "triton_cuda"],
+        choices=["auto", "cpu", "mps", "triton_cuda", "triton_rocm", "triton_xpu"],
     )
     native_script_parser.add_argument(
         "--runtime-mode",
@@ -907,7 +911,7 @@ def main(argv: list[str] | None = None) -> int:
     quantize_parser.add_argument(
         "--activation-kernel-backend",
         default="auto",
-        choices=["auto", "cpu", "mps", "triton_cuda"],
+        choices=["auto", "cpu", "mps", "triton_cuda", "triton_rocm", "triton_xpu"],
     )
     quantize_parser.add_argument("--device", default="auto")
     quantize_parser.add_argument(
@@ -1160,7 +1164,7 @@ def main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument(
         "--activation-kernel-backend",
         default="auto",
-        choices=["auto", "cpu", "mps", "triton_cuda"],
+        choices=["auto", "cpu", "mps", "triton_cuda", "triton_rocm", "triton_xpu"],
     )
     generate_parser.add_argument(
         "--no-prewarm",
@@ -1206,7 +1210,7 @@ def main(argv: list[str] | None = None) -> int:
     compare_native_parser.add_argument(
         "--activation-kernel-backend",
         default="auto",
-        choices=["auto", "cpu", "mps", "triton_cuda"],
+        choices=["auto", "cpu", "mps", "triton_cuda", "triton_rocm", "triton_xpu"],
     )
     compare_native_parser.add_argument(
         "--no-prewarm",

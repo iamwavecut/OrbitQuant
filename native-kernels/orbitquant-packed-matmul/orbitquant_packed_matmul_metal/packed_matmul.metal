@@ -54,13 +54,13 @@ inline void packed_matmul_small_rows_value(
         raw |= uint(packed_weight_indices[byte_index + 1]) << 8;
       }
       const uint index = (raw >> bit_offset) & mask;
-      accumulators[col_offset] += x_value * norms[col_offset] * centroids[index];
+      accumulators[col_offset] += x_value * centroids[index];
     }
   }
 
 #pragma clang loop unroll(full)
   for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
-    const float value = simd_sum(accumulators[col_offset]);
+    const float value = simd_sum(accumulators[col_offset]) * norms[col_offset];
     const long col = col_start + long(col_offset);
     if (lane == 0 && col < params.out_features) {
       out[row * params.out_features + col] =

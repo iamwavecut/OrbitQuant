@@ -221,11 +221,22 @@ class OrbitQuantizer(*_hf_base_classes()):
     def update_device_map(self, device_map: Any | None) -> Any | None:
         return device_map
 
+    def _classified_decisions(self, model: Any) -> dict:
+        # classify_linear_modules walks every module; Hugging Face calls the
+        # per-parameter hooks once per checkpoint tensor, so memoize the walk
+        # for the model instance being loaded.
+        cached = getattr(self, "_classification_cache", None)
+        if cached is not None and cached[0] is model:
+            return cached[1]
+        decisions = classify_linear_modules(model, self.quantization_config)
+        self._classification_cache = (model, decisions)
+        return decisions
+
     def _param_action(self, model: Any, param_name: str) -> str | None:
         if not param_name.endswith(".weight"):
             return None
         module_name = param_name.removesuffix(".weight")
-        decisions = classify_linear_modules(model, self.quantization_config)
+        decisions = self._classified_decisions(model)
         decision = decisions.get(module_name)
         return None if decision is None else decision.action
 
@@ -422,6 +433,7 @@ class OrbitQuantizer(*_hf_base_classes()):
 
     def _process_model_before_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
         model.quantization_config = self.quantization_config
+        self._classification_cache = None
         checkpoint_files = kwargs.get("checkpoint_files")
         self._transformers_postload_quantization = (
             not self.pre_quantized and checkpoint_files is not None
@@ -438,7 +450,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_adaln_module_names = []
         self._transformers_base_model_prefix = str(getattr(model, "base_model_prefix", "") or "")
         if self._transformers_streaming_quantization or self._diffusers_streaming_quantization:
-            decisions = classify_linear_modules(model, self.quantization_config)
+            decisions = self._classified_decisions(model)
             self._transformers_orbit_module_names = [
                 name for name, decision in decisions.items() if decision.action == "orbitquant"
             ]

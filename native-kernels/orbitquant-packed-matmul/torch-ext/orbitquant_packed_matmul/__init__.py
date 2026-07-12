@@ -87,7 +87,8 @@ def quantize_activations_cpu(
     original_shape = x.shape
     values = x.contiguous().reshape(-1, dim)
     out = torch.empty_like(values)
-    permutation_values = permutation.to(device="cpu", dtype=torch.int64).contiguous()
+    permutation_dtype = torch.int32 if permutation.dtype == torch.int32 else torch.int64
+    permutation_values = permutation.to(device="cpu", dtype=permutation_dtype).contiguous()
     sign_values = signs.to(device="cpu", dtype=torch.int8).contiguous()
     centroid_values = centroids.to(device="cpu", dtype=torch.float32).contiguous()
     boundary_values = boundaries.to(device="cpu", dtype=torch.float32).contiguous()
@@ -312,7 +313,8 @@ def quantize_activations_packed_w4(
     values = x.contiguous().reshape(-1, dim)
     packed = torch.empty((values.shape[0], dim // 2), device=x.device, dtype=torch.uint8)
     norms = torch.empty(values.shape[0], device=x.device, dtype=torch.float32)
-    permutation_values = permutation.to(device=x.device, dtype=torch.int64).contiguous()
+    permutation_dtype = torch.int32 if permutation.dtype == torch.int32 else torch.int64
+    permutation_values = permutation.to(device=x.device, dtype=permutation_dtype).contiguous()
     sign_values = signs.to(device=x.device, dtype=torch.int8).contiguous()
     boundary_values = boundaries.to(device=x.device, dtype=torch.float32).contiguous()
     ops.quantize_activations_packed_w4(
@@ -366,7 +368,8 @@ def quantize_activations_int8(
     values = x.contiguous().reshape(-1, dim)
     quantized = torch.empty(values.shape, device=x.device, dtype=torch.int8)
     norms = torch.empty(values.shape[0], device=x.device, dtype=torch.float32)
-    permutation_values = permutation.to(device=x.device, dtype=torch.int64).contiguous()
+    permutation_dtype = torch.int32 if permutation.dtype == torch.int32 else torch.int64
+    permutation_values = permutation.to(device=x.device, dtype=permutation_dtype).contiguous()
     sign_values = signs.to(device=x.device, dtype=torch.int8).contiguous()
     boundary_values = boundaries.to(device=x.device, dtype=torch.float32).contiguous()
     code_values = codes.to(device=x.device, dtype=torch.int8).contiguous()

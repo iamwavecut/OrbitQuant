@@ -40,6 +40,9 @@ def test_benchmark_orbit_linear_reports_stage_timings_on_cpu():
         assert result["timings_ms"][key] >= 0.0
     assert result["quantization_buffers"]["packed_weight_indices_device"] == "cpu"
     assert result["quantization_buffers"]["row_norms_device"] == "cpu"
+    assert result["quantization_buffers"]["source_weight_device_type"] == "cpu"
+    assert result["quantization_buffers"]["packed_weight_indices_device_type"] == "cpu"
+    assert result["quantization_buffers"]["row_norms_device_type"] == "cpu"
     assert result["quantization_buffers"]["packed_weight_indices_is_cuda"] is False
     assert result["quantization_buffers"]["row_norms_is_cuda"] is False
 
@@ -119,3 +122,24 @@ def test_benchmark_orbit_linear_treats_native_packed_runtime_as_cacheless(monkey
 def test_benchmark_weight_backend_label_separates_reference_mps_from_cpu():
     assert _weight_quantization_backend_label(torch.device("cpu")) == "torch_reference"
     assert _weight_quantization_backend_label(torch.device("mps")) == "torch_reference_mps"
+
+
+def test_benchmark_weight_backend_label_reports_rocm_on_hip(monkeypatch):
+    monkeypatch.setattr(benchmarks_module.torch.version, "hip", "7.2", raising=False)
+    monkeypatch.setattr(
+        benchmarks_module,
+        "backend_capabilities",
+        lambda: {"triton_rocm": {"available": True}},
+    )
+
+    assert _weight_quantization_backend_label(torch.device("cuda")) == "triton_rocm"
+
+
+def test_benchmark_weight_backend_label_reports_explicit_xpu(monkeypatch):
+    monkeypatch.setattr(
+        benchmarks_module,
+        "backend_capabilities",
+        lambda: {"triton_xpu": {"available": True}},
+    )
+
+    assert _weight_quantization_backend_label(torch.device("xpu")) == "triton_xpu"

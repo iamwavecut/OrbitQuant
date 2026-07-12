@@ -1,0 +1,9 @@
+orbitquant_token_norm:
+  parameter_names_with_default_values:
+    DTYPE: float
+  generate_variant_forall:
+    DTYPE:
+      - VALUE: half
+      - VALUE: float
+  shader_variants:
+    - NAME: orbitquant_token_norm
