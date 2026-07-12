@@ -297,8 +297,9 @@ the optional native package is absent.
 
 End-to-end FLUX.2 Klein 9B numbers for the released package are recorded in
 [docs/flux2-klein-9b-sdnq-vs-orbitquant.md](docs/flux2-klein-9b-sdnq-vs-orbitquant.md)
-(0.5.0 on an NVIDIA A40: 4.00 s hot median at 1024x1024/4 steps with
-13.43 GB peak CUDA allocated memory).
+(0.5.0 on an NVIDIA L40S: 2.049 s hot median at 1024x1024/4 steps — 2.1%
+faster than the 0.3.0 recording on the same device class — with 13.43 GB
+peak CUDA allocated memory; an A40 reference table is included).
 
 Use the explicit reference path for compatibility or numerical debugging:
 

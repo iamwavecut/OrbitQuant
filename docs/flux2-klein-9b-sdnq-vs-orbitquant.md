@@ -77,35 +77,39 @@ packed projections selected `native_packed_matmul` and the optimized W4A4 path.
 
 | Variant | Load | Cold image | Hot mean | Hot median | Hot p95 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| SDNQ UINT4 | 5.918 s | 16.956 s | 2.0885 s | 2.0875 s | 2.0966 s |
-| OrbitQuant W4A4 | 2.543 s | 4.193 s | 2.0907 s | 2.0920 s | 2.0988 s |
+| SDNQ UINT4 (0.3.0 run) | 5.918 s | 16.956 s | 2.0885 s | 2.0875 s | 2.0966 s |
+| OrbitQuant W4A4 (0.3.0) | 2.543 s | 4.193 s | 2.0907 s | 2.0920 s | 2.0988 s |
+| OrbitQuant W4A4 (0.5.0) | 3.145 s | 7.990 s | 2.0463 s | 2.0486 s | 2.0565 s |
+
+The 0.5.0 row reran the released package with the same protocol on a
+different physical L40S host: a package-version comparison on the same device
+class (SDNQ was not rerun). Its hot median improves 2.1% over 0.3.0; the
+load/cold deltas track the other host's disk and the first-run Triton
+compilation of the new fused kernels.
 
 | Variant | Load NVML peak | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
 | --- | ---: | ---: | ---: | ---: |
-| SDNQ UINT4 | 13.383 GB | 17.564 GB | 14.844 GB | 16.377 GB |
-| OrbitQuant W4A4 | 11.959 GB | 15.731 GB | 13.942 GB | 14.544 GB |
+| SDNQ UINT4 (0.3.0 run) | 13.383 GB | 17.564 GB | 14.844 GB | 16.377 GB |
+| OrbitQuant W4A4 (0.3.0) | 11.959 GB | 15.731 GB | 13.942 GB | 14.544 GB |
+| OrbitQuant W4A4 (0.5.0) | 11.962 GB | 15.043 GB | 13.429 GB | 13.841 GB |
 
 OrbitQuant's hot mean was 0.11% slower than SDNQ, which is practical parity for
 this run. OrbitQuant loaded 57.0% faster, used 0.902 GB less peak CUDA allocated
 memory, and used 1.833 GB less peak CUDA reserved and NVML memory. The packed
 weight payload also remains 11.0% smaller.
 
-### OrbitQuant 0.5.0 control rerun (NVIDIA A40)
+### OrbitQuant 0.5.0 on NVIDIA A40 (reference)
 
-The same protocol rerun with the released `orbitquant==0.5.0`, a locally
-built sm_86 CUDA kernel package, Torch 2.9.1+cu128, and the pinned checkpoint
-revision on an NVIDIA A40:
+The same 0.5.0 protocol on an NVIDIA A40 — a different device class, recorded
+for reference and not comparable with the L40S rows above:
 
 | Variant | Load | Cold image | Hot mean | Hot median | Hot NVML peak | CUDA allocated peak | CUDA reserved peak |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| OrbitQuant W4A4 (0.5.0) | 4.106 s | 11.989 s | 4.0118 s | 4.0022 s | 14.785 GB | 13.429 GB | 13.841 GB |
+| OrbitQuant W4A4 (0.5.0, A40) | 4.106 s | 11.989 s | 4.0118 s | 4.0022 s | 14.785 GB | 13.429 GB | 13.841 GB |
 
-Absolute times track the slower GPU; the memory peaks are the release-level
-numbers: 0.51 GB less CUDA allocated and 0.70 GB less reserved memory than
-the 0.3.0 rows above. The SDNQ rows were not rerun; the two tables compare
-package versions on their respective recorded hardware, not GPUs. The
-checkpoint's `benchmark/summary.json` carries this run;
-`benchmark/summary-l40s-0.3.0.json` preserves the original measurement.
+The checkpoint's machine-readable results live in `benchmark/summary.json`
+(0.5.0 L40S), `benchmark/summary-l40s-0.3.0.json` (historical), and
+`benchmark/summary-a40-0.5.0.json` (this table).
 
 The selected CUDA path performs native token norm, RPBH/FWHT and codebook-bin
 selection, emits an INT8 surrogate of the 4-bit activation codebook, decodes
