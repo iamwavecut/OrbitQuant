@@ -166,7 +166,13 @@ jobs:
           z = zipfile.ZipFile(p)
           names = z.namelist()
           metadata = z.read(next(n for n in names if n.endswith('.dist-info/METADATA'))).decode()
-          assert 'Requires-Dist: ${{ matrix.torch_requirement }}' in metadata, metadata
+          # setuptools normalizes specifier order, so compare specifier sets.
+          def specs(requirement):
+              text = requirement.replace(' ', '')
+              assert text.startswith('torch'), text
+              return set(text[len('torch'):].split(','))
+          line = next(l for l in metadata.splitlines() if l.startswith('Requires-Dist: torch'))
+          assert specs(line.split(':', 1)[1]) == specs('${{ matrix.torch_requirement }}'), line
           assert any(n.endswith('/_ops.py') for n in names)
           print(p.name)
           "
@@ -189,13 +195,15 @@ jobs:
             torch_index: https://download.pytorch.org/whl/cu128
             torch_requirement: "torch>=2.12,<2.13"
             cuda_version: "12.8.1"
+            cuda_feature_tag: "12.8"
             local_tag: cu128torch212
             unique_id: rel_win_cu128_t212
           - variant: torch213-cu130-x86_64-windows
             torch: "2.13.*"
             torch_index: https://download.pytorch.org/whl/cu130
             torch_requirement: "torch>=2.13,<2.14"
-            cuda_version: "13.0.2"
+            cuda_version: "13.0.1"
+            cuda_feature_tag: "13.0"
             local_tag: cu130torch213
             unique_id: rel_win_cu130_t213
     steps:
@@ -211,13 +219,40 @@ jobs:
         uses: astral-sh/setup-uv@v8.3.0
 
       - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.28
-        with:
-          cuda: ${{ matrix.cuda_version }}
-          sub-packages: '["nvcc", "cudart", "visual_studio_integration"]'
-          method: network
-          use-github-cache: false
-          use-local-cache: false
+        shell: pwsh
+        run: |
+          $version = "${{ matrix.cuda_version }}"
+          $feature = "${{ matrix.cuda_feature_tag }}"
+          $installer = "$env:RUNNER_TEMP\cuda_network_installer.exe"
+          $url = "https://developer.download.nvidia.com/compute/cuda/$version/network_installers/cuda_${version}_windows_network.exe"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $components = @(
+            "nvcc_$feature",
+            "cudart_$feature",
+            "nvrtc_dev_$feature",
+            "cublas_dev_$feature",
+            "cusparse_dev_$feature",
+            "cusolver_dev_$feature",
+            "cufft_dev_$feature",
+            "curand_dev_$feature",
+            "thrust_$feature",
+            "visual_studio_integration_$feature"
+          )
+          Write-Host "Installing components: $components"
+          $process = Start-Process -Wait -PassThru -FilePath $installer `
+            -ArgumentList (@("-s") + $components)
+          if ($process.ExitCode -ne 0) {
+            throw "CUDA network installer failed with exit code $($process.ExitCode)"
+          }
+          $cudaHome = "$env:ProgramFiles\NVIDIA GPU Computing Toolkit\CUDA\v$feature"
+          if (-not (Test-Path "$cudaHome\bin\nvcc.exe")) {
+            throw "nvcc.exe was not installed under $cudaHome"
+          }
+          Add-Content $env:GITHUB_PATH "$cudaHome\bin"
+          Add-Content $env:GITHUB_ENV "CUDA_PATH=$cudaHome"
+          Add-Content $env:GITHUB_ENV "CUDA_HOME=$cudaHome"
+          & "$cudaHome\bin\nvcc.exe" --version
 
       - name: Install build environment
         shell: pwsh
