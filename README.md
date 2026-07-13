@@ -45,10 +45,18 @@ pip install "orbitquant[hf,kernels]"
 ```
 
 The optimized native kernel package (`orbitquant_packed_matmul`) is provisioned
-automatically the first time a packed runtime path needs it: OrbitQuant checks
-for an installed package, then for a cached variant, then downloads the
-matching prebuilt variant wheel from this repository's `kernels-v1` GitHub
-release. Provision explicitly (or offline) with:
+automatically the first time a packed runtime path needs it. How it works: the
+kernel binary must match the runtime exactly — torch minor and CUDA version
+for CUDA builds, torch stable ABI (any torch>=2.11) for CPU builds, and the OS
+and architecture everywhere — so OrbitQuant derives that variant name from the
+running process and resolves it in order: an installed
+`orbitquant_packed_matmul` package, a locally built variant (`LOCAL_KERNELS`),
+the on-disk cache, and finally the matching prebuilt variant wheel from this
+repository's `kernels-v1` GitHub release (checksum-verified against the
+release manifest, then cached). Everything happens once per process at model
+load, never inside the forward path, and any failure falls back to the Triton
+(CUDA) or reference paths with an actionable message. Provision explicitly
+(or offline) with:
 
 ```bash
 orbitquant kernels-install          # download the matching prebuilt variant
