@@ -12,6 +12,12 @@ on:
         description: "Upload built wheels and manifest to the kernels release"
         type: boolean
         default: false
+  # Temporary trigger so the matrix can be exercised from the PR branch before
+  # the workflow lands on the default branch (workflow_dispatch only resolves
+  # workflows that already exist there).
+  pull_request:
+    paths:
+      - ".github/workflows/build-kernels.yml"
 
 env:
   KERNEL_BUILDER_REV: d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
