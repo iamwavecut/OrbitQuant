@@ -173,86 +173,75 @@ def test_native_packed_matmul_loader_accepts_kernel_builder_variant_layout(
             sys.modules["orbitquant_packed_matmul_variant_test"] = previous_variant
 
 
-def test_native_packed_matmul_loader_uses_versioned_hf_kernel_when_import_missing(
-    monkeypatch,
-):
-    calls = []
+def test_native_packed_matmul_loader_provisions_when_import_missing(monkeypatch):
     fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
     real_import = builtins.__import__
+    provisioned = []
 
-    def fake_get_kernel(repo_id, *, version, trust_remote_code):
-        calls.append((repo_id, version, trust_remote_code))
-        return fake_kernel
+    def fake_import(name, *args, **kwargs):
+        if name == "orbitquant_packed_matmul" and not provisioned:
+            raise ImportError("missing importable native package")
+        return real_import(name, *args, **kwargs)
+
+    def fake_provision():
+        provisioned.append(True)
+        monkeypatch.setitem(sys.modules, "orbitquant_packed_matmul", fake_kernel)
+        return SimpleNamespace(sys_path_entry="/tmp/orbitquant-variant", detail="test")
+
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
+    monkeypatch.delitem(sys.modules, "orbitquant_packed_matmul", raising=False)
+    monkeypatch.setattr(
+        native_module.provision, "provision_native_kernel_package", fake_provision
+    )
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert native_module._load_native_packed_matmul_kernel() is fake_kernel
+    assert provisioned == [True]
+
+
+def test_native_packed_matmul_loader_uses_importable_package_without_provisioning(
+    monkeypatch,
+):
+    fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
+
+    def fail_provision(*args, **kwargs):
+        raise AssertionError("provisioning must not run when the package is importable")
+
+    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
+    monkeypatch.setitem(sys.modules, "orbitquant_packed_matmul", fake_kernel)
+    monkeypatch.setattr(
+        native_module.provision, "provision_native_kernel_package", fail_provision
+    )
+
+    assert native_module._load_native_packed_matmul_kernel() is fake_kernel
+
+
+def test_native_packed_matmul_loader_reports_provisioning_failure(monkeypatch):
+    real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
         if name == "orbitquant_packed_matmul":
             raise ImportError("missing importable native package")
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
-    monkeypatch.delitem(sys.modules, "orbitquant_packed_matmul", raising=False)
-    monkeypatch.setitem(sys.modules, "kernels", SimpleNamespace(get_kernel=fake_get_kernel))
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-
-    assert native_module._load_native_packed_matmul_kernel() is fake_kernel
-    assert calls == [("WaveCut/orbitquant-packed-matmul", 1, True)]
-
-
-def test_native_packed_matmul_loader_falls_back_to_importable_package_without_hf_kernels(
-    monkeypatch,
-):
-    fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
-
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name == "kernels":
-            raise ImportError("missing Hugging Face kernels package")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
-    monkeypatch.setitem(sys.modules, "orbitquant_packed_matmul", fake_kernel)
-    monkeypatch.delitem(sys.modules, "kernels", raising=False)
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-
-    assert native_module._load_native_packed_matmul_kernel() is fake_kernel
-
-
-def test_native_packed_matmul_loader_does_not_probe_hf_when_importable_package_exists(
-    monkeypatch,
-):
-    fake_kernel = SimpleNamespace(matmul_packed_weight=lambda *args, **kwargs: None)
-
-    def fail_get_kernel(*args, **kwargs):
-        raise AssertionError("Hub kernel should not be probed")
-
-    monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
-    monkeypatch.setitem(sys.modules, "orbitquant_packed_matmul", fake_kernel)
-    monkeypatch.setitem(sys.modules, "kernels", SimpleNamespace(get_kernel=fail_get_kernel))
-
-    assert native_module._load_native_packed_matmul_kernel() is fake_kernel
-
-
-def test_native_packed_matmul_loader_reports_missing_optional_dependency(monkeypatch):
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name in {"orbitquant_packed_matmul", "kernels"}:
-            raise ImportError("missing kernels package")
-        return real_import(name, *args, **kwargs)
+    def unavailable_provision():
+        return SimpleNamespace(sys_path_entry=None, detail="offline for the test")
 
     monkeypatch.setattr(native_module, "_NATIVE_KERNEL", None)
     monkeypatch.delitem(sys.modules, "orbitquant_packed_matmul", raising=False)
-    monkeypatch.delitem(sys.modules, "kernels", raising=False)
+    monkeypatch.setattr(
+        native_module.provision, "provision_native_kernel_package", unavailable_provision
+    )
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     with pytest.raises(RuntimeError, match="orbitquant_packed_matmul") as exc_info:
         native_module._load_native_packed_matmul_kernel()
 
     message = str(exc_info.value)
+    assert "pip install orbitquant-packed-matmul" in message
+    assert "kernels-install" in message
     assert "built kernel variant directory" in message
-    assert "metadata.json" in message
-    assert "PYTHONPATH" in message
+    assert "offline for the test" in message
     assert "Current runtime is torch" in message
     assert "The built kernel variant must match this runtime." in message
     if torch.version.cuda is not None and sys.platform == "linux":

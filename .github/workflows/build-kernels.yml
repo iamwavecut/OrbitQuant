@@ -1,0 +1,748 @@
+name: Build kernels
+
+# Builds the orbitquant-packed-matmul variant wheels that the runtime
+# provisioner (orbitquant.kernels.provision) downloads from the kernels-v1
+# GitHub release. Trigger manually; pass publish=true to upload the wheels and
+# the manifest to the release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload built wheels and manifest to the kernels release"
+        type: boolean
+        default: false
+
+env:
+  KERNEL_BUILDER_REV: d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
+  KERNELS_RELEASE_TAG: kernels-v1
+
+jobs:
+  linux-cuda:
+    name: ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: torch29-cxx11-cu126-x86_64-linux
+            torch: "2.9.*"
+            torch_index: https://download.pytorch.org/whl/cu126
+            torch_requirement: "torch>=2.9,<2.10"
+            cuda_apt: "12-6"
+            local_tag: cu126torch29
+            unique_id: rel_cu126_t29
+          - variant: torch29-cxx11-cu128-x86_64-linux
+            torch: "2.9.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.9,<2.10"
+            cuda_apt: "12-8"
+            local_tag: cu128torch29
+            unique_id: rel_cu128_t29
+          - variant: torch212-cxx11-cu126-x86_64-linux
+            torch: "2.12.*"
+            torch_index: https://download.pytorch.org/whl/cu126
+            torch_requirement: "torch>=2.12,<2.13"
+            cuda_apt: "12-6"
+            local_tag: cu126torch212
+            unique_id: rel_cu126_t212
+          - variant: torch212-cxx11-cu128-x86_64-linux
+            torch: "2.12.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.12,<2.13"
+            cuda_apt: "12-8"
+            local_tag: cu128torch212
+            unique_id: rel_cu128_t212
+          - variant: torch213-cxx11-cu128-x86_64-linux
+            torch: "2.13.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.13,<2.14"
+            cuda_apt: "12-8"
+            local_tag: cu128torch213
+            unique_id: rel_cu128_t213
+          - variant: torch213-cxx11-cu130-x86_64-linux
+            torch: "2.13.*"
+            torch_index: https://download.pytorch.org/whl/cu130
+            torch_requirement: "torch>=2.13,<2.14"
+            cuda_apt: "13-0"
+            local_tag: cu130torch213
+            unique_id: rel_cu130_t213
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Install CUDA toolkit ${{ matrix.cuda_apt }}
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -y -q cuda-nvcc-${{ matrix.cuda_apt }} \
+            cuda-cudart-dev-${{ matrix.cuda_apt }} \
+            libcurand-dev-${{ matrix.cuda_apt }}
+          echo "/usr/local/cuda-$(echo ${{ matrix.cuda_apt }} | tr '-' '.')/bin" >> "$GITHUB_PATH"
+
+      - name: Install build environment
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python \
+            --index-url ${{ matrix.torch_index }} \
+            --index-strategy unsafe-best-match \
+            "torch==${{ matrix.torch }}" cmake ninja setuptools wheel numpy
+
+      - name: Restore pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-linux-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install \
+            --git https://github.com/huggingface/kernels \
+            --rev "$KERNEL_BUILDER_REV" \
+            --locked \
+            --debug \
+            --root "$RUNNER_TEMP/kernel-builder" \
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-linux-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Generate native build project
+        run: |
+          kernel_root="native-kernels/orbitquant-packed-matmul"
+          builder="$RUNNER_TEMP/kernel-builder/bin/kernel-builder"
+          "$builder" check-config "$kernel_root"
+          "$builder" create-pyproject --unique-id ${{ matrix.unique_id }} -f "$kernel_root"
+          .venv/bin/python "$kernel_root/scripts/prepare_wheel_project.py" \
+            "$kernel_root" \
+            --version "1.0.0+${{ matrix.local_tag }}" \
+            --torch-requirement "${{ matrix.torch_requirement }}"
+
+      - name: Build CUDA wheel
+        working-directory: native-kernels/orbitquant-packed-matmul
+        env:
+          MAX_JOBS: "2"
+          CUDACXX: nvcc
+        run: |
+          nvcc --version
+          python="$GITHUB_WORKSPACE/.venv/bin/python"
+          "$python" setup.py bdist_wheel
+          ls -l dist/
+
+      - name: Verify wheel
+        run: |
+          wheel=$(find native-kernels/orbitquant-packed-matmul/dist -name '*.whl' -print -quit)
+          test -n "$wheel"
+          .venv/bin/python -c "
+          import pathlib, zipfile
+          p = next(pathlib.Path('native-kernels/orbitquant-packed-matmul/dist').glob('*.whl'))
+          z = zipfile.ZipFile(p)
+          names = z.namelist()
+          metadata = z.read(next(n for n in names if n.endswith('.dist-info/METADATA'))).decode()
+          assert 'Requires-Dist: ${{ matrix.torch_requirement }}' in metadata, metadata
+          assert any(n.endswith('/_ops.py') for n in names)
+          print(p.name)
+          "
+
+      - name: Upload variant wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ matrix.variant }}
+          path: native-kernels/orbitquant-packed-matmul/dist/*.whl
+
+  windows-cuda:
+    name: ${{ matrix.variant }} (experimental)
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: torch212-cu128-x86_64-windows
+            torch: "2.12.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.12,<2.13"
+            cuda_version: "12.8.1"
+            local_tag: cu128torch212
+            unique_id: rel_win_cu128_t212
+          - variant: torch213-cu130-x86_64-windows
+            torch: "2.13.*"
+            torch_index: https://download.pytorch.org/whl/cu130
+            torch_requirement: "torch>=2.13,<2.14"
+            cuda_version: "13.0.2"
+            local_tag: cu130torch213
+            unique_id: rel_win_cu130_t213
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.28
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          sub-packages: '["nvcc", "cudart", "curand_dev", "visual_studio_integration"]'
+          method: network
+
+      - name: Install build environment
+        shell: pwsh
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv\Scripts\python.exe `
+            --index-url ${{ matrix.torch_index }} `
+            --index-strategy unsafe-best-match `
+            "torch==${{ matrix.torch }}" cmake ninja setuptools wheel numpy
+
+      - name: Restore pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cargo install `
+            --git https://github.com/huggingface/kernels `
+            --rev $env:KERNEL_BUILDER_REV `
+            --locked `
+            --debug `
+            --root "$env:RUNNER_TEMP\kernel-builder" `
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Generate native build project
+        shell: pwsh
+        run: |
+          $kernelRoot = "native-kernels\orbitquant-packed-matmul"
+          $builder = "$env:RUNNER_TEMP\kernel-builder\bin\kernel-builder.exe"
+          & $builder check-config $kernelRoot
+          & $builder create-pyproject --unique-id ${{ matrix.unique_id }} -f $kernelRoot
+          & .venv\Scripts\python.exe `
+            "$kernelRoot\scripts\prepare_wheel_project.py" `
+            $kernelRoot `
+            --version "1.0.0+${{ matrix.local_tag }}" `
+            --torch-requirement "${{ matrix.torch_requirement }}"
+
+      - name: Build CUDA wheel with MSVC
+        shell: pwsh
+        working-directory: native-kernels/orbitquant-packed-matmul
+        run: |
+          $vswhere = `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
+          }
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to initialize the MSVC x86_64 environment"
+          }
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
+          nvcc --version
+          $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
+          $nmake = Get-Command nmake.exe -ErrorAction Stop
+          $env:CMAKE_GENERATOR = "NMake Makefiles"
+          $env:ORBITQUANT_CMAKE_MAKE_PROGRAM = $nmake.Source
+          $env:ORBITQUANT_BUILD_TEMP = "$env:RUNNER_TEMP\orbitquant-native-build"
+          $env:MAX_JOBS = "2"
+          & $python setup.py build_ext bdist_wheel
+          Get-ChildItem dist
+
+      - name: Upload variant wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ matrix.variant }}
+          path: native-kernels/orbitquant-packed-matmul/dist/*.whl
+
+  macos-metal:
+    name: ${{ matrix.variant }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: torch212-metal-aarch64-darwin
+            torch: "2.12.*"
+            torch_requirement: "torch>=2.12,<2.13"
+            local_tag: metaltorch212
+            unique_id: rel_metal_t212
+          - variant: torch213-metal-aarch64-darwin
+            torch: "2.13.*"
+            torch_requirement: "torch>=2.13,<2.14"
+            local_tag: metaltorch213
+            unique_id: rel_metal_t213
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Install build environment
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python \
+            "torch==${{ matrix.torch }}" cmake ninja setuptools wheel numpy
+
+      - name: Restore pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install \
+            --git https://github.com/huggingface/kernels \
+            --rev "$KERNEL_BUILDER_REV" \
+            --locked \
+            --debug \
+            --root "$RUNNER_TEMP/kernel-builder" \
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Generate native build project
+        run: |
+          kernel_root="native-kernels/orbitquant-packed-matmul"
+          builder="$RUNNER_TEMP/kernel-builder/bin/kernel-builder"
+          "$builder" check-config "$kernel_root"
+          "$builder" create-pyproject --unique-id ${{ matrix.unique_id }} -f "$kernel_root"
+          .venv/bin/python "$kernel_root/scripts/prepare_wheel_project.py" \
+            "$kernel_root" \
+            --version "1.0.0+${{ matrix.local_tag }}" \
+            --torch-requirement "${{ matrix.torch_requirement }}"
+
+      - name: Build Metal wheel
+        working-directory: native-kernels/orbitquant-packed-matmul
+        env:
+          MAX_JOBS: "3"
+        run: |
+          python="$GITHUB_WORKSPACE/.venv/bin/python"
+          "$python" setup.py bdist_wheel
+          ls -l dist/
+
+      - name: Smoke test wheel
+        run: |
+          smoke="$RUNNER_TEMP/orbitquant-metal-smoke"
+          uv venv "$smoke" --python 3.12
+          uv pip install --python "$smoke/bin/python" "torch==${{ matrix.torch }}" pytest numpy
+          wheel=$(find native-kernels/orbitquant-packed-matmul/dist -name '*.whl' -print -quit)
+          uv pip install --python "$smoke/bin/python" "$wheel" --no-deps
+          "$smoke/bin/python" -m pytest \
+            native-kernels/orbitquant-packed-matmul/tests/test_packed_matmul.py \
+            -m kernels_ci -ra
+
+      - name: Upload variant wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ matrix.variant }}
+          path: native-kernels/orbitquant-packed-matmul/dist/*.whl
+
+  macos-cpu:
+    name: torch-stable-abi211-cpu-aarch64-darwin
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Install build environment
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python \
+            "torch==2.12.*" cmake ninja setuptools wheel numpy
+
+      - name: Restore pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install \
+            --git https://github.com/huggingface/kernels \
+            --rev "$KERNEL_BUILDER_REV" \
+            --locked \
+            --debug \
+            --root "$RUNNER_TEMP/kernel-builder" \
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Generate native build project
+        run: |
+          kernel_root="native-kernels/orbitquant-packed-matmul"
+          builder="$RUNNER_TEMP/kernel-builder/bin/kernel-builder"
+          "$builder" check-config "$kernel_root"
+          "$builder" create-pyproject --unique-id rel_cpu_darwin -f "$kernel_root"
+          .venv/bin/python "$kernel_root/scripts/prepare_wheel_project.py" \
+            "$kernel_root" \
+            --version "1.0.0"
+
+      - name: Build ABI3 CPU wheel
+        working-directory: native-kernels/orbitquant-packed-matmul
+        env:
+          CMAKE_ARGS: -DGPU_LANG=CPU
+          MAX_JOBS: "3"
+        run: |
+          python="$GITHUB_WORKSPACE/.venv/bin/python"
+          "$python" setup.py build_ext bdist_wheel --py-limited-api=cp39
+          ls -l dist/
+
+      - name: Smoke test wheel against a different torch minor
+        run: |
+          smoke="$RUNNER_TEMP/orbitquant-cpu-smoke"
+          uv venv "$smoke" --python 3.12
+          uv pip install --python "$smoke/bin/python" "torch==2.13.*" pytest numpy
+          wheel=$(find native-kernels/orbitquant-packed-matmul/dist -name '*.whl' -print -quit)
+          uv pip install --python "$smoke/bin/python" "$wheel" --no-deps
+          "$smoke/bin/python" -m pytest \
+            native-kernels/orbitquant-packed-matmul/tests/test_packed_matmul.py \
+            -m kernels_ci -ra
+
+      - name: Upload variant wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: torch-stable-abi211-cpu-aarch64-darwin
+          path: native-kernels/orbitquant-packed-matmul/dist/*.whl
+
+  manylinux-cpu:
+    name: torch-stable-abi211-cpu-${{ matrix.arch }}-linux
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            cibw_build: cp312-manylinux_x86_64
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            cibw_build: cp312-manylinux_aarch64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Restore pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-linux-${{ matrix.arch }}-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install \
+            --git https://github.com/huggingface/kernels \
+            --rev "$KERNEL_BUILDER_REV" \
+            --locked \
+            --debug \
+            --root "$RUNNER_TEMP/kernel-builder" \
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kernel-builder
+          key: kernel-builder-linux-${{ matrix.arch }}-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Generate native build project
+        run: |
+          kernel_root="native-kernels/orbitquant-packed-matmul"
+          builder="$RUNNER_TEMP/kernel-builder/bin/kernel-builder"
+          "$builder" check-config "$kernel_root"
+          "$builder" create-pyproject --unique-id rel_cpu_linux -f "$kernel_root"
+          uv run --no-project --with setuptools python \
+            "$kernel_root/scripts/prepare_wheel_project.py" \
+            "$kernel_root" \
+            --version "1.0.0"
+
+      - name: Build manylinux 2.28 ABI3 wheel
+        env:
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_BUILD: ${{ matrix.cibw_build }}
+          CIBW_ENVIRONMENT_LINUX: >-
+            CMAKE_ARGS=-DGPU_LANG=CPU
+            MAX_JOBS=2
+            ORBITQUANT_BUILD_TEMP=/tmp/oq-native-build
+            PIP_INDEX_URL=https://download.pytorch.org/whl/cpu
+            PIP_EXTRA_INDEX_URL=https://pypi.org/simple
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair
+            --exclude libc10.so
+            --exclude libtorch_cpu.so
+            --exclude libtorch.so
+            -w {dest_dir} {wheel}
+          CIBW_TEST_COMMAND: >-
+            python -m pytest {package}/tests/test_packed_matmul.py
+            -m kernels_ci -ra
+          CIBW_TEST_REQUIRES: numpy pytest torch==2.12.1
+        run: |
+          uv run --no-project --with cibuildwheel==4.1.0 \
+            python -m cibuildwheel \
+            native-kernels/orbitquant-packed-matmul \
+            --output-dir wheelhouse
+
+      - name: Upload variant wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: torch-stable-abi211-cpu-${{ matrix.arch }}-linux
+          path: wheelhouse/*.whl
+
+  windows-cpu:
+    name: torch-stable-abi211-cpu-x86_64-windows
+    runs-on: windows-2025
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+
+      - name: Install build environment
+        shell: pwsh
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv\Scripts\python.exe `
+            --index-url https://download.pytorch.org/whl/cpu `
+            --index-strategy unsafe-best-match `
+            "torch==2.12.*" cmake ninja setuptools wheel numpy
+
+      - name: Restore pinned kernel-builder
+        id: kernel-builder-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Install pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cargo install `
+            --git https://github.com/huggingface/kernels `
+            --rev $env:KERNEL_BUILDER_REV `
+            --locked `
+            --debug `
+            --root "$env:RUNNER_TEMP\kernel-builder" `
+            hf-kernel-builder
+
+      - name: Save pinned kernel-builder
+        if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}\kernel-builder
+          key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
+
+      - name: Generate native build project
+        shell: pwsh
+        run: |
+          $kernelRoot = "native-kernels\orbitquant-packed-matmul"
+          $builder = "$env:RUNNER_TEMP\kernel-builder\bin\kernel-builder.exe"
+          & $builder check-config $kernelRoot
+          & $builder create-pyproject --unique-id rel_cpu_windows -f $kernelRoot
+          & .venv\Scripts\python.exe `
+            "$kernelRoot\scripts\prepare_wheel_project.py" `
+            $kernelRoot `
+            --version "1.0.0"
+
+      - name: Build ABI3 CPU wheel with MSVC
+        shell: pwsh
+        working-directory: native-kernels/orbitquant-packed-matmul
+        run: |
+          $vswhere = `
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vsRoot) {
+            throw "MSVC x86_64 tools were not found"
+          }
+          $vsDevCmd = Join-Path $vsRoot "Common7\Tools\VsDevCmd.bat"
+          $envDump = cmd.exe /d /s /c `
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to initialize the MSVC x86_64 environment"
+          }
+          foreach ($line in $envDump) {
+            $parts = $line -split "=", 2
+            if ($parts.Length -eq 2) {
+              Set-Item -Path "Env:$($parts[0])" -Value $parts[1]
+            }
+          }
+          $python = "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe"
+          $nmake = Get-Command nmake.exe -ErrorAction Stop
+          $env:CMAKE_GENERATOR = "NMake Makefiles"
+          $env:CMAKE_ARGS = "-DGPU_LANG=CPU"
+          $env:ORBITQUANT_CMAKE_MAKE_PROGRAM = $nmake.Source
+          $env:ORBITQUANT_BUILD_TEMP = "$env:RUNNER_TEMP\orbitquant-native-build"
+          $env:MAX_JOBS = "2"
+          & $python setup.py build_ext bdist_wheel --py-limited-api=cp39
+
+      - name: Upload variant wheel
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: torch-stable-abi211-cpu-x86_64-windows
+          path: native-kernels/orbitquant-packed-matmul/dist/*.whl
+
+  assemble:
+    name: Assemble manifest
+    runs-on: ubuntu-24.04
+    needs:
+      - linux-cuda
+      - windows-cuda
+      - macos-metal
+      - macos-cpu
+      - manylinux-cpu
+      - windows-cpu
+    if: always() && !cancelled()
+    permissions:
+      contents: write
+    steps:
+      - name: Download all variant wheels
+        uses: actions/download-artifact@v7.0.0
+        with:
+          path: assets
+
+      - name: Build manifest
+        run: |
+          python3 - << 'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          variants = {}
+          for variant_dir in sorted(Path("assets").iterdir()):
+              wheels = sorted(variant_dir.glob("*.whl"))
+              if not wheels:
+                  continue
+              wheel = wheels[0]
+              variants[variant_dir.name] = {
+                  "filename": wheel.name,
+                  "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                  "size": wheel.stat().st_size,
+              }
+          manifest = {
+              "kernel_version": 1,
+              "package": "orbitquant_packed_matmul",
+              "variants": variants,
+          }
+          Path("assets/manifest.json").write_text(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: kernels-manifest
+          path: assets/manifest.json
+
+      - name: Publish wheels and manifest to the kernels release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$KERNELS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$KERNELS_RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Native kernel variants v1" \
+              --notes "Prebuilt orbitquant-packed-matmul variant wheels consumed by orbitquant.kernels.provision. Do not delete individual assets: the runtime resolves them through manifest.json." \
+              --latest=false
+          fi
+          find assets -name '*.whl' -print0 | xargs -0 gh release upload "$KERNELS_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$KERNELS_RELEASE_TAG" assets/manifest.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
