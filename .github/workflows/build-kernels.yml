@@ -215,6 +215,8 @@ jobs:
           cuda: ${{ matrix.cuda_version }}
           sub-packages: '["nvcc", "cudart", "visual_studio_integration"]'
           method: network
+          use-github-cache: false
+          use-local-cache: false
 
       - name: Install build environment
         shell: pwsh
@@ -309,7 +311,9 @@ jobs:
 
   macos-metal:
     name: ${{ matrix.variant }}
-    runs-on: macos-15
+    # Xcode 26 required: the kernel-builder metal template locates the Metal
+    # toolchain through `xcodebuild -showComponent MetalToolchain`.
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
