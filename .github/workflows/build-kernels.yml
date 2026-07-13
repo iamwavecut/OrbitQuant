@@ -207,6 +207,7 @@ jobs:
             # CUDA 13 repackaged the crt/ headers out of the nvcc component;
             # install the full toolkit instead of hand-picked components.
             cuda_full_install: true
+            nvcc_allow_unsupported: true
             local_tag: cu130torch213
             unique_id: rel_win_cu130_t213
     steps:
@@ -317,6 +318,11 @@ jobs:
         shell: pwsh
         working-directory: native-kernels/orbitquant-packed-matmul
         run: |
+          if ("${{ matrix.nvcc_allow_unsupported }}" -eq "true") {
+            # CUDA 13.0 nvcc rejects the MSVC 2026 toolset on windows-2025;
+            # override the version check (the cu128 build passes it natively).
+            $env:CUDAFLAGS = "-allow-unsupported-compiler"
+          }
           $vswhere = `
             "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vsRoot = & $vswhere `
