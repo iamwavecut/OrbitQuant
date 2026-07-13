@@ -96,8 +96,7 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update -q
           sudo apt-get install -y -q cuda-nvcc-${{ matrix.cuda_apt }} \
-            cuda-cudart-dev-${{ matrix.cuda_apt }} \
-            libcurand-dev-${{ matrix.cuda_apt }}
+            cuda-cudart-dev-${{ matrix.cuda_apt }}
           echo "/usr/local/cuda-$(echo ${{ matrix.cuda_apt }} | tr '-' '.')/bin" >> "$GITHUB_PATH"
 
       - name: Install build environment
@@ -105,6 +104,7 @@ jobs:
           uv venv .venv --python 3.12
           uv pip install --python .venv/bin/python \
             --index-url ${{ matrix.torch_index }} \
+            --extra-index-url https://pypi.org/simple \
             --index-strategy unsafe-best-match \
             "torch==${{ matrix.torch }}" cmake ninja setuptools wheel numpy
 
@@ -213,7 +213,7 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.28
         with:
           cuda: ${{ matrix.cuda_version }}
-          sub-packages: '["nvcc", "cudart", "curand_dev", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration"]'
           method: network
 
       - name: Install build environment
@@ -222,6 +222,7 @@ jobs:
           uv venv .venv --python 3.12
           uv pip install --python .venv\Scripts\python.exe `
             --index-url ${{ matrix.torch_index }} `
+            --extra-index-url https://pypi.org/simple `
             --index-strategy unsafe-best-match `
             "torch==${{ matrix.torch }}" cmake ninja setuptools wheel numpy
 
@@ -339,7 +340,7 @@ jobs:
         run: |
           uv venv .venv --python 3.12
           uv pip install --python .venv/bin/python \
-            "torch==${{ matrix.torch }}" cmake ninja setuptools wheel numpy
+            "torch==${{ matrix.torch }}" "cmake==3.31.*" ninja setuptools wheel numpy
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
@@ -602,6 +603,7 @@ jobs:
           uv venv .venv --python 3.12
           uv pip install --python .venv\Scripts\python.exe `
             --index-url https://download.pytorch.org/whl/cpu `
+            --extra-index-url https://pypi.org/simple `
             --index-strategy unsafe-best-match `
             "torch==2.12.*" cmake ninja setuptools wheel numpy
 
