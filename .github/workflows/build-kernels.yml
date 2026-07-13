@@ -432,6 +432,10 @@ jobs:
         working-directory: native-kernels/orbitquant-packed-matmul
         env:
           MAX_JOBS: "3"
+          # Keep the produced metallib and dylib loadable on macOS 15 and
+          # newer (the audited contract in docs/kernel-audit.md).
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
+          CMAKE_ARGS: -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
         run: |
           python="$GITHUB_WORKSPACE/.venv/bin/python"
           "$python" setup.py bdist_wheel
