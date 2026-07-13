@@ -96,7 +96,8 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update -q
           sudo apt-get install -y -q cuda-nvcc-${{ matrix.cuda_apt }} \
-            cuda-cudart-dev-${{ matrix.cuda_apt }}
+            cuda-cudart-dev-${{ matrix.cuda_apt }} \
+            cuda-libraries-dev-${{ matrix.cuda_apt }}
           echo "/usr/local/cuda-$(echo ${{ matrix.cuda_apt }} | tr '-' '.')/bin" >> "$GITHUB_PATH"
 
       - name: Install build environment
