@@ -1,8 +1,8 @@
 # FLUX.2 Klein 9B: OrbitQuant W4A4 vs SDNQ UINT4
 
 This report compares OrbitQuant and SDNQ on the same FLUX.2 Klein 9B source,
-prompts and generation settings. Runtime rows use the same L40S hardware and
-software environment. It covers checkpoint size, load and generation latency,
+prompts and generation settings. Runtime rows use the same RTX PRO 6000 host
+and software environment. It covers checkpoint size, load and generation latency,
 VRAM, paired visual output and the measured OrbitQuant kernel path.
 
 ## Checkpoints
@@ -104,7 +104,7 @@ and verification instructions are in [the kernel audit](kernel-audit.md#local-na
 
 The matrix uses the complete ten-prompt stress pack with full 1024x1024 tiles
 and WebP quality 95. BF16 is the full-precision reference from the controlled
-visual run; the SDNQ and OrbitQuant columns use the corresponding L40S benchmark
+visual run; the SDNQ and OrbitQuant columns use the recorded benchmark
 outputs. Every row uses the same prompt, seed, resolution, step count and
 guidance.
 
@@ -139,8 +139,8 @@ failure modes; it is not a substitute for GenEval or another task-specific objec
 ## Result
 
 OrbitQuant produces the smaller complete 4-bit pipeline, additionally quantizes
-activations without calibration data, and reaches SDNQ hot-generation parity on
-the tested L40S while using materially less runtime memory. The visual matrix
+activations without calibration data, and outruns both SDNQ and unquantized BF16 on
+the tested RTX PRO 6000 while using materially less runtime memory. The visual matrix
 shows preserved complex structure without collapse, with OrbitQuant producing
 the strongest English fine-print result in this prompt pack. This is a controlled
 result for FLUX.2 Klein 9B, not a universal speed claim for every model or GPU.
