@@ -204,6 +204,9 @@ jobs:
             torch_requirement: "torch>=2.13,<2.14"
             cuda_version: "13.0.1"
             cuda_feature_tag: "13.0"
+            # CUDA 13 repackaged the crt/ headers out of the nvcc component;
+            # install the full toolkit instead of hand-picked components.
+            cuda_full_install: true
             local_tag: cu130torch213
             unique_id: rel_win_cu130_t213
     steps:
@@ -227,21 +230,28 @@ jobs:
           $url = "https://developer.download.nvidia.com/compute/cuda/$version/network_installers/cuda_${version}_windows_network.exe"
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile $installer
-          $components = @(
-            "nvcc_$feature",
-            "cudart_$feature",
-            "nvrtc_dev_$feature",
-            "cublas_dev_$feature",
-            "cusparse_dev_$feature",
-            "cusolver_dev_$feature",
-            "cufft_dev_$feature",
-            "curand_dev_$feature",
-            "thrust_$feature",
-            "visual_studio_integration_$feature"
-          )
-          Write-Host "Installing components: $components"
+          $fullInstall = "${{ matrix.cuda_full_install }}" -eq "true"
+          if ($fullInstall) {
+            $arguments = @("-s")
+            Write-Host "Installing the full CUDA toolkit"
+          } else {
+            $components = @(
+              "nvcc_$feature",
+              "cudart_$feature",
+              "nvrtc_dev_$feature",
+              "cublas_dev_$feature",
+              "cusparse_dev_$feature",
+              "cusolver_dev_$feature",
+              "cufft_dev_$feature",
+              "curand_dev_$feature",
+              "thrust_$feature",
+              "visual_studio_integration_$feature"
+            )
+            $arguments = @("-s") + $components
+            Write-Host "Installing components: $components"
+          }
           $process = Start-Process -Wait -PassThru -FilePath $installer `
-            -ArgumentList (@("-s") + $components)
+            -ArgumentList $arguments
           if ($process.ExitCode -ne 0) {
             throw "CUDA network installer failed with exit code $($process.ExitCode)"
           }
