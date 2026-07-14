@@ -216,6 +216,8 @@ def _make_layer(
         packed_weight_indices=tensors["packed_weight_indices"],
         row_norms=tensors["row_norms"],
         debug_weight=None,
+        # Artifact tensors are stored in the canonical nn.Linear orientation.
+        source_weight_layout="out_in",
     ).eval()
 
 
