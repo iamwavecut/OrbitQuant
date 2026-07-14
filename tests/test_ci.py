@@ -22,8 +22,8 @@ def test_github_actions_cpu_unit_workflow_exists():
 
     assert workflow.is_file()
     text = workflow.read_text(encoding="utf-8")
-    assert "uses: actions/checkout@v7.0.0" in text
-    assert "uses: actions/setup-python@v6.3.0" in text
+    assert "uses: actions/checkout@v7" in text
+    assert "uses: actions/setup-python@v6" in text
     assert "uses: astral-sh/setup-uv@v8.3.0" in text
     assert "uv sync --extra dev --extra hf --extra eval" in text
     assert "uv run ruff check ." in text
@@ -41,8 +41,8 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "--rev d43de01d0b43285d8e5061ca4380c2bd1c40ae3b" in text
     assert "--debug" in text
     assert "prepare_wheel_project.py" in text
-    assert "uses: actions/cache/restore@v6.1.0" in text
-    assert "uses: actions/cache/save@v6.1.0" in text
+    assert "uses: actions/cache/restore@v6" in text
+    assert "uses: actions/cache/save@v6" in text
     assert "vswhere.exe" in text
     assert "VsDevCmd.bat" in text
     assert "Get-Command nmake.exe -ErrorAction Stop" in text
@@ -76,8 +76,8 @@ def test_github_actions_pypi_publish_workflow_uses_trusted_publishing():
     assert "uv run ruff check ." in text
     assert "uv run --with build python -m build" in text
     assert "uv run --with twine python -m twine check dist/*" in text
-    assert "uses: actions/upload-artifact@v6.0.0" in text
-    assert "uses: actions/download-artifact@v7.0.0" in text
+    assert "uses: actions/upload-artifact@v7" in text
+    assert "uses: actions/download-artifact@v8" in text
     assert "environment:" in text
     assert "name: pypi" in text
     assert "id-token: write" in text
