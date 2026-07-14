@@ -310,6 +310,7 @@ def _write_comparison_matrix(
     title: str,
     tile_size: tuple[int, int] = (208, 214),
     lossless: bool = False,
+    quality: int = 95,
 ) -> Path | None:
     if not items:
         return None
@@ -365,7 +366,7 @@ def _write_comparison_matrix(
             x = row_label_width + col_index * col_width + 6
             tile = _thumbnail(item["path"], size=tile_size)
             sheet.paste(tile, (x, y + 8))
-    sheet.save(path, lossless=lossless, method=6)
+    sheet.save(path, lossless=lossless, quality=quality, method=6)
     return path
 
 
@@ -410,7 +411,8 @@ def _write_report_comparison_matrices(
             items,
             title=f"OrbitQuant {media} generation comparison matrix",
             tile_size=(1024, 1024) if media == "image" else (208, 214),
-            lossless=media == "image",
+            lossless=False,
+            quality=95,
         )
         if result is not None:
             created[media] = result

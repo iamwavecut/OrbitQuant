@@ -206,6 +206,7 @@ def test_cli_generate_pack_runs_jobs_once_per_prompt_seed_and_records_artifacts(
         def from_pretrained(cls, model_id, **kwargs):
             assert model_id == "example/artifact-model"
             assert kwargs["torch_dtype"] is torch.float32
+            assert kwargs["revision"] == "abc123"
             return restored
 
     monkeypatch.setitem(

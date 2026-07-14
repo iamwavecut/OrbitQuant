@@ -107,6 +107,11 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     lowbit_boundary_protection: int | str = "auto"
     lowbit_protected_blocks: int = 4
     lowbit_protected_bits: int = 4
+    # Universal W2 models use a conservative mixed-bit interior by default:
+    # separate Q/K projections stay W2 while V/output/FFN projections use W3.
+    # Known model policies keep their existing paper-aligned recipes. True
+    # forces this policy for any target; False disables it.
+    lowbit_interior_protection: bool | str = "auto"
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
@@ -165,6 +170,10 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("lowbit_protected_blocks must be >= 0")
         if not 2 <= self.lowbit_protected_bits <= 8:
             raise ValueError("lowbit_protected_bits must be in [2, 8]")
+        if self.lowbit_interior_protection != "auto" and not isinstance(
+            self.lowbit_interior_protection, bool
+        ):
+            raise ValueError("lowbit_interior_protection must be 'auto' or a boolean")
         normalized_dtype_dict: dict[str, list[str]] = {}
         for dtype_name, module_names in self.modules_dtype_dict.items():
             normalized_dtype = dtype_name.lower()
@@ -197,4 +206,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
         # Artifacts produced before codebook versioning used the legacy v1
         # centroids. Preserve their packed-index interpretation on load.
         values.setdefault("codebook_version", 1)
+        # Artifacts written before mixed-bit interior protection contain W2
+        # payloads for every unprotected interior module.
+        values.setdefault("lowbit_interior_protection", False)
         return cls(**values)

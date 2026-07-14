@@ -28,7 +28,7 @@ inline bool orbitquant_mma64_pipeline_disabled() {
 }
 
 // ORBITQUANT_MMA64_FORCE_PIPELINE=1 extends the pipeline to every eligible
-// width (W4/W6) for re-benchmarking on other GPUs.
+// width for re-benchmarking on other GPUs.
 inline bool orbitquant_mma64_pipeline_forced() {
   static const bool forced = []() {
     char const *value = std::getenv("ORBITQUANT_MMA64_FORCE_PIPELINE");
@@ -294,18 +294,32 @@ __global__ void orbitquant_packed_matmul_mma64_kernel(
 #endif  // __CUDA_ARCH__ >= 800
 }
 
-__device__ __forceinline__ void copy_async_16(
+template <int Bytes>
+__device__ __forceinline__ void copy_async(
     void *__restrict__ destination,
     void const *__restrict__ source) {
 #if __CUDA_ARCH__ >= 800
   const uint32_t shared_address =
       static_cast<uint32_t>(__cvta_generic_to_shared(destination));
-  asm volatile(
-      "cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(shared_address),
-      "l"(source));
+  if constexpr (Bytes == 16) {
+    asm volatile(
+        "cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(shared_address),
+        "l"(source));
+  } else {
+    static_assert(Bytes == 8);
+    asm volatile(
+        "cp.async.ca.shared.global [%0], [%1], 8;\n" : : "r"(shared_address),
+        "l"(source));
+  }
 #else
-  *reinterpret_cast<uint4 *>(destination) =
-      *reinterpret_cast<uint4 const *>(source);
+  if constexpr (Bytes == 16) {
+    *reinterpret_cast<uint4 *>(destination) =
+        *reinterpret_cast<uint4 const *>(source);
+  } else {
+    static_assert(Bytes == 8);
+    *reinterpret_cast<uint2 *>(destination) =
+        *reinterpret_cast<uint2 const *>(source);
+  }
 #endif
 }
 
@@ -321,10 +335,9 @@ __device__ __forceinline__ void wait_for_async_copies() {
 #endif
 }
 
-// cp.async-pipelined variant of the mma64 kernel (sm80+, byte-aligned k-tile
-// strides, i.e. every supported width except W3). Interior blocks double-buffer
-// the X tile and the packed weight bytes so global loads overlap the MMA work;
-// edge blocks keep the guarded synchronous path.
+// cp.async-pipelined variant of the mma64 kernel (sm80+). Interior blocks
+// double-buffer the X tile and the packed weight bytes so global loads overlap
+// the MMA work; edge blocks keep the guarded synchronous path.
 template <typename storage_t, typename mma_t, int Bits>
 __global__ void orbitquant_packed_matmul_mma64_pipelined_kernel(
     storage_t *__restrict__ out,
@@ -348,11 +361,13 @@ __global__ void orbitquant_packed_matmul_mma64_pipelined_kernel(
   constexpr int x_vector_values = 8;
   constexpr int x_vectors_per_row = tile_k / x_vector_values;
   constexpr int seg_stride = tile_k * Bits / 8;
-  constexpr int weight_segment_values = 16;
+  constexpr int weight_segment_values = Bits == 3 ? 32 : 16;
   constexpr int weight_segments_per_row = tile_k / weight_segment_values;
   constexpr int segment_bytes = weight_segment_values * Bits / 8;
+  constexpr int weight_copy_bytes = Bits == 3 ? 8 : 16;
   static_assert(sizeof(storage_t) == sizeof(mma_t));
-  static_assert(Bits == 2 || Bits == 4 || Bits == 6);
+  static_assert(Bits == 2 || Bits == 3 || Bits == 4 || Bits == 6);
+  static_assert(seg_stride % weight_copy_bytes == 0);
 
   extern __shared__ __align__(16) uint8_t dynamic_shared[];
   mma_t *x_tiles = reinterpret_cast<mma_t *>(dynamic_shared);
@@ -380,23 +395,23 @@ __global__ void orbitquant_packed_matmul_mma64_pipelined_kernel(
 
   if (interior) {
     constexpr int x_copies = tile_m * x_vectors_per_row;
-    constexpr int w_copies = tile_n * seg_stride / 16;
+    constexpr int w_copies = tile_n * seg_stride / weight_copy_bytes;
     auto stage_tile = [&](int buffer, int64_t k_start) {
       mma_t *x_destination = x_tiles + buffer * tile_m * padded_k;
       for (int task = threadIdx.x; task < x_copies; task += blockDim.x) {
         const int local_row = task / x_vectors_per_row;
         const int local_vector = task - local_row * x_vectors_per_row;
-        copy_async_16(
+        copy_async<16>(
             x_destination + local_row * padded_k + local_vector * x_vector_values,
             x + (block_row + local_row) * in_features + k_start +
                 local_vector * x_vector_values);
       }
       uint8_t *stage_destination = packed_stage + buffer * tile_n * seg_stride;
       for (int task = threadIdx.x; task < w_copies; task += blockDim.x) {
-        const int byte_offset = task * 16;
+        const int byte_offset = task * weight_copy_bytes;
         const int local_col = byte_offset / seg_stride;
         const int seg_byte = byte_offset - local_col * seg_stride;
-        copy_async_16(
+        copy_async<weight_copy_bytes>(
             stage_destination + byte_offset,
             packed_weight_indices + (block_col + local_col) * packed_row_bytes +
                 (k_start * Bits) / 8 + seg_byte);
@@ -804,7 +819,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
         const int byte_offset = vector * 16;
         const int local_row = byte_offset / packed_tile_k;
         const int local_k_byte = byte_offset - local_row * packed_tile_k;
-        copy_async_16(
+        copy_async<16>(
             packed_activation_stage + byte_offset,
             packed_activations +
                 (block_row + local_row) * packed_row_stride + local_k_byte);
@@ -816,14 +831,14 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
         if constexpr (KMajorWeight) {
           const int local_k_byte = byte_offset / TileN;
           const int local_col = byte_offset - local_k_byte * TileN;
-          copy_async_16(
+          copy_async<16>(
               packed_weight_stage + byte_offset,
               packed_weight_indices + local_k_byte * out_features + block_col +
                   local_col);
         } else {
           const int local_col = byte_offset / packed_tile_k;
           const int local_k_byte = byte_offset - local_col * packed_tile_k;
-          copy_async_16(
+          copy_async<16>(
               packed_weight_stage + byte_offset,
               packed_weight_indices +
                   (block_col + local_col) * packed_row_stride + local_k_byte);
@@ -890,7 +905,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
           const int byte_offset = vector * 16;
           const int local_row = byte_offset / packed_tile_k;
           const int local_k_byte = byte_offset - local_row * packed_tile_k;
-          copy_async_16(
+          copy_async<16>(
               packed_activation_stage + byte_offset,
               packed_activations +
                   (block_row + local_row) * packed_row_stride + next_k_byte +
@@ -903,7 +918,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
           if constexpr (KMajorWeight) {
             const int local_k_byte = byte_offset / TileN;
             const int local_col = byte_offset - local_k_byte * TileN;
-            copy_async_16(
+            copy_async<16>(
                 packed_weight_stage + byte_offset,
                 packed_weight_indices +
                     (next_k_byte + local_k_byte) * out_features + block_col +
@@ -911,7 +926,7 @@ __global__ void orbitquant_packed_w4a4_int8_mma_kernel(
           } else {
             const int local_col = byte_offset / packed_tile_k;
             const int local_k_byte = byte_offset - local_col * packed_tile_k;
-            copy_async_16(
+            copy_async<16>(
                 packed_weight_stage + byte_offset,
                 packed_weight_indices +
                     (block_col + local_col) * packed_row_stride + next_k_byte +
@@ -1453,14 +1468,16 @@ void matmul_packed_weight(
 // (each layer's weights are evicted between calls in a real model) it is
 // 1.35-1.46x faster for W2/W4/W6 on RTX 4060 Ti, A40, and RTX 4090 whenever
 // the grid fits in one wave (blocks <= SM count), and it regresses up to 15%
-// once the grid oversubscribes the device. Gate on grid size; measured
-// 2026-07 across the three architectures above.
+// once the grid oversubscribes the device. W3 uses denser 8-byte copies and
+// wins from 128 rows even for oversubscribed grids on RTX 6000 Ada; shorter
+// W3 launches stay on the legacy kernel. Measured 2026-07.
 // ORBITQUANT_MMA64_FORCE_PIPELINE=1 bypasses the grid gate,
 // ORBITQUANT_MMA64_DISABLE_PIPELINE=1 forces the legacy kernel everywhere.
 #define ORBITQUANT_MMA64_USE_PIPELINE(BITS_VALUE)                               \
   ((orbitquant_mma64_pipeline_forced() ||                                       \
-    static_cast<int64_t>(mma_grid.x) * mma_grid.y <=                            \
-        mma_properties->multiProcessorCount) &&                                 \
+    ((BITS_VALUE) == 3 ? x.size(0) >= 128                                      \
+                       : static_cast<int64_t>(mma_grid.x) * mma_grid.y <=        \
+                             mma_properties->multiProcessorCount)) &&           \
    !orbitquant_mma64_pipeline_disabled() &&                                     \
    mma_properties->major >= 8 &&                                                \
    (2 * 128 * 72 * 2 + 128 * 72 * 2 + 8 * 16 * 16 * 4 +                        \
@@ -1490,7 +1507,11 @@ void matmul_packed_weight(
           }
           break;
         case 3:
-          ORBITQUANT_LAUNCH_MMA64_BF16(3);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(3)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::BFloat16, __nv_bfloat16, 3);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_BF16(3);
+          }
           break;
         case 4:
           if (ORBITQUANT_MMA64_USE_PIPELINE(4)) {
@@ -1594,7 +1615,11 @@ void matmul_packed_weight(
           }
           break;
         case 3:
-          ORBITQUANT_LAUNCH_MMA64_HALF(3);
+          if (ORBITQUANT_MMA64_USE_PIPELINE(3)) {
+            ORBITQUANT_LAUNCH_MMA64_PIPELINED(c10::Half, half, 3);
+          } else {
+            ORBITQUANT_LAUNCH_MMA64_HALF(3);
+          }
           break;
         case 4:
           if (ORBITQUANT_MMA64_USE_PIPELINE(4)) {

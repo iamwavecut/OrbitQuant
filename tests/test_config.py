@@ -81,6 +81,27 @@ def test_orbit_quant_config_defaults_to_auto_fused_runtime_mode():
     assert config.packed_matmul_num_warps == 4
 
 
+def test_orbit_quant_config_defaults_to_auto_lowbit_interior_protection():
+    config = OrbitQuantConfig()
+
+    assert config.lowbit_interior_protection == "auto"
+
+
+def test_orbit_quant_config_preserves_legacy_uniform_interior_from_dict():
+    config = OrbitQuantConfig.from_dict({"weight_bits": 2, "activation_bits": 4})
+
+    assert config.lowbit_interior_protection is False
+
+
+def test_orbit_quant_config_rejects_invalid_lowbit_interior_protection():
+    try:
+        OrbitQuantConfig(lowbit_interior_protection="enabled")
+    except ValueError as exc:
+        assert "lowbit_interior_protection" in str(exc)
+    else:
+        raise AssertionError("invalid lowbit_interior_protection was accepted")
+
+
 def test_orbit_quant_config_accepts_auto_fused_runtime_mode():
     config = OrbitQuantConfig(runtime_mode="auto_fused")
 

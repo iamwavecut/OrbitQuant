@@ -68,6 +68,7 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
                 "4",
                 "--block-size",
                 "4",
+                "--lowbit-interior-protection",
                 "--activation-kernel-backend",
                 "cpu",
                 "--device",
@@ -93,6 +94,7 @@ def test_cli_quantize_saves_transformer_component_artifact(monkeypatch, capsys, 
     assert (tmp_path / "SHA256SUMS").exists()
     quantization_config = json.loads((tmp_path / "quantization_config.json").read_text())
     assert quantization_config["activation_kernel_backend"] == "cpu"
+    assert quantization_config["lowbit_interior_protection"] is True
 
 
 def test_cli_quantize_with_suite_uses_named_native_pipeline(monkeypatch, capsys, tmp_path):

@@ -17,7 +17,7 @@ from orbitquant.linear_adapters import (
     linear_module_spec,
 )
 from orbitquant.policies import PolicyDecision, classify_linear_modules, resolve_target_policy
-from orbitquant.policies.lowbit_protection import apply_lowbit_boundary_protection
+from orbitquant.policies.lowbit_protection import apply_lowbit_protection
 
 _TORCH_DTYPE_BY_NAME = {
     "bfloat16": torch.bfloat16,
@@ -57,11 +57,23 @@ class QuantizationPrewarmSummary:
     dtype: str
 
 
+def classify_linear_modules_for_quantization(
+    model: torch.nn.Module,
+    config: OrbitQuantConfig,
+) -> dict[str, PolicyDecision]:
+    decisions = classify_linear_modules(model, config)
+    return apply_lowbit_protection(
+        decisions,
+        config,
+        target_policy=resolve_target_policy(model, config),
+    )
+
+
 def inspect_linear_module_policy(
     model: torch.nn.Module,
     config: OrbitQuantConfig,
 ) -> dict[str, Any]:
-    decisions = classify_linear_modules(model, config)
+    decisions = classify_linear_modules_for_quantization(model, config)
     target_policy = resolve_target_policy(model, config)
     modules: list[dict[str, Any]] = []
     by_action: dict[str, list[str]] = {
@@ -100,6 +112,11 @@ def inspect_linear_module_policy(
                 "in_features": spec.in_features,
                 "out_features": spec.out_features,
                 "bias": getattr(module, "bias", None) is not None,
+                "weight_bits": (
+                    decision.weight_bits or config.weight_bits
+                    if decision.action == "orbitquant"
+                    else None
+                ),
                 "weight_dtype": str(module.weight.dtype).removeprefix("torch."),
                 "weight_device": str(module.weight.device),
             }
@@ -256,8 +273,7 @@ def quantize_linear_modules(
     if staging_mode not in {"streaming", "component"}:
         raise ValueError("staging_mode must be 'streaming' or 'component'")
 
-    decisions = classify_linear_modules(model, config)
-    apply_lowbit_boundary_protection(decisions, config)
+    decisions = classify_linear_modules_for_quantization(model, config)
     target_device = _quantization_device(quantization_device)
     summary = QuantizationSummary(
         quantization_device="preserve" if target_device is None else str(target_device),
@@ -328,7 +344,7 @@ def prepare_prequantized_linear_modules(
     model: torch.nn.Module,
     config: OrbitQuantConfig,
 ) -> QuantizationSummary:
-    decisions = classify_linear_modules(model, config)
+    decisions = classify_linear_modules_for_quantization(model, config)
     summary = QuantizationSummary()
 
     for name, decision in decisions.items():
@@ -336,9 +352,12 @@ def prepare_prequantized_linear_modules(
         if not is_linear_module(module):
             continue
         if decision.action == "orbitquant":
+            module_config = config
+            if decision.weight_bits is not None and decision.weight_bits != config.weight_bits:
+                module_config = dataclasses.replace(config, weight_bits=decision.weight_bits)
             replacement = OrbitQuantLinear.empty_from_linear(
                 module,
-                config=config,
+                config=module_config,
                 module_name=name,
             )
             parent, child_name = _parent_and_child(model, name)

@@ -1,4 +1,4 @@
-"""Boundary-block protection for very low weight bit widths.
+"""Mixed-bit protection for very low weight bit widths.
 
 At 2-bit weights every layer quantizes at the scalar Lloyd-Max floor (~34%
 relative error), and deep DiT stacks fail cumulatively rather than through a
@@ -20,6 +20,20 @@ from orbitquant.config import OrbitQuantConfig
 from orbitquant.policies.generic_dit import PolicyDecision
 
 _BLOCK_INDEX_RE = re.compile(r"(?:^|\.)(?P<container>[a-zA-Z_][a-zA-Z0-9_]*)\.(?P<index>\d+)\.")
+_SEPARATE_QK_LEAVES = {
+    "add_k_proj",
+    "add_q_proj",
+    "k",
+    "k_proj",
+    "key",
+    "key_proj",
+    "q",
+    "q_proj",
+    "query",
+    "query_proj",
+    "to_k",
+    "to_q",
+}
 
 
 def _block_key(name: str) -> tuple[str, int] | None:
@@ -34,6 +48,16 @@ def resolve_protected_block_count(config: OrbitQuantConfig) -> int:
     if config.lowbit_boundary_protection == "auto":
         return config.lowbit_protected_blocks if config.weight_bits <= 2 else 0
     return int(config.lowbit_boundary_protection)
+
+
+def resolve_interior_protection(
+    config: OrbitQuantConfig, *, target_policy: str
+) -> bool:
+    if config.weight_bits != 2:
+        return False
+    if config.lowbit_interior_protection == "auto":
+        return target_policy == "universal"
+    return bool(config.lowbit_interior_protection)
 
 
 def apply_lowbit_boundary_protection(
@@ -73,8 +97,14 @@ def apply_lowbit_boundary_protection(
             indices = per_container[container]
             first = min(indices)
             last = max(indices)
+            effective_protected_blocks = (
+                protected_blocks
+                if len(indices) <= 2
+                else min(protected_blocks, (len(indices) - 1) // 2)
+            )
             protected = (
-                index < first + protected_blocks or index > last - protected_blocks
+                index < first + effective_protected_blocks
+                or index > last - effective_protected_blocks
             )
             reason = f"boundary block {container}.{index}"
         if protected:
@@ -87,3 +117,46 @@ def apply_lowbit_boundary_protection(
                 ),
             )
     return decisions
+
+
+def apply_lowbit_interior_protection(
+    decisions: dict[str, PolicyDecision],
+    config: OrbitQuantConfig,
+    *,
+    target_policy: str,
+) -> dict[str, PolicyDecision]:
+    """Use W3 for sensitive interior projections while retaining separate Q/K at W2."""
+
+    if not resolve_interior_protection(config, target_policy=target_policy):
+        return decisions
+
+    for name, decision in decisions.items():
+        if decision.action != "orbitquant" or _block_key(name) is None:
+            continue
+        if decision.weight_bits is not None and decision.weight_bits > config.weight_bits:
+            continue
+        if name.rsplit(".", 1)[-1].lower() in _SEPARATE_QK_LEAVES:
+            continue
+        decisions[name] = replace(
+            decision,
+            weight_bits=3,
+            reason=(
+                f"{decision.reason}; low-bit interior protection "
+                "(non-Q/K projection upgraded to W3)"
+            ),
+        )
+    return decisions
+
+
+def apply_lowbit_protection(
+    decisions: dict[str, PolicyDecision],
+    config: OrbitQuantConfig,
+    *,
+    target_policy: str,
+) -> dict[str, PolicyDecision]:
+    apply_lowbit_boundary_protection(decisions, config)
+    return apply_lowbit_interior_protection(
+        decisions,
+        config,
+        target_policy=target_policy,
+    )

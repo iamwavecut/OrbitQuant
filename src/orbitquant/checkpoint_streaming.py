@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import prod
 from pathlib import Path
 from typing import Any
@@ -82,6 +82,7 @@ def _convert_streaming_checkpoint(
     checkpoint_files: list[Any],
     *,
     orbit_module_names: list[str],
+    orbit_module_bits: dict[str, int] | None,
     adaln_module_names: list[str],
     base_model_prefix: str,
     quantization_device: torch.device | None,
@@ -150,13 +151,21 @@ def _convert_streaming_checkpoint(
                 spec.weight_layout,
             )
             if module_name in orbit_module_names:
+                module_bits = (orbit_module_bits or {}).get(
+                    module_name, config.weight_bits
+                )
+                module_config = (
+                    config
+                    if module_bits == config.weight_bits
+                    else replace(config, weight_bits=module_bits)
+                )
                 quantized = OrbitQuantLinear.from_weight(
                     weight,
                     bias=None,
                     in_features=weight.shape[1],
                     out_features=weight.shape[0],
                     source_weight_layout=spec.weight_layout,
-                    config=config,
+                    config=module_config,
                     module_name=module_name,
                     quantization_device=quantization_device,
                 )
@@ -195,6 +204,7 @@ def build_transformers_streaming_checkpoint(
     checkpoint_files: list[Any],
     *,
     orbit_module_names: list[str],
+    orbit_module_bits: dict[str, int] | None = None,
     adaln_module_names: list[str],
     base_model_prefix: str,
     quantization_device: torch.device | None,
@@ -204,6 +214,7 @@ def build_transformers_streaming_checkpoint(
         config,
         checkpoint_files,
         orbit_module_names=orbit_module_names,
+        orbit_module_bits=orbit_module_bits,
         adaln_module_names=adaln_module_names,
         base_model_prefix=base_model_prefix,
         quantization_device=quantization_device,
@@ -226,6 +237,7 @@ def build_diffusers_streaming_conversion(
     checkpoint_files: list[Any],
     *,
     orbit_module_names: list[str],
+    orbit_module_bits: dict[str, int] | None = None,
     adaln_module_names: list[str],
     quantization_device: torch.device | None,
 ) -> StreamingConversion:
@@ -234,6 +246,7 @@ def build_diffusers_streaming_conversion(
         config,
         checkpoint_files,
         orbit_module_names=orbit_module_names,
+        orbit_module_bits=orbit_module_bits,
         adaln_module_names=adaln_module_names,
         base_model_prefix="",
         quantization_device=quantization_device,

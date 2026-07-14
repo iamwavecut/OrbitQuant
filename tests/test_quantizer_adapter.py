@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 
 from orbitquant.adaln import RTNInt4Linear
 from orbitquant.config import OrbitQuantConfig
@@ -42,6 +42,26 @@ class FluxTransformer2DModel(torch.nn.Module):
             ]
         )
         self.proj_out = torch.nn.Linear(16, 16)
+
+
+class TinyMixedBitTransformer(torch.nn.Module):
+    def __init__(self, blocks: int = 6):
+        super().__init__()
+        self.layers = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "attention": torch.nn.ModuleDict(
+                            {
+                                "to_q": torch.nn.Linear(16, 16, bias=False),
+                                "to_v": torch.nn.Linear(16, 16, bias=False),
+                            }
+                        )
+                    }
+                )
+                for _ in range(blocks)
+            ]
+        )
 
 
 def test_quantizer_adapter_reports_no_calibration_requirement():
@@ -327,6 +347,53 @@ def test_transformers_streaming_quantizer_builds_and_cleans_bounded_packed_shard
 
     assert quantizer.get_weight_conversions() == []
     assert not Path(packed_checkpoint).exists()
+
+
+def test_transformers_streaming_conversion_preserves_mixed_module_bits(tmp_path):
+    pytest.importorskip("transformers.core_model_loading")
+    model = TinyMixedBitTransformer()
+    config = OrbitQuantConfig(
+        weight_bits=2,
+        activation_bits=4,
+        block_size=8,
+        target_policy="universal",
+        lowbit_protected_blocks=1,
+    )
+    quantizer = OrbitQuantizer(
+        config,
+        pre_quantized=False,
+        quantization_device="cpu",
+    )
+    checkpoint = tmp_path / "model.safetensors"
+    save_file(
+        {
+            f"{name}.weight": module.weight
+            for name, module in model.named_modules()
+            if isinstance(module, torch.nn.Linear)
+        },
+        checkpoint,
+    )
+    checkpoint_files = [checkpoint]
+
+    quantizer._process_model_before_weight_loading(
+        model,
+        checkpoint_files=checkpoint_files,
+    )
+    packed_checkpoint = Path(checkpoint_files[-1])
+    packed_state = load_file(packed_checkpoint)
+
+    assert model.layers[0]["attention"]["to_q"].weight_bits == 4
+    assert model.layers[3]["attention"]["to_q"].weight_bits == 2
+    assert model.layers[3]["attention"]["to_v"].weight_bits == 3
+    assert model.layers[5]["attention"]["to_v"].weight_bits == 4
+    assert packed_state["layers.0.attention.to_q.packed_weight_indices"].numel() == 128
+    assert packed_state["layers.3.attention.to_q.packed_weight_indices"].numel() == 64
+    assert packed_state["layers.3.attention.to_v.packed_weight_indices"].numel() == 96
+    assert packed_state["layers.5.attention.to_v.packed_weight_indices"].numel() == 128
+
+    quantizer._process_model_after_weight_loading(model)
+    assert not packed_checkpoint.exists()
+    assert quantizer._transformers_orbit_module_bits == {}
 
 
 def test_pre_quantized_skeleton_accepts_packed_state_dict_strictly():

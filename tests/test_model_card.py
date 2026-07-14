@@ -84,6 +84,37 @@ def test_model_card_renders_rotation_and_codebook_metadata():
     ) in card
 
 
+def test_model_card_reports_mixed_module_weight_widths():
+    config = OrbitQuantConfig(
+        weight_bits=2,
+        activation_bits=4,
+        target_policy="universal",
+    )
+    quantized_modules = [
+        "layers.1.attention.to_q",
+        "layers.1.attention.to_v",
+        "layers.1.feed_forward.w1",
+        "layers.5.attention.to_q",
+    ]
+    manifest = OrbitQuantManifest.from_config(
+        config,
+        source_model_id="example/model",
+        source_revision="abc123",
+        source_license="unknown",
+        quantized_modules=quantized_modules,
+        skipped_modules=[],
+        module_bits={
+            "layers.1.attention.to_v": 3,
+            "layers.1.feed_forward.w1": 3,
+            "layers.5.attention.to_q": 4,
+        },
+    )
+
+    card = render_model_card(manifest)
+
+    assert "- Module weight-width counts: `W2: 1, W3: 2, W4: 1`" in card
+
+
 def test_model_card_renders_native_validation_evidence_without_raw_records():
     manifest = _manifest_for_model("black-forest-labs/FLUX.1-schnell")
     benchmark_summary = {
@@ -221,7 +252,7 @@ def test_model_card_renders_imported_vbench_release_metrics():
 def test_model_card_contains_install_command_not_workflow_log_language():
     card = render_model_card(_manifest_for_model("black-forest-labs/FLUX.1-schnell"))
 
-    assert 'pip install "orbitquant[hf,kernels]>=0.4.0"' in card
+    assert 'pip install "orbitquant[hf,kernels]>=0.9.0"' in card
     assert "git+https://github.com/iamwavecut/OrbitQuant.git" not in card
     for forbidden in (
         "reports/",

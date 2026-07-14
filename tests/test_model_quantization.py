@@ -83,6 +83,7 @@ def test_inspect_linear_module_policy_reports_inventory_without_mutating_model()
         "in_features": 16,
         "out_features": 16,
         "bias": True,
+        "weight_bits": 4,
         "weight_dtype": "float32",
         "weight_device": "cpu",
     }

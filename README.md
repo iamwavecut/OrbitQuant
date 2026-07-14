@@ -118,6 +118,15 @@ model = AutoModel.from_pretrained(
 Named recipes are `w4a4`, `w3a3`, `w2a4`, `w2a3`, and `w4a6`. They create a
 normal `OrbitQuantConfig`, so every field can be overridden.
 
+For an unknown architecture resolved to `target_policy="universal"`, W2 uses
+mixed-bit protection by default: out-of-block and the first/last four indexed
+blocks use W4, separate interior Q/K projections remain W2, and the other
+interior projections use W3. `inspect_linear_module_policy()` reports the
+effective `weight_bits` for every module. Set
+`lowbit_interior_protection=False` to retain the legacy uniform-W2 interior;
+known paper-model policies are unchanged unless protection is explicitly
+forced with `lowbit_interior_protection=True`.
+
 Bounded on-the-fly conversion requires safetensors and the Transformers 5
 weight-conversion APIs. Local paths and Hub model IDs use the normal
 `revision`, `variant`, token/auth, `device_map`, `max_memory`, CPU, and disk

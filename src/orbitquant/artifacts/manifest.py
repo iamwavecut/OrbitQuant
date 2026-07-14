@@ -29,7 +29,7 @@ class OrbitQuantManifest:
     adaln_modules: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
     module_shapes: dict[str, list[int]] = field(default_factory=dict)
-    # Per-module weight bit-width overrides (low-bit boundary protection);
+    # Per-module weight bit-width overrides (low-bit protection);
     # absent for uniform-precision artifacts, keeping the format unchanged.
     module_bits: dict[str, int] = field(default_factory=dict)
     checksums: dict[str, str] = field(default_factory=dict)

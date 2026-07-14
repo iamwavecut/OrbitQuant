@@ -920,6 +920,15 @@ def main(argv: list[str] | None = None) -> int:
     quantize_parser.add_argument("--rotation-seed", type=int, default=0)
     quantize_parser.add_argument("--block-size", type=_parse_block_size, default="paper")
     quantize_parser.add_argument(
+        "--lowbit-interior-protection",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "enable or disable mixed-width protection for low-bit interior projections; "
+            "when omitted, use the config default ('auto')"
+        ),
+    )
+    quantize_parser.add_argument(
         "--runtime-mode",
         default="auto_fused",
         choices=_RUNTIME_MODE_CHOICES,
@@ -1557,6 +1566,11 @@ def main(argv: list[str] | None = None) -> int:
             target_policy=target_policy,
             rotation_seed=args.rotation_seed,
             block_size=args.block_size,
+            lowbit_interior_protection=(
+                "auto"
+                if args.lowbit_interior_protection is None
+                else args.lowbit_interior_protection
+            ),
             runtime_mode=args.runtime_mode,
             activation_kernel_backend=args.activation_kernel_backend,
         )
@@ -2268,6 +2282,7 @@ def main(argv: list[str] | None = None) -> int:
         pipeline = load_pipeline_for_suite(
             suite,
             model_id=artifact_validation["source_model_id"],
+            revision=artifact_validation["source_revision"],
             torch_dtype=_torch_dtype(args.dtype),
         )
         prewarm_metadata = None

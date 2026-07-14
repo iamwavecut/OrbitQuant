@@ -15,11 +15,11 @@ from orbitquant.config import OrbitQuantConfig
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import (
     _quantization_device,
+    classify_linear_modules_for_quantization,
     dequantize_quantized_linear_modules,
     prepare_prequantized_linear_modules,
     quantize_linear_modules,
 )
-from orbitquant.policies import classify_linear_modules
 
 _ORBITQUANT_STATE_TENSORS = {"packed_weight_indices", "row_norms", "debug_weight", "bias"}
 _RTN_INT4_STATE_TENSORS = {"packed_weight", "scales", "bias"}
@@ -174,6 +174,7 @@ class OrbitQuantizer(*_hf_base_classes()):
         self._transformers_postload_quantization = False
         self._transformers_streaming_quantization = False
         self._transformers_orbit_module_names: list[str] = []
+        self._transformers_orbit_module_bits: dict[str, int] = {}
         self._transformers_adaln_module_names: list[str] = []
         self._transformers_base_model_prefix = ""
         self._transformers_preconverted_checkpoint = False
@@ -228,7 +229,9 @@ class OrbitQuantizer(*_hf_base_classes()):
         cached = getattr(self, "_classification_cache", None)
         if cached is not None and cached[0] is model:
             return cached[1]
-        decisions = classify_linear_modules(model, self.quantization_config)
+        decisions = classify_linear_modules_for_quantization(
+            model, self.quantization_config
+        )
         self._classification_cache = (model, decisions)
         return decisions
 
@@ -447,6 +450,7 @@ class OrbitQuantizer(*_hf_base_classes()):
             and bool(self._diffusers_checkpoint_files)
         )
         self._transformers_orbit_module_names = []
+        self._transformers_orbit_module_bits = {}
         self._transformers_adaln_module_names = []
         self._transformers_base_model_prefix = str(getattr(model, "base_model_prefix", "") or "")
         if self._transformers_streaming_quantization or self._diffusers_streaming_quantization:
@@ -454,6 +458,11 @@ class OrbitQuantizer(*_hf_base_classes()):
             self._transformers_orbit_module_names = [
                 name for name, decision in decisions.items() if decision.action == "orbitquant"
             ]
+            self._transformers_orbit_module_bits = {
+                name: decision.weight_bits or self.quantization_config.weight_bits
+                for name, decision in decisions.items()
+                if decision.action == "orbitquant"
+            }
             self._transformers_adaln_module_names = [
                 name for name, decision in decisions.items() if decision.action == "adaln_int4_rtn"
             ]
@@ -463,6 +472,7 @@ class OrbitQuantizer(*_hf_base_classes()):
                 self.quantization_config,
                 checkpoint_files,
                 orbit_module_names=self._transformers_orbit_module_names,
+                orbit_module_bits=self._transformers_orbit_module_bits,
                 adaln_module_names=self._transformers_adaln_module_names,
                 base_model_prefix=self._transformers_base_model_prefix,
                 quantization_device=self.quantization_device,
@@ -493,6 +503,7 @@ class OrbitQuantizer(*_hf_base_classes()):
                 self.quantization_config,
                 self._diffusers_checkpoint_files,
                 orbit_module_names=self._transformers_orbit_module_names,
+                orbit_module_bits=self._transformers_orbit_module_bits,
                 adaln_module_names=self._transformers_adaln_module_names,
                 quantization_device=self.quantization_device,
             )
@@ -530,6 +541,7 @@ class OrbitQuantizer(*_hf_base_classes()):
             self._transformers_postload_quantization = False
             self._transformers_streaming_quantization = False
             self._transformers_orbit_module_names = []
+            self._transformers_orbit_module_bits = {}
             self._transformers_adaln_module_names = []
             self._transformers_base_model_prefix = ""
             self._transformers_preconverted_checkpoint = False
@@ -544,6 +556,7 @@ class OrbitQuantizer(*_hf_base_classes()):
             self._diffusers_packed_state = None
             self._diffusers_replaced_source_keys = set()
             self._transformers_orbit_module_names = []
+            self._transformers_orbit_module_bits = {}
             self._transformers_adaln_module_names = []
         return model
 

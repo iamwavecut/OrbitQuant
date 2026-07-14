@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import torch
@@ -58,13 +59,16 @@ class OrbitQuantWeightQuantize(ConversionOps):
 
         results: dict[str, torch.Tensor] = {}
         if isinstance(module, OrbitQuantLinear):
+            config = self.hf_quantizer.quantization_config
+            if module.weight_bits != config.weight_bits:
+                config = replace(config, weight_bits=module.weight_bits)
             quantized = OrbitQuantLinear.from_weight(
                 weight,
                 bias=None,
                 in_features=module.in_features,
                 out_features=module.out_features,
                 source_weight_layout=module.source_weight_layout,
-                config=self.hf_quantizer.quantization_config,
+                config=config,
                 module_name=module_name,
                 quantization_device=self.hf_quantizer.quantization_device,
             )

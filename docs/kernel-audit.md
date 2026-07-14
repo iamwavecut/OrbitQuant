@@ -532,8 +532,7 @@ package suite passed 49 CUDA tests; the ten skipped cases were Metal-only.
 Coverage includes W2/W3/W4/W6 generic packed matmul, FP16/BF16, bias and
 no-bias paths, partial output tiles, direct packed W4A4 MMA, native packed-A4
 activation quantization, and native INT8 activation quantization for full-block
-dimensions and the 12288/4096 blocked RPBH case. OrbitQuant 0.3.1 changes the
-Metal path; the CUDA implementation measured in this section is unchanged.
+dimensions and the 12288/4096 blocked RPBH case.
 
 For W4A4 on compute capability 8.0 or newer, the selected path is:
 
@@ -549,6 +548,24 @@ The direct packed CUDA MMA implementation remains available for unsupported
 CUTLASS shapes. It includes asynchronous packed loads and SM89-specific tile
 selection. The checkpoint keeps the original row-major four-bit payload; no
 repacked duplicate weights are stored.
+
+The W3 MMA64 path stages each 64-value packed row segment as three aligned
+8-byte `cp.async` copies. Dispatch keeps the legacy kernel below 128 activation
+rows and selects the pipeline from 128 rows upward. On an RTX 6000 Ada
+(`sm_89`), Torch 2.9.1+cu128, two 50-iteration A/B runs at 4,608 activation
+rows measured the following mean-of-medians:
+
+| Input x output | Legacy W3 | Pipelined W3 | Improvement |
+| ---: | ---: | ---: | ---: |
+| 4608 x 4608 | 1.6784 ms | 1.6776 ms | 0.05% |
+| 4608 x 12288 | 4.6943 ms | 4.6135 ms | 1.72% |
+| 12288 x 4608 | 5.0496 ms | 4.8302 ms | 4.35% |
+
+The native package suite passed 88 tests with 30 non-CUDA cases skipped. A
+34-block Ideogram V4 Instant W2/W3/W4 run retained zero full dequantized weight
+caches, produced ten outputs byte-identical to the validated pre-dispatch
+recipe, and improved hot-generation median from 13.5034 to 13.2596 seconds at
+the same 12.524 GiB peak allocated memory.
 
 The selected production dispatch was also profiled on an NVIDIA GeForce RTX
 4090 (`sm_89`) with Torch 2.9.1+cu128 and CUDA 12.8. For a representative

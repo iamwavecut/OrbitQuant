@@ -66,7 +66,7 @@ def _install_snippet() -> str:
     return "\n".join(
         [
             "```bash",
-            "pip install \"orbitquant[hf,kernels]>=0.4.0\"",
+            "pip install \"orbitquant[hf,kernels]>=0.9.0\"",
             "```",
         ]
     )
@@ -469,6 +469,21 @@ def render_model_card(
     )
     observed_quality_lines = _observed_quality_section(benchmark_summary)
     adaln_group_size = int(data.get("adaln_group_size", 64))
+    module_bit_lines: list[str] = []
+    module_bits = data.get("module_bits") or {}
+    if module_bits:
+        bit_counts = {int(data["weight_bits"]): len(data["quantized_modules"])}
+        for module_bits_value in module_bits.values():
+            base_bits = int(data["weight_bits"])
+            bit_counts[base_bits] -= 1
+            override_bits = int(module_bits_value)
+            bit_counts[override_bits] = bit_counts.get(override_bits, 0) + 1
+        widths = ", ".join(
+            f"W{width}: {count}"
+            for width, count in sorted(bit_counts.items())
+            if count
+        )
+        module_bit_lines.append(f"- Module weight-width counts: `{widths}`")
     adaln_default_note = (
         "- AdaLN group-size note: paper default."
         if adaln_group_size == 64
@@ -563,6 +578,7 @@ def render_model_card(
             "",
             f"- Method: `{data['quant_method']}`",
             f"- Bits: `{bits}`",
+            *module_bit_lines,
             f"- Runtime mode: `{data['runtime_mode']}`",
             f"- Activation kernel backend: `{data['activation_kernel_backend']}`",
             f"- Activation normalization epsilon: `{data['activation_eps']}`",

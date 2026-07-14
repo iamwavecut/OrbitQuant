@@ -124,6 +124,14 @@ weight layout and feature attributes. Inventory summaries are derived from confi
 outputs. Raw inventory JSON is audit evidence, not package or model artifact
 content.
 
+Universal W2 uses an automatic mixed-bit safety policy rather than presenting
+untested architectures as uniform W2: boundary and out-of-block projections
+use W4, separate interior Q/K projections remain W2, and other interior
+projections use W3. This policy is recorded through per-module bit widths in
+artifacts and applies consistently to post-load, prequantized, Transformers
+streaming, and Diffusers streaming paths. It does not alter the named
+paper-target policies unless explicitly enabled.
+
 | Model family | Quantized patterns | AdaLN/INT4 patterns | Default skips | Evidence |
 | --- | --- | --- | --- | --- |
 | FLUX.1 | Transformer block attention `to_q`, `to_k`, `to_v`, `to_out`, joint text projections `add_*`, `to_add_out`, FFN modules, single-block projections. | `norm1.linear`, `norm1_context.linear`, single-block `norm.linear`. | `time_text_embed`, embedders, `norm_out`, final `proj_out`, text encoders, VAE. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `FluxTransformer2DModel`. |
@@ -228,6 +236,7 @@ not silently substitute a different quantization method.
 | Explicit `dequant_bf16` runtime uses dequantized BF16 matmul. | Accepted reference path | It is kept for compatibility and debugging. Do not claim it as low-bit fused inference. |
 | Zero weight rows use an epsilon guard for direction quantization. | Accepted implementation guard | The paper defines weight directions as `w' / ||w'||` for nonzero rows. The implementation divides by `max(||w'||, ε)` only when choosing codebook indices, stores the raw BF16 row norm, and dequantizes zero rows back to exactly zero. |
 | The optimized CUDA W4A4 path evaluates an INT8 surrogate of each Lloyd-Max codebook. | Documented runtime deviation | Packed nearest-centroid indices, row norms, token norms, and the artifact remain unchanged. The surrogate adds 0.21-0.28% codebook relative RMSE for the measured FLUX.2 dimensions. `dequant_bf16` evaluates the stored Lloyd-Max centroids directly and is the exact methodology reference. |
+| Universal W2 defaults to mixed W2/W3/W4 module widths. | Accepted quality guard outside named paper policies | A 34-block Ideogram V4 Instant validation used W2 for 52 separate interior Q/K projections, W3 for 130 other interior projections, and W4 for 59 boundary/out-of-block projections. Ten paired 1024x1024 outputs with fixed prompts and seeds were stable. The artifact manifest records every override; named paper policies remain paper-aligned by default. |
 | Full-model speedup is configuration-specific. | Accepted claim boundary | FLUX.2 Klein 9B on L40S reached practical SDNQ hot-generation parity with lower memory. That result does not establish universal speedup for other models, shapes, GPUs, or offload policies. |
 | The paper's block-size enumeration omits `h=256`, although its stated largest-power-of-two-divisor rule gives `h=256` for Z-Image `d=3840` and Wan `d=8960` projections. | Paper inconsistency | The implementation follows the formal rule. The selected target dimensions produce `h` in `{256, 512, 1024, 2048, 4096}`. |
 | Published checkpoints use converged Lloyd-Max codebook version 2 and `activation_eps=1e-10`. | Pass | All 14 canonical FLUX.2 4B, FLUX.1-schnell, Z-Image-Turbo, and Wan2.1 manifests expose these values. The FLUX.2 Klein 9B comparison checkpoint records them in both quantized component configs. Legacy version 1 artifacts remain loadable but are no longer the published release checkpoints. |
