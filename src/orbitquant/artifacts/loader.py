@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -87,7 +88,13 @@ def load_orbitquant_artifact(
         module = _get_module(model, name)
         if not isinstance(module, torch.nn.Linear):
             raise TypeError(f"expected Linear at {name}, got {type(module).__name__}")
-        replacement = OrbitQuantLinear.empty_from_linear(module, config=config, module_name=name)
+        module_config = config
+        override_bits = manifest.module_bits.get(name)
+        if override_bits is not None and override_bits != config.weight_bits:
+            module_config = dataclasses.replace(config, weight_bits=override_bits)
+        replacement = OrbitQuantLinear.empty_from_linear(
+            module, config=module_config, module_name=name
+        )
         parent, child_name = _parent_and_child(model, name)
         _set_child(parent, child_name, replacement)
 

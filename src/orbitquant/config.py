@@ -96,6 +96,17 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     # Opt-in: keep a persistent INT8 copy of each W4A4 weight on CUDA (twice
     # the packed size) so the cuBLASLt path skips its per-forward decode.
     w4a4_int8_weight_cache: bool = False
+    # Low-bit boundary protection: at 2-bit weights the per-layer quantization
+    # error sits at the scalar Lloyd-Max floor (~34% relative) and deep DiT
+    # stacks fail cumulatively, with the first/last blocks acting as error
+    # amplifiers (measured on Ideogram-v4: protecting 4 boundary blocks turns
+    # noise back into coherent images). "auto" protects
+    # lowbit_protected_blocks boundary blocks plus all out-of-block modules
+    # when weight_bits <= 2 and does nothing for higher widths; an int forces
+    # that block count; 0 disables protection.
+    lowbit_boundary_protection: int | str = "auto"
+    lowbit_protected_blocks: int = 4
+    lowbit_protected_bits: int = 4
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
@@ -143,6 +154,17 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("adaln_group_size must be positive")
         if not isinstance(self.w4a4_int8_weight_cache, bool):
             raise ValueError("w4a4_int8_weight_cache must be a boolean")
+        if self.lowbit_boundary_protection != "auto":
+            if not isinstance(self.lowbit_boundary_protection, int) or isinstance(
+                self.lowbit_boundary_protection, bool
+            ):
+                raise ValueError("lowbit_boundary_protection must be 'auto' or an int >= 0")
+            if self.lowbit_boundary_protection < 0:
+                raise ValueError("lowbit_boundary_protection must be 'auto' or an int >= 0")
+        if self.lowbit_protected_blocks < 0:
+            raise ValueError("lowbit_protected_blocks must be >= 0")
+        if not 2 <= self.lowbit_protected_bits <= 8:
+            raise ValueError("lowbit_protected_bits must be in [2, 8]")
         normalized_dtype_dict: dict[str, list[str]] = {}
         for dtype_name, module_names in self.modules_dtype_dict.items():
             normalized_dtype = dtype_name.lower()

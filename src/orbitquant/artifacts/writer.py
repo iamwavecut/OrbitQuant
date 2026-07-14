@@ -25,6 +25,17 @@ def _metadata_config(model: torch.nn.Module, config: OrbitQuantConfig) -> OrbitQ
     return OrbitQuantConfig.from_dict(values)
 
 
+def _module_bits(model: torch.nn.Module, config) -> dict[str, int]:
+    """Per-module weight bit-widths that differ from the config default."""
+    from orbitquant.layers import OrbitQuantLinear
+
+    overrides: dict[str, int] = {}
+    for name, module in model.named_modules():
+        if isinstance(module, OrbitQuantLinear) and module.weight_bits != config.weight_bits:
+            overrides[name] = int(module.weight_bits)
+    return overrides
+
+
 def _module_shapes(model: torch.nn.Module) -> dict[str, list[int]]:
     shapes: dict[str, list[int]] = {}
     for name, tensor in model.state_dict().items():
@@ -210,6 +221,7 @@ def save_orbitquant_artifact(
         adaln_modules=_summary_list(summary, "adaln_modules"),
         skipped_modules=skipped,
         module_shapes=_module_shapes(model),
+        module_bits=_module_bits(model, config),
         checksums=checksums,
         quantization_device=getattr(summary, "quantization_device", "unknown"),
         weight_quantization_backend=getattr(

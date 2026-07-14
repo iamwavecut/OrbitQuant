@@ -127,7 +127,10 @@ def _validate_model_index(
 
 
 def _validate_codebook_tensors(
-    tensors: dict[str, torch.Tensor], *, config: OrbitQuantConfig
+    tensors: dict[str, torch.Tensor],
+    *,
+    config: OrbitQuantConfig,
+    extra_weight_bits: set[int] | None = None,
 ) -> set[int]:
     grouped: dict[tuple[int, int], dict[str, torch.Tensor]] = {}
     unexpected: list[str] = []
@@ -146,6 +149,8 @@ def _validate_codebook_tensors(
         raise RuntimeError("artifact codebook tensor mismatch: no codebooks found")
 
     allowed_bits = {config.weight_bits, config.activation_bits}
+    if extra_weight_bits:
+        allowed_bits |= set(extra_weight_bits)
     dims: set[int] = set()
     mismatches: list[str] = []
     for (dim, bits), fields in sorted(grouped.items()):
@@ -325,6 +330,7 @@ def validate_orbitquant_artifact(
         codebook_dims = _validate_codebook_tensors(
             load_file(artifact_path / "orbitquant_codebooks.safetensors"),
             config=config,
+            extra_weight_bits=set(manifest.module_bits.values()),
         )
         rotation_dims = _validate_rotation_tensors(
             load_file(artifact_path / "orbitquant_rotations.safetensors"),
