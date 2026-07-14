@@ -1143,3 +1143,50 @@ def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias
     assert actual.dtype == expected.dtype
     assert actual.shape == expected.shape
     assert torch.allclose(actual.float(), expected.float(), atol=2e-2, rtol=2e-2)
+
+
+def test_int8_centroid_surrogate_supports_low_bit_codebooks():
+    try:
+        from orbitquant.kernels import triton_cuda
+    except (ImportError, RuntimeError):
+        pytest.skip("Triton is not installed")
+
+    for levels in (4, 8, 16, 64):
+        centroids = torch.linspace(-1.5, 1.5, levels, dtype=torch.float32)
+        codes, scale = triton_cuda.fit_int8_centroid_surrogate(centroids)
+        assert codes.shape == (levels,)
+        assert codes.dtype == torch.int8
+        recovered = codes.to(torch.float64) * scale
+        assert torch.allclose(recovered, centroids.to(torch.float64), atol=2e-2)
+
+    with pytest.raises(ValueError, match="4, 8, 16, or 64"):
+        triton_cuda.fit_int8_centroid_surrogate(torch.zeros(5))
+
+
+def test_orbit_linear_fused_w2a4_layer_forward_matches_dequant():
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(3)
+    source = torch.nn.Linear(256, 64, bias=True, device="cuda", dtype=torch.bfloat16)
+    # rows inside the fused W2A4 window (32 <= rows < 2048) exercised the
+    # 16-centroid-only surrogate crash with real 4-centroid W2 codebooks.
+    x = torch.randn(64, 256, device="cuda", dtype=torch.bfloat16)
+    config = OrbitQuantConfig(
+        weight_bits=2,
+        activation_bits=4,
+        rotation_seed=5,
+        block_size="paper",
+        runtime_mode="dequant_bf16",
+    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="blk.attn.to_q")
+    fused = copy.deepcopy(reference)
+    fused.runtime_mode = "auto_fused"
+
+    expected = reference(x)
+    actual = fused(x)
+
+    assert fused.last_effective_runtime_mode == "native_packed_matmul"
+    assert actual.shape == expected.shape
+    assert torch.isfinite(actual.float()).all()
+    assert torch.allclose(actual.float(), expected.float(), atol=8e-2, rtol=8e-2)
