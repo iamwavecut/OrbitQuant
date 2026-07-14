@@ -663,7 +663,18 @@ def test_orbit_linear_auto_fused_cuda_prefers_native_then_triton(monkeypatch):
     native_error = RuntimeError("native kernel package missing")
     monkeypatch.setattr(layers_module, "_native_packed_matmul_load_error", lambda: native_error)
     monkeypatch.setattr(layers_module, "_triton_packed_matmul_import_error", lambda: None)
+    layers_module._AUTO_FUSED_DEGRADATION_WARNED.clear()
 
+    # Without native kernels the transient dequant now outranks the generic
+    # Triton GEMM (measured 5.3x slower end to end on a 4608-wide DiT).
+    assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "dequant_transient"
+
+    # The generic Triton path remains reachable for layers over the transient
+    # budget and under ORBITQUANT_STRICT_PACKED.
+    monkeypatch.setenv("ORBITQUANT_TRANSIENT_DEQUANT_MAX_MB", "0.0001")
+    assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "triton_packed_matmul"
+    monkeypatch.delenv("ORBITQUANT_TRANSIENT_DEQUANT_MAX_MB")
+    monkeypatch.setenv("ORBITQUANT_STRICT_PACKED", "1")
     assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "triton_packed_matmul"
 
 
@@ -688,26 +699,46 @@ def test_packed_matmul_native_probe_error_is_cached(monkeypatch):
         layers_module._clear_packed_matmul_probe_cache()
 
 
-def test_orbit_linear_auto_fused_missing_cuda_kernels_fails_loud(monkeypatch):
+def _quantized_toy_layer():
     torch.manual_seed(5)
     source = torch.nn.Linear(16, 7)
-    quantized = OrbitQuantLinear.from_linear(
+    return OrbitQuantLinear.from_linear(
         source,
         config=OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8),
         module_name="block.ff.linear",
     )
-    fake_cuda_input = SimpleNamespace(device=torch.device("cuda"))
 
+
+def _degrade_cuda_kernels(monkeypatch, *, triton_too: bool):
     monkeypatch.setattr(
         layers_module,
         "_native_packed_matmul_load_error",
         lambda: RuntimeError("native package unavailable"),
     )
-    monkeypatch.setattr(
-        layers_module,
-        "_triton_packed_matmul_import_error",
-        lambda: RuntimeError("triton unavailable"),
-    )
+    if triton_too:
+        monkeypatch.setattr(
+            layers_module,
+            "_triton_packed_matmul_import_error",
+            lambda: RuntimeError("triton unavailable"),
+        )
+    layers_module._AUTO_FUSED_DEGRADATION_WARNED.clear()
+
+
+def test_orbit_linear_auto_fused_missing_cuda_kernels_degrades_to_transient(monkeypatch):
+    quantized = _quantized_toy_layer()
+    fake_cuda_input = SimpleNamespace(device=torch.device("cuda"))
+    _degrade_cuda_kernels(monkeypatch, triton_too=True)
+
+    # Even with Triton missing entirely (the Windows case), auto_fused now
+    # degrades to the transient per-forward dequant instead of raising.
+    assert quantized._resolve_auto_fused_runtime(fake_cuda_input) == "dequant_transient"
+
+
+def test_orbit_linear_auto_fused_missing_cuda_kernels_fails_loud_under_strict(monkeypatch):
+    quantized = _quantized_toy_layer()
+    fake_cuda_input = SimpleNamespace(device=torch.device("cuda"))
+    _degrade_cuda_kernels(monkeypatch, triton_too=True)
+    monkeypatch.setenv("ORBITQUANT_STRICT_PACKED", "1")
 
     with pytest.raises(RuntimeError) as exc_info:
         quantized._resolve_auto_fused_runtime(fake_cuda_input)
@@ -1143,3 +1174,121 @@ def test_orbit_linear_triton_packed_matmul_runtime_matches_dequant_bf16(use_bias
     assert actual.dtype == expected.dtype
     assert actual.shape == expected.shape
     assert torch.allclose(actual.float(), expected.float(), atol=2e-2, rtol=2e-2)
+
+
+def test_int8_centroid_surrogate_supports_low_bit_codebooks():
+    try:
+        from orbitquant.kernels import triton_cuda
+    except (ImportError, RuntimeError):
+        pytest.skip("Triton is not installed")
+
+    for levels in (4, 8, 16, 64):
+        centroids = torch.linspace(-1.5, 1.5, levels, dtype=torch.float32)
+        codes, scale = triton_cuda.fit_int8_centroid_surrogate(centroids)
+        assert codes.shape == (levels,)
+        assert codes.dtype == torch.int8
+        recovered = codes.to(torch.float64) * scale
+        assert torch.allclose(recovered, centroids.to(torch.float64), atol=2e-2)
+
+    with pytest.raises(ValueError, match="4, 8, 16, or 64"):
+        triton_cuda.fit_int8_centroid_surrogate(torch.zeros(5))
+
+
+def test_orbit_linear_fused_w2a4_layer_forward_matches_dequant():
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    torch.manual_seed(3)
+    source = torch.nn.Linear(256, 64, bias=True, device="cuda", dtype=torch.bfloat16)
+    # rows inside the fused W2A4 window (32 <= rows < 2048) exercised the
+    # 16-centroid-only surrogate crash with real 4-centroid W2 codebooks.
+    x = torch.randn(64, 256, device="cuda", dtype=torch.bfloat16)
+    config = OrbitQuantConfig(
+        weight_bits=2,
+        activation_bits=4,
+        rotation_seed=5,
+        block_size="paper",
+        runtime_mode="dequant_bf16",
+    )
+    reference = OrbitQuantLinear.from_linear(source, config=config, module_name="blk.attn.to_q")
+    fused = copy.deepcopy(reference)
+    # Force the mode instead of relying on auto_fused resolution: the fused
+    # W2A4 branch itself only needs Triton, and the crash under test lives in
+    # its surrogate constants, not in the native package.
+    fused.runtime_mode = "native_packed_matmul"
+
+    expected = reference(x)
+    actual = fused(x)
+
+    assert fused.last_effective_runtime_mode == "native_packed_matmul"
+    assert actual.shape == expected.shape
+    assert torch.isfinite(actual.float()).all()
+    assert torch.allclose(actual.float(), expected.float(), atol=8e-2, rtol=8e-2)
+
+
+def _degraded_cuda_layer(monkeypatch, in_features=64, out_features=32):
+    torch.manual_seed(11)
+    source = torch.nn.Linear(
+        in_features, out_features, bias=True, device="cuda", dtype=torch.bfloat16
+    )
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=3,
+        block_size="paper",
+        runtime_mode="auto_fused",
+    )
+    layer = OrbitQuantLinear.from_linear(source, config=config, module_name="blk.ff.proj")
+    monkeypatch.setattr(
+        layers_module,
+        "_native_packed_matmul_load_error",
+        lambda: RuntimeError("native package unavailable (test)"),
+    )
+    layers_module._AUTO_FUSED_DEGRADATION_WARNED.clear()
+    return layer
+
+
+def test_auto_fused_prefers_transient_dequant_without_native(monkeypatch, caplog):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    layer = _degraded_cuda_layer(monkeypatch)
+    x = torch.randn(3000, 64, device="cuda", dtype=torch.bfloat16)
+    with caplog.at_level("WARNING", logger="orbitquant"):
+        first = layer(x)
+        second = layer(x)
+
+    assert layer.last_effective_runtime_mode == "dequant_transient"
+    # The transient path must not populate the persistent dequant cache.
+    assert layer._dequantized_weight_cache is None
+    reference = copy.deepcopy(layer)
+    reference.runtime_mode = "dequant_bf16"
+    expected = reference(x)
+    assert torch.equal(first, expected)
+    assert torch.equal(second, expected)
+    degradation_warnings = [
+        record for record in caplog.records if "transient per-forward dequant" in record.message
+    ]
+    assert len(degradation_warnings) == 1  # warn-once per layer shape
+
+
+def test_auto_fused_strict_packed_keeps_generic_triton(monkeypatch):
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    layer = _degraded_cuda_layer(monkeypatch)
+    monkeypatch.setenv("ORBITQUANT_STRICT_PACKED", "1")
+    x = torch.randn(64, 64, device="cuda", dtype=torch.bfloat16)
+    layer(x)
+    assert layer.last_effective_runtime_mode == "triton_packed_matmul"
+
+
+def test_transient_dequant_budget_falls_back_to_generic(monkeypatch):
+    if not torch.cuda.is_available() or not dispatch_module.available_backends()["triton_cuda"]:
+        pytest.skip("CUDA/Triton backend is not available")
+
+    layer = _degraded_cuda_layer(monkeypatch)
+    monkeypatch.setenv("ORBITQUANT_TRANSIENT_DEQUANT_MAX_MB", "0.001")
+    x = torch.randn(64, 64, device="cuda", dtype=torch.bfloat16)
+    layer(x)
+    assert layer.last_effective_runtime_mode == "triton_packed_matmul"

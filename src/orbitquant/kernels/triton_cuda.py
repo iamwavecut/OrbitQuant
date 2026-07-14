@@ -1824,17 +1824,27 @@ def matmul_packed_adaln_int4_with_triton(
 
 
 def fit_int8_centroid_surrogate(centroids: torch.Tensor) -> tuple[torch.Tensor, float]:
-    """Fit a symmetric INT8 scale without changing the 4-bit centroid indices."""
+    """Fit a symmetric INT8 scale without changing the low-bit centroid indices.
+
+    Accepts any power-of-two codebook that fits the INT8 code range: 4 (W2),
+    8 (W3), 16 (W4), or 64 (W6) centroids. The fused kernels index the code
+    table with masked packed indices, so only the first ``2**bits`` entries
+    are ever read.
+    """
     values = centroids.detach().to(device="cpu", dtype=torch.float64).flatten()
-    if values.numel() != 16:
-        raise ValueError("the W4A4 INT8 surrogate requires exactly 16 centroids")
+    levels = values.numel()
+    if levels not in (4, 8, 16, 64):
+        raise ValueError(
+            "the INT8 centroid surrogate requires 4, 8, 16, or 64 centroids; "
+            f"got {levels}"
+        )
     cache_key = tuple(float(value) for value in values)
     cached = _INT8_CENTROID_SURROGATE_CACHE.get(cache_key)
     if cached is not None:
         return cached[0].clone(), cached[1]
     max_abs = float(values.abs().max())
     if max_abs == 0.0:
-        result = (torch.zeros(16, dtype=torch.int8), 1.0)
+        result = (torch.zeros(levels, dtype=torch.int8), 1.0)
         _INT8_CENTROID_SURROGATE_CACHE[cache_key] = result
         return result[0].clone(), result[1]
     base_scale = max_abs / 127.0
