@@ -59,6 +59,13 @@ jobs:
             cuda_apt: "12-8"
             local_tag: cu128torch212
             unique_id: rel_cu128_t212
+          - variant: torch212-cxx11-cu130-x86_64-linux
+            torch: "2.12.*"
+            torch_index: https://download.pytorch.org/whl/cu130
+            torch_requirement: "torch>=2.12,<2.13"
+            cuda_apt: "13-0"
+            local_tag: cu130torch212
+            unique_id: rel_cu130_t212
           - variant: torch213-cxx11-cu128-x86_64-linux
             torch: "2.13.*"
             torch_index: https://download.pytorch.org/whl/cu128
