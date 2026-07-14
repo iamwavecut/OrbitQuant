@@ -246,7 +246,9 @@ def test_provision_status_reports_without_side_effects(monkeypatch):
     ]
     assert status["autofetch"] is True
     assert status["autobuild"] is False
-    assert Path(status["bundled_sources"]).name == "orbitquant-packed-matmul"
+    # A repository checkout resolves to native-kernels/orbitquant-packed-matmul,
+    # an installed wheel resolves to the bundled orbitquant/_kernel_src copy.
+    assert Path(status["bundled_sources"]).name in {"orbitquant-packed-matmul", "_kernel_src"}
 
 
 def test_bundled_source_root_prefers_repo_checkout():
