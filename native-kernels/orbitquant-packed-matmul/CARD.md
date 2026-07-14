@@ -162,20 +162,27 @@ VRAM measurements.
 ### Metal reference results
 
 Measured on an Apple M2 Max with Torch 2.12.1, FP16 activations, W4 packed
-weights, `in_features=768`, and `out_features=2304`:
+weights, transformer-scale shapes (hot-loop medians over 30 iterations; each
+iteration synchronizes, so sub-millisecond rows include the MPS submit
+floor):
 
-| Rows | Packed Metal | Resident FP16 `F.linear` | Materialize + `F.linear` | Packed vs materialize |
-| ---: | ---: | ---: | ---: | ---: |
-| 1 | 0.0470 ms | 0.0411 ms | 0.2310 ms | 4.92x |
-| 2 | 0.0439 ms | 0.0422 ms | 0.2371 ms | 5.40x |
-| 3 | 0.0451 ms | 0.0404 ms | 0.2348 ms | 5.20x |
-| 8 | 0.0420 ms | 0.0503 ms | 0.2512 ms | 5.97x |
-| 16 | 0.0459 ms | 0.0581 ms | 0.2512 ms | 5.47x |
-| 31 | 0.0428 ms | 0.0659 ms | 0.2623 ms | 6.12x |
+| Shape (rows x in x out) | Packed Metal | Resident FP16 `F.linear` | Materialize + `F.linear` | Packed vs resident | Packed vs materialize |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 x 3072 x 3072 | 0.330 ms | 0.200 ms | 1.791 ms | 0.60x | 5.42x |
+| 4 x 3072 x 3072 | 0.377 ms | 0.215 ms | 1.768 ms | 0.57x | 4.69x |
+| 32 x 3072 x 3072 | 0.367 ms | 0.312 ms | 1.700 ms | 0.85x | 4.63x |
+| 512 x 3072 x 3072 | 1.355 ms | 1.077 ms | 2.331 ms | 0.79x | 1.72x |
+| 512 x 3072 x 12288 | 5.138 ms | 3.907 ms | 9.312 ms | 0.76x | 1.81x |
+| 1 x 3072 x 12288 | 0.417 ms | 0.383 ms | 6.202 ms | 0.92x | 14.88x |
 
-The packed weight payload, row norms, and centroids occupy 25.26% of the
-materialized FP16 weight size for this shape. The resident reference excludes
-weight materialization time and retains the complete FP16 matrix in memory.
+Batches of at most four rows dispatch a skinny-batch GEMV (one simdgroup per
+output column, decoded weight segments reused across the batch); larger
+batches dispatch the simdgroup-matrix tiles. The packed weight payload, row
+norms, and centroids occupy about 25% of the materialized FP16 weight size at
+W4. The resident reference excludes weight materialization time and retains
+the complete FP16 matrix in memory — it is the throughput ceiling for a
+kernel that decodes weights on the fly, not a like-for-like memory
+configuration.
 
 End-to-end FLUX.2 Klein 9B measurements and the SDNQ comparison are recorded in
 [`docs/flux2-klein-9b-sdnq-vs-orbitquant.md`](../../docs/flux2-klein-9b-sdnq-vs-orbitquant.md).
