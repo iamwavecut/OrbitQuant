@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import weakref
 
 import torch
@@ -22,6 +24,12 @@ _PACKED_MATMUL_PROBE_MISSING = object()
 # Measured crossover vs the int_mm path with the tuned tile table (RTX 4090,
 # 2026-07): the fused kernel stays ahead through 2048 rows.
 _W4A4_FUSED_MAX_ROWS = 2048
+
+logger = logging.getLogger("orbitquant")
+
+# One warning per distinct degraded layer shape per process; auto_fused
+# degradations repeat on every forward otherwise.
+_AUTO_FUSED_DEGRADATION_WARNED: set[tuple[int, int, int, str]] = set()
 
 # torch.compile support: the runtime dispatch below is Python-heavy, so the
 # whole quantized forward is exposed to Dynamo as one opaque custom op. The
@@ -891,6 +899,38 @@ class OrbitQuantLinear(nn.Module):
             f"auto_fused runtime does not support device type {device_type!r}. {reference_hint}"
         )
 
+    def _transient_dequant_allowed(self) -> bool:
+        if os.environ.get("ORBITQUANT_STRICT_PACKED", "").strip() in {"1", "true", "yes"}:
+            return False
+        max_mb_raw = os.environ.get("ORBITQUANT_TRANSIENT_DEQUANT_MAX_MB", "512")
+        try:
+            max_bytes = float(max_mb_raw) * 1024 * 1024
+        except ValueError:
+            max_bytes = 512 * 1024 * 1024
+        return self.out_features * self.in_features * 2 <= max_bytes
+
+    def _warn_auto_fused_degraded(
+        self, *, target: str, native_error: Exception | None
+    ) -> None:
+        key = (self.in_features, self.out_features, self.weight_bits, target)
+        if key in _AUTO_FUSED_DEGRADATION_WARNED:
+            return
+        _AUTO_FUSED_DEGRADATION_WARNED.add(key)
+        logger.warning(
+            "auto_fused could not use the optimized packed kernels for a "
+            "W%dA%d %dx%d layer and fell back to %s. Native kernels were "
+            "unavailable (%s). Run `orbitquant kernels-install` (or "
+            "`--build`) to provision them; `orbitquant kernels-status` "
+            "explains the resolution. Set ORBITQUANT_STRICT_PACKED=1 to "
+            "forbid the transient dequant fallback.",
+            self.weight_bits,
+            self.activation_bits,
+            self.out_features,
+            self.in_features,
+            target,
+            native_error,
+        )
+
     def _resolve_auto_fused_runtime(self, x: torch.Tensor) -> str:
         device_type = x.device.type
         if device_type == "cpu":
@@ -916,8 +956,24 @@ class OrbitQuantLinear(nn.Module):
             native_error = _native_packed_matmul_load_error()
             if native_error is None:
                 return "native_packed_matmul"
+            # Without the native package the only packed CUDA path is the
+            # generic Triton GEMM, which re-decodes the packed weight for
+            # every row tile: measured 5.3x slower than BF16 end to end on a
+            # 4608-wide DiT. A per-forward transient dequant (peak overhead of
+            # exactly one BF16 weight matrix, nothing cached) restores the
+            # cuBLAS floor, so prefer it for layers inside the size budget.
+            if self._transient_dequant_allowed():
+                self._warn_auto_fused_degraded(
+                    target="a transient per-forward dequant (BF16-floor speed)",
+                    native_error=native_error,
+                )
+                return "dequant_transient"
             triton_error = _triton_packed_matmul_import_error()
             if triton_error is None:
+                self._warn_auto_fused_degraded(
+                    target="the generic Triton packed GEMM (slow on large row counts)",
+                    native_error=native_error,
+                )
                 return "triton_packed_matmul"
             raise self._auto_fused_unavailable_error(
                 device_type=device_type,
@@ -942,7 +998,9 @@ class OrbitQuantLinear(nn.Module):
             native_error=None,
         )
 
-    def _dequantize_weight(self, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    def _dequantize_weight(
+        self, *, device: torch.device, dtype: torch.dtype, remember: bool = True
+    ) -> torch.Tensor:
         cache_key = (str(device), dtype)
         if (
             not accelerate_hook_offloads(self)
@@ -951,9 +1009,14 @@ class OrbitQuantLinear(nn.Module):
         ):
             return self._dequantized_weight_cache
 
+        def _finish(weight: torch.Tensor) -> torch.Tensor:
+            if remember:
+                return self._remember_dequantized_weight(weight, cache_key)
+            return weight
+
         if self.debug_weight is not None:
             weight = self.debug_weight.to(device=device, dtype=dtype)
-            return self._remember_dequantized_weight(weight, cache_key)
+            return _finish(weight)
         if self.packed_weight_indices is None or self.row_norms is None:
             raise RuntimeError("OrbitQuantLinear is missing quantized weight buffers")
 
@@ -975,7 +1038,7 @@ class OrbitQuantLinear(nn.Module):
                     in_features=self.in_features,
                 )
                 dequantized = weight.to(dtype=dtype)
-                return self._remember_dequantized_weight(dequantized, cache_key)
+                return _finish(dequantized)
         if device.type in {"cuda", "xpu"}:
             try:
                 from orbitquant.kernels.triton_cuda import dequantize_packed_weight_with_triton
@@ -992,7 +1055,7 @@ class OrbitQuantLinear(nn.Module):
                     device=device,
                 )
                 dequantized = weight.to(dtype=dtype)
-                return self._remember_dequantized_weight(dequantized, cache_key)
+                return _finish(dequantized)
 
         flat = unpack_lowbit(
             self.packed_weight_indices,
@@ -1004,7 +1067,7 @@ class OrbitQuantLinear(nn.Module):
         row_norms = self.row_norms.to(device=device, dtype=torch.float32)
         weight = row_norms[:, None] * centroids[indices]
         dequantized = weight.to(dtype=dtype)
-        return self._remember_dequantized_weight(dequantized, cache_key)
+        return _finish(dequantized)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if torch.compiler.is_compiling():
@@ -1384,5 +1447,9 @@ class OrbitQuantLinear(nn.Module):
                 block_k=self.packed_matmul_block_k,
             )
 
-        weight = self._dequantize_weight(device=x.device, dtype=rotated_x.dtype)
+        weight = self._dequantize_weight(
+            device=x.device,
+            dtype=rotated_x.dtype,
+            remember=runtime_mode != "dequant_transient",
+        )
         return F.linear(rotated_x, weight, bias)
