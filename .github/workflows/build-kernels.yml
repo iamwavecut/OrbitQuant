@@ -320,8 +320,9 @@ jobs:
         run: |
           if ("${{ matrix.nvcc_allow_unsupported }}" -eq "true") {
             # CUDA 13.0 nvcc rejects the MSVC 2026 toolset on windows-2025;
-            # override the version check (the cu128 build passes it natively).
-            $env:CUDAFLAGS = "-allow-unsupported-compiler"
+            # override the version check on every nvcc invocation, including
+            # the CMake compiler-id probe (the cu128 build passes it natively).
+            $env:NVCC_APPEND_FLAGS = "-allow-unsupported-compiler"
           }
           $vswhere = `
             "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
