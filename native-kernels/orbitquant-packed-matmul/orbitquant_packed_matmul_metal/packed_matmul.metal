@@ -11,10 +11,25 @@ struct PackedMatmulParams {
   int has_bias;
 };
 
-constant uint packed_small_cols = 4;
+struct alignas(16) PackedMMAReadVector {
+  uchar values[16];
+};
 
-template <typename scalar_t>
-inline void packed_matmul_small_rows_value(
+struct alignas(1) PackedMMARead3 {
+  uchar values[3];
+};
+
+constant uint packed_gemv_simdgroups = 8;
+constant uint packed_gemv_max_rows = 8;
+
+// Skinny-batch GEMV: one simdgroup owns one output column, the 32 lanes strip
+// the K dimension in 8-value segments (Bits bytes each), and the decoded
+// weights are reused across every row of the batch. The packed column is read
+// with one vector load per segment, which is what makes this path faster than
+// a dequantized F.linear for small row counts: the weight stream is 16/Bits
+// times smaller.
+template <typename scalar_t, uint Bits>
+inline void packed_matmul_gemv_value(
     device scalar_t *out,
     device const scalar_t *x,
     device const uchar *packed_weight_indices,
@@ -22,49 +37,92 @@ inline void packed_matmul_small_rows_value(
     device const float *centroids,
     device const float *bias,
     constant PackedMatmulParams &params,
+    threadgroup float *centroid_lut,
     uint2 group_id,
+    uint thread_index,
+    ushort simdgroup_id,
     ushort lane) {
-  const long row = long(group_id.y);
-  const long col_start = long(group_id.x) * packed_small_cols;
-  const uint bits = uint(params.bits);
-  const uint mask = (1u << bits) - 1u;
-  float accumulators[packed_small_cols] = {0.0f, 0.0f, 0.0f, 0.0f};
-  float norms[packed_small_cols];
-
-#pragma clang loop unroll(full)
-  for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
-    const long col = col_start + long(col_offset);
-    norms[col_offset] = col < params.out_features ? row_norms[col] : 0.0f;
+  constexpr uint mask = (1u << Bits) - 1u;
+  if (thread_index < (1u << Bits)) {
+    centroid_lut[thread_index] = centroids[thread_index];
   }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (long k = long(lane); k < params.in_features; k += 32) {
-    const float x_value = float(x[row * params.in_features + k]);
+  const long col = long(group_id.x) * packed_gemv_simdgroups + simdgroup_id;
+  if (col >= params.out_features) {
+    return;
+  }
+  const long rows = min(params.rows, long(packed_gemv_max_rows));
+  device const uchar *column_bytes =
+      packed_weight_indices + (col * params.in_features * Bits) / 8;
+
+  float accumulators[packed_gemv_max_rows] = {};
+
+  // Each lane consumes an 8-value segment (Bits bytes) per step; the 32 lanes
+  // cover 256 values per iteration.
+  const long segments = params.in_features / 8;
+  for (long segment = long(lane); segment < segments; segment += 32) {
+    const long byte_index = segment * Bits;
+    uint low = 0;
+    uint high = 0;
+    if (Bits == 2) {
+      low = uint(*reinterpret_cast<device const ushort *>(
+          column_bytes + byte_index));
+    } else if (Bits == 3) {
+      const PackedMMARead3 bytes =
+          *reinterpret_cast<device const PackedMMARead3 *>(
+              column_bytes + byte_index);
+      low = uint(bytes.values[0]) | (uint(bytes.values[1]) << 8) |
+          (uint(bytes.values[2]) << 16);
+    } else if (Bits == 4) {
+      low = *reinterpret_cast<device const uint *>(column_bytes + byte_index);
+    } else {
+      // Six-byte segments are only 2-byte aligned; read three ushorts.
+      const ushort word0 = *reinterpret_cast<device const ushort *>(
+          column_bytes + byte_index);
+      const ushort word1 = *reinterpret_cast<device const ushort *>(
+          column_bytes + byte_index + 2);
+      const ushort word2 = *reinterpret_cast<device const ushort *>(
+          column_bytes + byte_index + 4);
+      low = uint(word0) | (uint(word1) << 16);
+      high = uint(word2);
+    }
+
+    float weights[8];
 #pragma clang loop unroll(full)
-    for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
-      const long col = col_start + long(col_offset);
-      if (col >= params.out_features) {
-        continue;
+    for (uint idx = 0; idx < 8; ++idx) {
+      uint raw;
+      if (Bits == 6) {
+        const uint bit_start = idx * 6;
+        raw = bit_start < 32
+            ? ((low >> bit_start) |
+               (bit_start > 26 ? (high << (32 - bit_start)) : 0u))
+            : (high >> (bit_start - 32));
+      } else {
+        raw = low >> (idx * Bits);
       }
-      const long value_offset = col * params.in_features + k;
-      const long bit_start = value_offset * params.bits;
-      const long byte_index = bit_start >> 3;
-      const uint bit_offset = uint(bit_start & 7);
-      uint raw = packed_weight_indices[byte_index];
-      if (bit_offset + bits > 8) {
-        raw |= uint(packed_weight_indices[byte_index + 1]) << 8;
+      weights[idx] = centroid_lut[raw & mask];
+    }
+
+    const long k = segment * 8;
+    for (long row = 0; row < rows; ++row) {
+      device const scalar_t *x_row = x + row * params.in_features + k;
+      float partial = 0.0f;
+#pragma clang loop unroll(full)
+      for (uint idx = 0; idx < 8; ++idx) {
+        partial += weights[idx] * float(x_row[idx]);
       }
-      const uint index = (raw >> bit_offset) & mask;
-      accumulators[col_offset] += x_value * centroids[index];
+      accumulators[row] += partial;
     }
   }
 
-#pragma clang loop unroll(full)
-  for (uint col_offset = 0; col_offset < packed_small_cols; ++col_offset) {
-    const float value = simd_sum(accumulators[col_offset]) * norms[col_offset];
-    const long col = col_start + long(col_offset);
-    if (lane == 0 && col < params.out_features) {
+  const float norm = row_norms[col];
+  const float bias_value = params.has_bias != 0 ? bias[col] : 0.0f;
+  for (long row = 0; row < rows; ++row) {
+    const float value = simd_sum(accumulators[row]);
+    if (lane == 0) {
       out[row * params.out_features + col] =
-          scalar_t(value + (params.has_bias != 0 ? bias[col] : 0.0f));
+          scalar_t(value * norm + bias_value);
     }
   }
 }
@@ -152,14 +210,6 @@ inline void packed_matmul_tiled_value(
 
 constant uint packed_mma_tile = 32;
 constant uint packed_mma_padded_k = 40;
-
-struct alignas(16) PackedMMAReadVector {
-  uchar values[16];
-};
-
-struct alignas(1) PackedMMARead3 {
-  uchar values[3];
-};
 
 template <typename scalar_t>
 inline void packed_mma_fragment(
@@ -515,20 +565,46 @@ kernel void packed_matmul_forward_bfloat16_scalar(
       threads_per_group);
 }
 
-#define ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(NAME, TYPE)                    \
-  kernel void NAME(                                                       \
-      device TYPE *out [[buffer(0)]],                                     \
-      device const TYPE *x [[buffer(1)]],                                 \
-      device const uchar *packed_weight_indices [[buffer(2)]],            \
-      device const float *row_norms [[buffer(3)]],                         \
-      device const float *centroids [[buffer(4)]],                         \
-      device const float *bias [[buffer(5)]],                              \
-      constant PackedMatmulParams &params [[buffer(6)]],                   \
-      uint2 group_id [[threadgroup_position_in_grid]],                     \
-      ushort lane [[thread_index_in_simdgroup]]) {                         \
-    packed_matmul_small_rows_value(                                       \
-        out, x, packed_weight_indices, row_norms, centroids, bias, params, \
-        group_id, lane);                                                   \
+#define ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(NAME, TYPE)                     \
+  kernel void NAME(                                                        \
+      device TYPE *out [[buffer(0)]],                                      \
+      device const TYPE *x [[buffer(1)]],                                  \
+      device const uchar *packed_weight_indices [[buffer(2)]],             \
+      device const float *row_norms [[buffer(3)]],                          \
+      device const float *centroids [[buffer(4)]],                          \
+      device const float *bias [[buffer(5)]],                               \
+      constant PackedMatmulParams &params [[buffer(6)]],                    \
+      uint2 group_id [[threadgroup_position_in_grid]],                      \
+      uint thread_index [[thread_index_in_threadgroup]],                    \
+      ushort simdgroup_id [[simdgroup_index_in_threadgroup]],               \
+      ushort lane [[thread_index_in_simdgroup]]) {                          \
+    threadgroup float centroid_lut[64];                                     \
+    switch (params.bits) {                                                  \
+      case 2:                                                               \
+        packed_matmul_gemv_value<TYPE, 2>(                                  \
+            out, x, packed_weight_indices, row_norms, centroids, bias,      \
+            params, centroid_lut, group_id, thread_index, simdgroup_id,     \
+            lane);                                                          \
+        break;                                                              \
+      case 3:                                                               \
+        packed_matmul_gemv_value<TYPE, 3>(                                  \
+            out, x, packed_weight_indices, row_norms, centroids, bias,      \
+            params, centroid_lut, group_id, thread_index, simdgroup_id,     \
+            lane);                                                          \
+        break;                                                              \
+      case 4:                                                               \
+        packed_matmul_gemv_value<TYPE, 4>(                                  \
+            out, x, packed_weight_indices, row_norms, centroids, bias,      \
+            params, centroid_lut, group_id, thread_index, simdgroup_id,     \
+            lane);                                                          \
+        break;                                                              \
+      case 6:                                                               \
+        packed_matmul_gemv_value<TYPE, 6>(                                  \
+            out, x, packed_weight_indices, row_norms, centroids, bias,      \
+            params, centroid_lut, group_id, thread_index, simdgroup_id,     \
+            lane);                                                          \
+        break;                                                              \
+    }                                                                       \
   }
 
 ORBITQUANT_PACKED_SMALL_ROWS_KERNEL(packed_matmul_forward_float_small_rows, float)

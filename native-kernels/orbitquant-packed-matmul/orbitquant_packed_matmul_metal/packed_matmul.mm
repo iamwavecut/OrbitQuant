@@ -126,11 +126,17 @@ static void dispatch_packed_matmul_kernel(
     int64_t block_n,
     int64_t block_k) {
   @autoreleasepool {
-    const bool use_padded_mma =
+    // Skinny batches take the GEMV path even when the MMA tiles would fit:
+    // below 5 rows the 32-row MMA tile wastes most of its work, while the
+    // GEMV path reuses each decoded weight segment across the whole batch.
+    // From 5 rows up the measured crossover already favors the MMA tiles.
+    const bool use_small_rows = x.size(0) <= 4 &&
+        (bits == 2 || bits == 3 || bits == 4 || bits == 6) &&
+        in_features % 8 == 0;
+    const bool use_padded_mma = !use_small_rows &&
         x.scalar_type() != torch::kFloat && x.size(0) > 1 &&
         out_features % 32 == 0 && in_features % 32 == 0 &&
         (bits == 2 || bits == 3 || bits == 4 || bits == 6);
-    const bool use_small_rows = x.size(0) <= 8 && !use_padded_mma;
     PackedMatmulPipelineCache &cache = packed_matmul_pipeline_cache();
     id<MTLComputePipelineState> pipeline =
         select_packed_matmul_pipeline(
@@ -174,12 +180,12 @@ static void dispatch_packed_matmul_kernel(
       [encoder setBytes:&params length:sizeof(params) atIndex:6];
 
       if (use_small_rows) {
-        constexpr NSUInteger channels_per_threadgroup = 4;
-        constexpr NSUInteger threads = 32;
+        constexpr NSUInteger columns_per_threadgroup = 8;
+        constexpr NSUInteger threads = 8 * 32;
         MTLSize threadgroups = MTLSizeMake(
-            (out_features + channels_per_threadgroup - 1) /
-                channels_per_threadgroup,
-            x.size(0),
+            (out_features + columns_per_threadgroup - 1) /
+                columns_per_threadgroup,
+            1,
             1);
         MTLSize threadgroup_size = MTLSizeMake(threads, 1, 1);
         [encoder dispatchThreadgroups:threadgroups
