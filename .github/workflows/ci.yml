@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -56,10 +56,10 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -74,7 +74,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
@@ -93,7 +93,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
@@ -196,7 +196,7 @@ jobs:
             -ra
 
       - name: Upload Windows native CPU wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: orbitquant-packed-matmul-windows-cpu
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
@@ -206,10 +206,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -221,7 +221,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: manylinux-kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-linux-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
@@ -239,7 +239,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.manylinux-kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-linux-d43de01d0b43285d8e5061ca4380c2bd1c40ae3b
@@ -314,7 +314,7 @@ jobs:
             -ra
 
       - name: Upload manylinux native CPU wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: orbitquant-packed-matmul-manylinux-cpu
           path: wheelhouse/*.whl

@@ -30,10 +30,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out OrbitQuant
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -260,7 +260,7 @@ jobs:
           Get-ChildItem $bundle | Format-Table Name, Length
 
       - name: Upload Windows Vulkan runner bundle
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: orbitquant-vulkan-windows-x86_64-${{ env.ORBITQUANT_SOURCE_SHA }}
           path: ${{ runner.temp }}/orbitquant-vulkan-windows-x86_64

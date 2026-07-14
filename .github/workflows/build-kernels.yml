@@ -117,10 +117,10 @@ jobs:
             unique_id: rel_cu130_t213
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -153,7 +153,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-linux-${{ env.KERNEL_BUILDER_REV }}
@@ -171,7 +171,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-linux-${{ env.KERNEL_BUILDER_REV }}
@@ -220,7 +220,7 @@ jobs:
           "
 
       - name: Upload variant wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.variant }}
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
@@ -246,10 +246,10 @@ jobs:
           # revisit when either the runner toolset or CUDA updates.
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -311,7 +311,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
@@ -330,7 +330,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
@@ -391,7 +391,7 @@ jobs:
           Get-ChildItem dist
 
       - name: Upload variant wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.variant }}
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
@@ -417,10 +417,10 @@ jobs:
             unique_id: rel_metal_t213
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -435,7 +435,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
@@ -453,7 +453,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
@@ -494,7 +494,7 @@ jobs:
             -m kernels_ci -ra
 
       - name: Upload variant wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.variant }}
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
@@ -504,10 +504,10 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -522,7 +522,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
@@ -540,7 +540,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-macos-${{ env.KERNEL_BUILDER_REV }}
@@ -577,7 +577,7 @@ jobs:
             -m kernels_ci -ra
 
       - name: Upload variant wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: torch-stable-abi211-cpu-aarch64-darwin
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
@@ -597,10 +597,10 @@ jobs:
             cibw_build: cp312-manylinux_aarch64
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -609,7 +609,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-linux-${{ matrix.arch }}-${{ env.KERNEL_BUILDER_REV }}
@@ -627,7 +627,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kernel-builder
           key: kernel-builder-linux-${{ matrix.arch }}-${{ env.KERNEL_BUILDER_REV }}
@@ -672,7 +672,7 @@ jobs:
             --output-dir wheelhouse
 
       - name: Upload variant wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: torch-stable-abi211-cpu-${{ matrix.arch }}-linux
           path: wheelhouse/*.whl
@@ -682,10 +682,10 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -704,7 +704,7 @@ jobs:
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
@@ -723,7 +723,7 @@ jobs:
 
       - name: Save pinned kernel-builder
         if: steps.kernel-builder-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}\kernel-builder
           key: kernel-builder-windows-${{ env.KERNEL_BUILDER_REV }}
@@ -776,7 +776,7 @@ jobs:
           & $python setup.py build_ext bdist_wheel --py-limited-api=cp39
 
       - name: Upload variant wheel
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: torch-stable-abi211-cpu-x86_64-windows
           path: native-kernels/orbitquant-packed-matmul/dist/*.whl
@@ -796,7 +796,7 @@ jobs:
       contents: write
     steps:
       - name: Download all variant wheels
-        uses: actions/download-artifact@v7.0.0
+        uses: actions/download-artifact@v8
         with:
           path: assets
 
@@ -828,7 +828,7 @@ jobs:
           PY
 
       - name: Upload manifest artifact
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: kernels-manifest
           path: assets/manifest.json
