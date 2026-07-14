@@ -741,6 +741,22 @@ def main(argv: list[str] | None = None) -> int:
     inspect_policy_parser.add_argument("--output")
     subparsers.add_parser("native-suites", help="list native eval suites")
     subparsers.add_parser("kernel-info", help="print activation kernel backend capabilities")
+    subparsers.add_parser(
+        "kernels-status", help="describe native kernel package provisioning state"
+    )
+    kernels_install_parser = subparsers.add_parser(
+        "kernels-install", help="provision the native kernel package for this runtime"
+    )
+    kernels_install_parser.add_argument(
+        "--build",
+        action="store_true",
+        help="allow a local JIT build from bundled sources when no prebuilt variant fits",
+    )
+    kernels_install_parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="do not download prebuilt variants from GitHub releases",
+    )
     kernel_bench_parser = subparsers.add_parser(
         "kernel-bench", help="benchmark OrbitQuantLinear kernel stages"
     )
@@ -1366,6 +1382,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "kernel-info":
         print(json.dumps(backend_capabilities(), indent=2))
         return 0
+    if args.command == "kernels-status":
+        from orbitquant.kernels import provision
+
+        print(json.dumps(provision.provision_status(), indent=2))
+        return 0
+    if args.command == "kernels-install":
+        from orbitquant.kernels import provision
+
+        report = provision.provision_native_kernel_package(
+            allow_fetch=not args.no_fetch,
+            allow_build=True if args.build else None,
+        )
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.source != "unavailable" else 1
     if args.command == "kernel-bench":
         print(
             json.dumps(

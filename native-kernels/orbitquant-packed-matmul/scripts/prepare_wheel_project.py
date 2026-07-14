@@ -10,6 +10,14 @@ def main() -> None:
     )
     parser.add_argument("project", type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--torch-requirement",
+        default="torch>=2.11",
+        help=(
+            "torch dependency for the wheel metadata; non-stable-ABI variants "
+            'must pin the torch minor they were built against (e.g. "torch>=2.9,<2.10")'
+        ),
+    )
     args = parser.parse_args()
 
     pyproject = args.project / "pyproject.toml"
@@ -25,7 +33,7 @@ def main() -> None:
         raise RuntimeError("generated pyproject must contain one Python requirement")
     text = text.replace(
         requires_python,
-        f'{requires_python}\ndependencies = ["torch>=2.11"]',
+        f'{requires_python}\ndependencies = ["{args.torch_requirement}"]',
         1,
     )
     pyproject.write_text(text, encoding="utf-8")

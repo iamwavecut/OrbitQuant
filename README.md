@@ -38,11 +38,38 @@ a machine-readable inventory before quantization.
 pip install "orbitquant[hf]"
 ```
 
-Install the CUDA/Triton and local-kernel loader dependencies with:
+Install the Triton fallback dependency for CUDA with:
 
 ```bash
 pip install "orbitquant[hf,kernels]"
 ```
+
+The optimized native kernel package (`orbitquant_packed_matmul`) is provisioned
+automatically the first time a packed runtime path needs it. How it works: the
+kernel binary must match the runtime exactly — torch minor and CUDA version
+for CUDA builds, torch stable ABI (any torch>=2.11) for CPU builds, and the OS
+and architecture everywhere — so OrbitQuant derives that variant name from the
+running process and resolves it in order: an installed
+`orbitquant_packed_matmul` package, a locally built variant (`LOCAL_KERNELS`),
+the on-disk cache, and finally the matching prebuilt variant wheel from this
+repository's `kernels-v1` GitHub release (checksum-verified against the
+release manifest, then cached). Everything happens once per process at model
+load, never inside the forward path, and any failure falls back to the Triton
+(CUDA) or reference paths with an actionable message. Provision explicitly
+(or offline) with:
+
+```bash
+orbitquant kernels-install          # download the matching prebuilt variant
+orbitquant kernels-install --build  # or compile from bundled sources (needs a toolchain)
+orbitquant kernels-status           # inspect what the resolver would do
+```
+
+Set `ORBITQUANT_KERNELS_AUTOFETCH=0` to forbid downloads,
+`ORBITQUANT_KERNELS_AUTOBUILD=1` to allow automatic source builds, and
+`ORBITQUANT_KERNELS_CACHE` to relocate the cache (default
+`~/.cache/orbitquant/kernels`). Runtimes without a matching variant fall back
+to Triton (CUDA) or the reference paths; see
+[`docs/kernel-audit.md`](docs/kernel-audit.md) for the full contract.
 
 ## Quantize A Transformers Model
 

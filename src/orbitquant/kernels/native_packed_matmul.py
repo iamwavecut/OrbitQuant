@@ -8,9 +8,10 @@ from typing import Any
 import torch
 
 from orbitquant.codebooks import LloydMaxCodebook
+from orbitquant.kernels import provision
 
-_KERNEL_REPO_ID = "WaveCut/orbitquant-packed-matmul"
-_KERNEL_VERSION = 1
+_KERNEL_REPO_ID = provision.KERNEL_REPO_ID
+_KERNEL_VERSION = provision.KERNEL_VERSION
 _NATIVE_KERNEL: Any | None = None
 
 
@@ -50,35 +51,21 @@ def _load_native_packed_matmul_kernel() -> Any:
     if _NATIVE_KERNEL is not None:
         return _NATIVE_KERNEL
 
-    try:
-        from kernels import get_kernel
-    except Exception as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError(
-            "native_packed_matmul runtime requires either an importable "
-            "orbitquant_packed_matmul kernel package or the Hugging Face kernels package. "
-            "Install `kernels` and point LOCAL_KERNELS at a compatible "
-            "built kernel variant directory containing metadata.json, make the "
-            "compatible variant directory importable through PYTHONPATH, or use "
-            f"runtime_mode='dequant_bf16'. {_runtime_variant_hint()}"
-        ) from exc
+    report = provision.provision_native_kernel_package()
+    if report.sys_path_entry is not None:
+        _NATIVE_KERNEL = _load_importable_packed_matmul_kernel()
+        if _NATIVE_KERNEL is not None:
+            return _NATIVE_KERNEL
 
-    try:
-        _NATIVE_KERNEL = get_kernel(
-            _KERNEL_REPO_ID,
-            version=_KERNEL_VERSION,
-            trust_remote_code=True,
-        )
-    except Exception as exc:  # pragma: no cover - environment and Hub dependent
-        raise RuntimeError(
-            "native_packed_matmul runtime could not load "
-            f"{_KERNEL_REPO_ID} version {_KERNEL_VERSION}. For local development, set "
-            "LOCAL_KERNELS=WaveCut/orbitquant-packed-matmul=/absolute/path/to/a/"
-            "built kernel variant directory that contains metadata.json before "
-            "importing OrbitQuant; add that same variant directory to PYTHONPATH; "
-            "or make a compatible orbitquant_packed_matmul package importable. "
-            f"{_runtime_variant_hint()}"
-        ) from exc
-    return _NATIVE_KERNEL
+    raise RuntimeError(
+        "native_packed_matmul runtime could not provision the "
+        "orbitquant_packed_matmul package. Install the prebuilt CPU wheel with "
+        "`pip install orbitquant-packed-matmul`, run `orbitquant kernels-install` "
+        "(add --build to compile locally, or set ORBITQUANT_KERNELS_AUTOBUILD=1), "
+        "point LOCAL_KERNELS=WaveCut/orbitquant-packed-matmul=/absolute/path/to/a/"
+        "built kernel variant directory, or use runtime_mode='dequant_bf16'. "
+        f"Provisioning detail: {report.detail}. {_runtime_variant_hint()}"
+    )
 
 
 def load_native_packed_matmul_kernel() -> Any:

@@ -10,9 +10,9 @@ def test_kernels_extra_keeps_triton_linux_only_for_mps_installs():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     kernels_extra = pyproject["project"]["optional-dependencies"]["kernels"]
 
-    assert "kernels>=0.16" in kernels_extra
     assert "triton>=3.5; platform_system == 'Linux'" in kernels_extra
     assert "triton>=3.5" not in kernels_extra
+    assert not any(item.startswith("kernels") for item in kernels_extra)
 
 
 def test_core_import_does_not_require_pillow():

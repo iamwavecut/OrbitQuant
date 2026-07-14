@@ -70,7 +70,8 @@ def test_wheel_project_preparation_keeps_windows_ninja_executable() -> None:
         encoding="utf-8"
     )
 
-    assert 'dependencies = ["torch>=2.11"]' in script
+    assert '"--torch-requirement"' in script
+    assert 'default="torch>=2.11"' in script
     assert 'ninja_executable_path = Path(ninja.BIN_DIR)' in script
     assert 'which("ninja")' not in script
     assert '"ninja.exe" if os.name == "nt" else "ninja"' in script
@@ -158,6 +159,80 @@ setup(
     )
     assert prepared_project["project"]["version"] == "0.4.0"
     assert prepared_project["project"]["dependencies"] == ["torch>=2.11"]
+
+
+def test_wheel_project_preparation_pins_custom_torch_requirement(tmp_path) -> None:
+    project = tmp_path / "kernel"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nversion = "0.1.0"\nrequires-python = ">=3.9"\n',
+        encoding="utf-8",
+    )
+    (project / "CMakeLists.txt").write_text(
+        "find_package(Python3 COMPONENTS Development Development.SABIModule Interpreter)\n"
+        "find_package(Python3 REQUIRED COMPONENTS Development "
+        "Development.SABIModule Interpreter)\n",
+        encoding="utf-8",
+    )
+    setup_template = (
+        "import os\n"
+        "from pathlib import Path\n"
+        "from shutil import which, move\n"
+        "\n"
+        "def is_sccache_available() -> bool:\n"
+        '    return which("sccache") is not None\n'
+        "\n"
+        "def is_ccache_available() -> bool:\n"
+        '    return which("ccache") is not None\n'
+        "\n"
+        "def make_args():\n"
+        "    cmake_args = []\n"
+        '    if "CMAKE_ARGS" in os.environ:\n'
+        '        cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") '
+        "if item]\n"
+        '    ninja_executable_path = Path(ninja.BIN_DIR) / "ninja"\n'
+        "    return cmake_args, ninja_executable_path\n"
+        "\n"
+        "class Build:\n"
+        "    def build_extension(self, ext):\n"
+        "        build_temp = Path(self.build_temp) / ext.name\n"
+        '        extdir = Path("output")\n'
+        '        cfg = "Release"\n'
+        "        build_args = []\n"
+        "        subprocess.run(\n"
+        '            ["cmake", "--build", str(build_temp), *build_args], '
+        "cwd=build_temp, check=True\n"
+        "        )\n"
+        '        if sys.platform == "win32":\n'
+        "            # Move the dylib one folder up for discovery.\n"
+        "            for filename in os.listdir(extdir / cfg):\n"
+        "                move(extdir / cfg / filename, extdir / filename)\n"
+        "        return build_temp\n"
+        "\n"
+        "setup(\n"
+        "    zip_safe=False,\n"
+        ")\n"
+    )
+    (project / "setup.py").write_text(setup_template, encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            KERNEL_ROOT / "scripts/prepare_wheel_project.py",
+            project,
+            "--version",
+            "1.0.0+cu128torch29",
+            "--torch-requirement",
+            "torch>=2.9,<2.10",
+        ],
+        check=True,
+    )
+
+    prepared_project = tomllib.loads(
+        (project / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert prepared_project["project"]["version"] == "1.0.0+cu128torch29"
+    assert prepared_project["project"]["dependencies"] == ["torch>=2.9,<2.10"]
     prepared_cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "COMPONENTS Development.SABIModule Interpreter" in prepared_cmake
     assert "COMPONENTS Development Development.SABIModule" not in prepared_cmake

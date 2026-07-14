@@ -40,6 +40,36 @@ Other explicit modes are `native_packed_matmul`, `triton_packed_matmul`,
 | ROCm | Experimental source candidate; supported-hardware proof pending | Exact Triton activation, low-bit pack/unpack, packed matmul, weight quantization, and packed INT4 AdaLN; explicit-only |
 | XPU | Experimental source candidate; Intel hardware proof pending | Exact Triton activation, low-bit pack/unpack, packed matmul, weight quantization, and packed INT4 AdaLN on `torch.xpu`; explicit-only |
 
+## Native Package Provisioning
+
+The runtime resolves the native `orbitquant_packed_matmul` package through
+`orbitquant.kernels.provision` in this order:
+
+1. an already importable `orbitquant_packed_matmul` package (an installed
+   wheel);
+2. variant directories named by `LOCAL_KERNELS`
+   (`WaveCut/orbitquant-packed-matmul=/path/to/build/<variant>`);
+3. previously provisioned variants in the cache
+   (`~/.cache/orbitquant/kernels`, override with `ORBITQUANT_KERNELS_CACHE`);
+4. a prebuilt variant wheel downloaded from the `kernels-v1` GitHub release of
+   this repository, checksum-verified against the release `manifest.json`
+   (disable with `ORBITQUANT_KERNELS_AUTOFETCH=0`, redirect with
+   `ORBITQUANT_KERNELS_RELEASE_BASE`);
+5. an opt-in JIT build from the kernel sources bundled inside the `orbitquant`
+   wheel (enable with `ORBITQUANT_KERNELS_AUTOBUILD=1` or
+   `orbitquant kernels-install --build`; CPU builds need torch>=2.11, CUDA
+   builds need a matching `nvcc`; the Metal variant is prebuilt-only because
+   its shader library is embedded at build time).
+
+Accelerator variants are preferred over the CPU variant. The resolver runs at
+most once per process, only when a packed runtime path first needs the native
+package, and never inside the forward path. `orbitquant kernels-status` prints
+the resolution state; `orbitquant kernels-install` performs it explicitly and
+is safe to run from installer hooks. Variant wheels are built by the
+`build-kernels.yml` workflow; CUDA and Metal wheels pin the torch minor they
+were built against in `Requires-Dist`, the CPU wheel binds the torch stable
+ABI (`torch>=2.11`) and the Python stable ABI (`cp39-abi3`).
+
 ## Local Native Package
 
 Kernel Hub publication is not required. Build the native package locally from
@@ -96,9 +126,8 @@ distributing it. The Linux wheel CI builds inside `manylinux_2_28`, repairs the
 result with `auditwheel`, and runs strict `abi3audit`; an ordinary local Ubuntu
 build can still depend on a newer GLIBC.
 
-To load the local build through Hugging Face `kernels` instead of importing it
-through `PYTHONPATH`, map the kernel repository to the same generated variant
-directory containing `metadata.json`:
+To let the OrbitQuant provisioner attach the local build instead of exporting
+`PYTHONPATH`, map the kernel repository id to the generated variant directory:
 
 ```bash
 export LOCAL_KERNELS="WaveCut/orbitquant-packed-matmul=$PWD/build/<matching-variant>"
