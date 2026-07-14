@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +17,7 @@ from orbitquant.linear_adapters import (
     linear_module_spec,
 )
 from orbitquant.policies import PolicyDecision, classify_linear_modules, resolve_target_policy
+from orbitquant.policies.lowbit_protection import apply_lowbit_boundary_protection
 
 _TORCH_DTYPE_BY_NAME = {
     "bfloat16": torch.bfloat16,
@@ -255,6 +257,7 @@ def quantize_linear_modules(
         raise ValueError("staging_mode must be 'streaming' or 'component'")
 
     decisions = classify_linear_modules(model, config)
+    apply_lowbit_boundary_protection(decisions, config)
     target_device = _quantization_device(quantization_device)
     summary = QuantizationSummary(
         quantization_device="preserve" if target_device is None else str(target_device),
@@ -284,7 +287,12 @@ def quantize_linear_modules(
                     module, target_device, summary, synchronize=synchronize_per_module
                 )
             module_started_at = time.perf_counter()
-            replacement = OrbitQuantLinear.from_linear(module, config=config, module_name=name)
+            module_config = config
+            if decision.weight_bits is not None and decision.weight_bits != config.weight_bits:
+                module_config = dataclasses.replace(config, weight_bits=decision.weight_bits)
+            replacement = OrbitQuantLinear.from_linear(
+                module, config=module_config, module_name=name
+            )
             if synchronize_per_module:
                 _synchronize_if_needed(_first_tensor_device(replacement))
             summary.orbitquant_seconds += time.perf_counter() - module_started_at

@@ -15,6 +15,9 @@ class PolicyDecision:
     action: str
     reason: str
     dtype: str | None = None
+    # Per-module weight bit-width override (low-bit boundary protection);
+    # None means the config-wide weight_bits applies.
+    weight_bits: int | None = None
 
 
 _HARD_SKIP_TOKENS = (

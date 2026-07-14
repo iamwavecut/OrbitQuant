@@ -29,6 +29,9 @@ class OrbitQuantManifest:
     adaln_modules: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
     module_shapes: dict[str, list[int]] = field(default_factory=dict)
+    # Per-module weight bit-width overrides (low-bit boundary protection);
+    # absent for uniform-precision artifacts, keeping the format unchanged.
+    module_bits: dict[str, int] = field(default_factory=dict)
     checksums: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -44,6 +47,7 @@ class OrbitQuantManifest:
         adaln_modules: list[str] | None = None,
         module_shapes: dict[str, list[int]] | None = None,
         checksums: dict[str, str] | None = None,
+        module_bits: dict[str, int] | None = None,
         quantization_device: str = "unknown",
         weight_quantization_backend: str = "unknown",
         quantization_staging_mode: str = "unknown",
@@ -72,6 +76,7 @@ class OrbitQuantManifest:
             adaln_modules=[] if adaln_modules is None else list(adaln_modules),
             skipped_modules=list(skipped_modules),
             module_shapes={} if module_shapes is None else dict(module_shapes),
+            module_bits={} if module_bits is None else dict(module_bits),
             checksums={} if checksums is None else dict(checksums),
         )
 
@@ -105,6 +110,7 @@ class OrbitQuantManifest:
             "adaln_modules": self.adaln_modules,
             "skipped_modules": self.skipped_modules,
             "module_shapes": self.module_shapes,
+            **({"module_bits": self.module_bits} if self.module_bits else {}),
             "checksums": self.checksums,
         }
 
@@ -134,5 +140,9 @@ class OrbitQuantManifest:
             adaln_modules=list(data.get("adaln_modules", [])),
             skipped_modules=list(data.get("skipped_modules", [])),
             module_shapes=dict(data.get("module_shapes", {})),
+            module_bits={
+                str(key): int(value)
+                for key, value in (data.get("module_bits") or {}).items()
+            },
             checksums=dict(data.get("checksums", {})),
         )
