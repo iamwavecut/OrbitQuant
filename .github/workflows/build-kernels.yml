@@ -198,18 +198,10 @@ jobs:
             cuda_feature_tag: "12.8"
             local_tag: cu128torch212
             unique_id: rel_win_cu128_t212
-          - variant: torch213-cu130-x86_64-windows
-            torch: "2.13.*"
-            torch_index: https://download.pytorch.org/whl/cu130
-            torch_requirement: "torch>=2.13,<2.14"
-            cuda_version: "13.0.1"
-            cuda_feature_tag: "13.0"
-            # CUDA 13 repackaged the crt/ headers out of the nvcc component;
-            # install the full toolkit instead of hand-picked components.
-            cuda_full_install: true
-            nvcc_allow_unsupported: true
-            local_tag: cu130torch213
-            unique_id: rel_win_cu130_t213
+          # torch213-cu130 windows is intentionally absent: CUDA 13.0
+          # cudafe++ crashes (ACCESS_VIOLATION) against the MSVC 2026
+          # toolset on windows-2025 even with -allow-unsupported-compiler;
+          # revisit when either the runner toolset or CUDA updates.
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.0
