@@ -14,6 +14,10 @@ from orbitquant.kernels import provision
 @pytest.fixture(autouse=True)
 def _reset_provision_state(monkeypatch, tmp_path):
     provision._reset_provision_memo_for_tests()
+    # Earlier tests may leave a fake orbitquant_packed_matmul in sys.modules
+    # (importlib.util.find_spec consults it first), so isolate module state.
+    sys.modules.pop("orbitquant_packed_matmul", None)
+    importlib.invalidate_caches()
     monkeypatch.setenv("ORBITQUANT_KERNELS_CACHE", str(tmp_path / "kernels-cache"))
     monkeypatch.delenv("LOCAL_KERNELS", raising=False)
     monkeypatch.delenv("ORBITQUANT_KERNELS_AUTOFETCH", raising=False)
@@ -22,6 +26,8 @@ def _reset_provision_state(monkeypatch, tmp_path):
     original_sys_path = list(sys.path)
     yield
     sys.path[:] = original_sys_path
+    sys.modules.pop("orbitquant_packed_matmul", None)
+    importlib.invalidate_caches()
     provision._reset_provision_memo_for_tests()
 
 
