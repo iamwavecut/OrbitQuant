@@ -45,6 +45,41 @@ jobs:
             cuda_apt: "12-8"
             local_tag: cu128torch29
             unique_id: rel_cu128_t29
+          - variant: torch28-cxx11-cu126-x86_64-linux
+            torch: "2.8.*"
+            torch_index: https://download.pytorch.org/whl/cu126
+            torch_requirement: "torch>=2.8,<2.9"
+            cuda_apt: "12-6"
+            local_tag: cu126torch28
+            unique_id: rel_cu126_t28
+          - variant: torch28-cxx11-cu128-x86_64-linux
+            torch: "2.8.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.8,<2.9"
+            cuda_apt: "12-8"
+            local_tag: cu128torch28
+            unique_id: rel_cu128_t28
+          - variant: torch210-cxx11-cu128-x86_64-linux
+            torch: "2.10.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.10,<2.11"
+            cuda_apt: "12-8"
+            local_tag: cu128torch210
+            unique_id: rel_cu128_t210
+          - variant: torch211-cxx11-cu128-x86_64-linux
+            torch: "2.11.*"
+            torch_index: https://download.pytorch.org/whl/cu128
+            torch_requirement: "torch>=2.11,<2.12"
+            cuda_apt: "12-8"
+            local_tag: cu128torch211
+            unique_id: rel_cu128_t211
+          - variant: torch211-cxx11-cu130-x86_64-linux
+            torch: "2.11.*"
+            torch_index: https://download.pytorch.org/whl/cu130
+            torch_requirement: "torch>=2.11,<2.12"
+            cuda_apt: "13-0"
+            local_tag: cu130torch211
+            unique_id: rel_cu130_t211
           - variant: torch212-cxx11-cu126-x86_64-linux
             torch: "2.12.*"
             torch_index: https://download.pytorch.org/whl/cu126
