@@ -1181,7 +1181,10 @@ def test_orbit_linear_fused_w2a4_layer_forward_matches_dequant():
     )
     reference = OrbitQuantLinear.from_linear(source, config=config, module_name="blk.attn.to_q")
     fused = copy.deepcopy(reference)
-    fused.runtime_mode = "auto_fused"
+    # Force the mode instead of relying on auto_fused resolution: the fused
+    # W2A4 branch itself only needs Triton, and the crash under test lives in
+    # its surrogate constants, not in the native package.
+    fused.runtime_mode = "native_packed_matmul"
 
     expected = reference(x)
     actual = fused(x)
