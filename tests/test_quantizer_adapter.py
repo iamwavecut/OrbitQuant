@@ -72,14 +72,16 @@ def test_quantizer_adapter_reports_no_calibration_requirement():
     assert quantizer.is_serializable() is True
 
 
-def test_quantizer_hf_runtime_hooks_are_explicit_noops():
+def test_quantizer_hf_runtime_hooks_default_only_prequantized_diffusers_to_bfloat16():
     quantizer = OrbitQuantizer(OrbitQuantConfig())
+    on_the_fly_quantizer = OrbitQuantizer(OrbitQuantConfig(), pre_quantized=False)
     device_map = {"transformer": "cpu"}
 
     assert quantizer.validate_environment(torch_dtype=torch.bfloat16) is None
     assert quantizer.update_torch_dtype(torch.bfloat16) is torch.bfloat16
     assert quantizer.adjust_target_dtype(torch.bfloat16) is torch.bfloat16
-    assert quantizer.update_torch_dtype(None) is None
+    assert quantizer.update_torch_dtype(None) is torch.bfloat16
+    assert on_the_fly_quantizer.update_torch_dtype(None) is None
     assert quantizer.adjust_target_dtype(None) is None
     assert quantizer.update_device_map(device_map) is device_map
     assert quantizer.update_device_map(None) is None

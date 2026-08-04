@@ -33,6 +33,7 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert "uv run --with build python -m build" in text
     assert "uv run --with twine python -m twine check dist/*" in text
     assert "uv pip install --python" in text
+    assert "cmake==4.4.2 ninja setuptools wheel" in text
     assert "dist/*.whl" in text
     assert "orbitquant-0.1.0-py3-none-any.whl" not in text
     assert "orbitquant --version" in text
@@ -50,6 +51,10 @@ def test_github_actions_cpu_unit_workflow_exists():
     assert 'ORBITQUANT_BUILD_TEMP = "$env:RUNNER_TEMP\\orbitquant-native-build"' in text
     assert 'CMAKE_GENERATOR = "NMake Makefiles"' in text
     assert "Get-CimInstance Win32_Processor" in text
+    assert '$venvScripts = "$env:GITHUB_WORKSPACE\\.venv\\Scripts"' in text
+    assert '$env:PATH = "$venvScripts;$env:PATH"' in text
+    assert '& "$venvScripts\\cmake.exe" --version' in text
+    assert 'if ($cmakeVersion -ne "cmake version 4.4.2")' in text
     assert "setup.py build_ext bdist_wheel" in text
     assert "bdist_wheel --py-limited-api=cp39" in text
     assert '"-cp39-abi3-win_amd64\\.whl$"' in text

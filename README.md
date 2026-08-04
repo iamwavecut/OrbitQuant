@@ -38,7 +38,10 @@ a machine-readable inventory before quantization.
 pip install "orbitquant[hf]"
 ```
 
-Install the Triton fallback dependency for CUDA with:
+PyTorch's Linux wheels supply the matching Triton build used by the CUDA
+fallback. Do not install or upgrade Triton independently: doing so can force a
+different PyTorch/CUDA stack. The legacy `kernels` extra remains accepted for
+command compatibility, so this is also valid:
 
 ```bash
 pip install "orbitquant[hf,kernels]"
@@ -114,6 +117,11 @@ model = AutoModel.from_pretrained(
     device_map="auto",
 )
 ```
+
+Pre-quantized Diffusers artifacts default their remaining compute modules to
+BF16 when no dtype is supplied. This keeps activations on the packed W4A4 CUDA
+path instead of the much slower FP32 compatibility path. An explicit dtype is
+always honored, and on-the-fly source conversion keeps the source dtype.
 
 Named recipes are `w4a4`, `w3a3`, `w2a4`, `w2a3`, and `w4a6`. They create a
 normal `OrbitQuantConfig`, so every field can be overridden.
