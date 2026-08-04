@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           uv sync --extra dev
-          uv pip install --python .venv\Scripts\python.exe cmake ninja setuptools wheel
+          uv pip install --python .venv\Scripts\python.exe cmake==4.4.2 ninja setuptools wheel
 
       - name: Restore pinned kernel-builder
         id: kernel-builder-cache
@@ -117,7 +117,14 @@ jobs:
           Get-CimInstance Win32_Processor | `
             Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | `
             Format-List
-          cmake --version
+          $venvScripts = "$env:GITHUB_WORKSPACE\.venv\Scripts"
+          $env:PATH = "$venvScripts;$env:PATH"
+          $cmakeVersion = & "$venvScripts\cmake.exe" --version | `
+            Select-Object -First 1
+          Write-Host $cmakeVersion
+          if ($cmakeVersion -ne "cmake version 4.4.2") {
+            throw "expected CMake 4.4.2 from the project environment, got: $cmakeVersion"
+          }
           $vswhere = `
             "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vsRoot = & $vswhere `
