@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orbitquant"
-version = "0.9.0"
+version = "0.9.1"
 description = "Calibration-free OrbitQuant for transformer linear projections"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,9 +36,10 @@ hf = [
   "diffusers>=0.35",
   "transformers>=4.53",
 ]
-kernels = [
-  "triton>=3.5; platform_system == 'Linux'",
-]
+# Keep the compatibility extra, but let each PyTorch build supply its matching
+# Triton version. An independent lower bound can force a different torch/CUDA
+# stack when the installed torch pins an older Triton release.
+kernels = []
 eval = [
   "imageio>=2.37",
   "imageio-ffmpeg>=0.6",

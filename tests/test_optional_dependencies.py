@@ -6,11 +6,11 @@ from pathlib import Path
 from orbitquant import __version__
 
 
-def test_kernels_extra_keeps_triton_linux_only_for_mps_installs():
+def test_kernels_extra_does_not_override_torch_managed_triton():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     kernels_extra = pyproject["project"]["optional-dependencies"]["kernels"]
 
-    assert "triton>=3.5; platform_system == 'Linux'" in kernels_extra
+    assert kernels_extra == []
     assert "triton>=3.5" not in kernels_extra
     assert not any(item.startswith("kernels") for item in kernels_extra)
 

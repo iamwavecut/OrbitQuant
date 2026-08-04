@@ -165,8 +165,57 @@ def test_diffusers_modelmixin_save_pretrained_round_trips_pre_quantized_model(
     assert restored_linear.activation_kernel_backend == "cpu"
     assert restored_linear.activation_eps == 1e-8
     assert isinstance(restored.proj_out, torch.nn.Linear)
-    x = torch.randn(2, 3, 16)
+    x = torch.randn(2, 3, 16, dtype=torch.bfloat16)
     assert torch.isfinite(restored(x)).all()
+
+
+def test_diffusers_prequantized_restore_defaults_compute_modules_to_bfloat16(tmp_path):
+    register_hf_quantizers()
+    source_dir = tmp_path / "source"
+    quantized_dir = tmp_path / "quantized"
+    TinyDiffusersTransformer().save_pretrained(source_dir)
+    quantized = TinyDiffusersTransformer.from_pretrained(
+        source_dir,
+        quantization_config=OrbitQuantConfig(
+            block_size=8,
+            runtime_mode="debug_no_activation_quant",
+            activation_kernel_backend="cpu",
+        ),
+    )
+    quantized.save_pretrained(quantized_dir)
+
+    restored = TinyDiffusersTransformer.from_pretrained(quantized_dir)
+
+    assert restored.proj_out.weight.dtype is torch.bfloat16
+    output = restored(torch.randn(2, 3, 16, dtype=torch.bfloat16))
+    assert output.dtype is torch.bfloat16
+    assert torch.isfinite(output).all()
+
+
+def test_diffusers_prequantized_restore_honours_explicit_float32_dtype(tmp_path):
+    register_hf_quantizers()
+    source_dir = tmp_path / "source"
+    quantized_dir = tmp_path / "quantized"
+    TinyDiffusersTransformer().save_pretrained(source_dir)
+    quantized = TinyDiffusersTransformer.from_pretrained(
+        source_dir,
+        quantization_config=OrbitQuantConfig(
+            block_size=8,
+            runtime_mode="debug_no_activation_quant",
+            activation_kernel_backend="cpu",
+        ),
+    )
+    quantized.save_pretrained(quantized_dir)
+
+    restored = TinyDiffusersTransformer.from_pretrained(
+        quantized_dir,
+        torch_dtype=torch.float32,
+    )
+
+    assert restored.proj_out.weight.dtype is torch.float32
+    output = restored(torch.randn(2, 3, 16, dtype=torch.float32))
+    assert output.dtype is torch.float32
+    assert torch.isfinite(output).all()
 
 
 def test_diffusers_manual_quantize_model_persists_quantization_config(tmp_path):

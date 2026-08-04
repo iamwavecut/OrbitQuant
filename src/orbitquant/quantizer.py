@@ -214,6 +214,8 @@ class OrbitQuantizer(*_hf_base_classes()):
         return None
 
     def update_torch_dtype(self, torch_dtype: torch.dtype | None) -> torch.dtype | None:
+        if torch_dtype is None and self.pre_quantized:
+            return torch.bfloat16
         return torch_dtype
 
     def adjust_target_dtype(self, torch_dtype: torch.dtype | None) -> torch.dtype | None:
