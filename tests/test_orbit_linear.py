@@ -942,6 +942,52 @@ def test_orbit_linear_rebuilds_derived_constants_after_to_empty():
     assert torch.allclose(actual, reference(x))
 
 
+def test_orbit_linear_derived_constant_updates_preserve_buffer_identity():
+    torch.manual_seed(23)
+    source = torch.nn.Linear(16, 7, bias=True, dtype=torch.float32)
+    config = OrbitQuantConfig(
+        weight_bits=4,
+        activation_bits=4,
+        rotation_seed=11,
+        block_size=8,
+        runtime_mode="dequant_bf16",
+        activation_kernel_backend="cpu",
+    )
+    quantized = OrbitQuantLinear.from_linear(
+        source,
+        config=config,
+        module_name="block.ff.linear",
+    )
+    names = (
+        "_rotation_permutation",
+        "_rotation_signs",
+        "_activation_codebook_centroids",
+        "_activation_codebook_boundaries",
+        "_weight_codebook_centroids",
+    )
+    original_buffers = {name: getattr(quantized, name) for name in names}
+
+    quantized._derived_constants_valid = False
+    quantized._ensure_derived_constants(torch.device("cpu"))
+
+    for name, original in original_buffers.items():
+        assert getattr(quantized, name) is original
+        assert quantized._buffers[name] is original
+
+    centroids = quantized._constant_buffer(
+        "_activation_codebook_centroids",
+        device=torch.device("cpu"),
+        dtype=torch.float64,
+    )
+    assert centroids is original_buffers["_activation_codebook_centroids"]
+    assert centroids.dtype == torch.float64
+
+    quantized._derived_constants_valid = False
+    quantized._ensure_derived_constants(torch.device("cpu"))
+    assert quantized._activation_codebook_centroids is centroids
+    assert quantized._activation_codebook_centroids.dtype == torch.float32
+
+
 def test_orbit_linear_native_packed_matmul_mps_matches_dequant_bf16(monkeypatch):
     if not torch.backends.mps.is_available():
         pytest.skip("MPS backend is not available")

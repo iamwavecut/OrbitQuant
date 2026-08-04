@@ -645,8 +645,22 @@ class OrbitQuantLinear(nn.Module):
             ),
         )
         for name, source, dtype in constants:
-            setattr(self, name, source.to(device=device, dtype=dtype).clone())
+            self._replace_registered_buffer_data(
+                name,
+                source.to(device=device, dtype=dtype).clone(),
+            )
         self._derived_constants_valid = True
+
+    def _replace_registered_buffer_data(
+        self,
+        name: str,
+        value: torch.Tensor,
+    ) -> torch.Tensor:
+        buffer = self._buffers.get(name)
+        if buffer is None:
+            raise RuntimeError(f"{name} is not a registered OrbitQuant buffer")
+        buffer.data = value
+        return buffer
 
     def _constant_buffer(
         self,
@@ -658,8 +672,10 @@ class OrbitQuantLinear(nn.Module):
         tensor = getattr(self, name)
         target_dtype = tensor.dtype if dtype is None else dtype
         if tensor.device != device or tensor.dtype != target_dtype:
-            tensor = tensor.to(device=device, dtype=target_dtype)
-            setattr(self, name, tensor)
+            tensor = self._replace_registered_buffer_data(
+                name,
+                tensor.to(device=device, dtype=target_dtype),
+            )
         return tensor
 
     def _activation_kernel_constant_tensors(self, device: torch.device) -> dict[str, torch.Tensor]:
