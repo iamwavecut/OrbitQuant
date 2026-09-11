@@ -1,3 +1,6 @@
+import gc
+import weakref
+
 import pytest
 import torch
 
@@ -88,3 +91,33 @@ def test_compiled_orbit_linear_handles_leading_batch_dims(rows):
     compiled = torch.compile(orbit, fullgraph=True)
     x = torch.randn(rows, 2, 32)
     assert torch.equal(compiled(x), orbit(x))
+
+
+@pytest.mark.parametrize("kind", ["orbit", "adaln"])
+def test_compile_registry_does_not_keep_discarded_layers_alive(kind):
+    from orbitquant.layers import _COMPILE_REGISTRY, _compile_registry_lookup
+
+    orbit, adaln = _build_layers()
+    layer = orbit if kind == "orbit" else adaln
+    handle = layer._compile_handle
+    reference = weakref.ref(layer)
+    assert _compile_registry_lookup(handle) is layer
+    del layer, orbit, adaln
+    gc.collect()
+    assert reference() is None
+    assert handle not in _COMPILE_REGISTRY
+    with pytest.raises(RuntimeError, match="handle is stale"):
+        _compile_registry_lookup(handle)
+
+
+def test_compile_registry_handles_are_not_reused_after_collection():
+    from orbitquant.layers import _compile_registry_lookup
+
+    orbit, adaln = _build_layers()
+    old_handle = adaln._compile_handle
+    del orbit, adaln
+    gc.collect()
+    replacement, _ = _build_layers()
+    assert replacement._compile_handle > old_handle
+    with pytest.raises(RuntimeError, match="handle is stale"):
+        _compile_registry_lookup(old_handle)

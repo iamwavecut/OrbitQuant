@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import weakref
+from itertools import count
 
 import torch
 from torch import nn
@@ -34,8 +35,10 @@ _AUTO_FUSED_DEGRADATION_WARNED: set[tuple[int, int, int, str]] = set()
 # torch.compile support: the runtime dispatch below is Python-heavy, so the
 # whole quantized forward is exposed to Dynamo as one opaque custom op. The
 # registry maps a stable integer handle (burned into the traced graph) back to
-# the live module; weakref finalizers drop entries when modules die.
-_COMPILE_REGISTRY: dict[int, object] = {}
+# the live module without owning its lifetime. A strong registry prevents
+# finalizers from ever running and retains discarded model weights.
+_COMPILE_REGISTRY: weakref.WeakValueDictionary[int, object] = weakref.WeakValueDictionary()
+_COMPILE_HANDLE_IDS = count(1)
 
 
 def _compile_registry_lookup(handle: int):
@@ -49,10 +52,9 @@ def _compile_registry_lookup(handle: int):
 
 
 def _compile_registry_register(module) -> int:
-    handle = id(module)
-    if handle not in _COMPILE_REGISTRY:
-        _COMPILE_REGISTRY[handle] = module
-        weakref.finalize(module, _COMPILE_REGISTRY.pop, handle, None)
+    # Never reuse a stale traced handle when Python reuses an object address.
+    handle = next(_COMPILE_HANDLE_IDS)
+    _COMPILE_REGISTRY[handle] = module
     return handle
 
 

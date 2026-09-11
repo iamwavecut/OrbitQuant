@@ -298,6 +298,14 @@ pipe = load_quantized_pipeline_from_artifact(
 
 ## Reproduce Load Memory
 
+Version 0.9.4 fixes a model-lifetime leak in the registry used by `torch.compile`.
+Earlier versions registered every `OrbitQuantLinear` and `RTNInt4Linear` in a
+strong-reference dictionary, so discarded layers remained alive even without
+compilation. The registry now holds weak values and uses non-reusable handles;
+live compiled models keep working, while stale handles fail explicitly.
+This changes ownership, not quantization or kernel arithmetic.
+
+
 The memory harness runs ordinary, on-the-fly, and prequantized loads in separate
 processes and reports RSS separately from mmap virtual size:
 
