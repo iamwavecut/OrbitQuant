@@ -17,6 +17,62 @@ using namespace nvcuda;
 
 namespace {
 
+// One warp per output avoids the mostly empty Tensor Core tiles in decode.
+// Vector loads require aligned base pointers; contiguous slices can be unaligned.
+template<class T>
+__global__ void orbitquant_packed_w4a4_gemv(T* out, const uint8_t* x, const uint8_t* w,
+    const float* xn, const c10::BFloat16* wn, const int8_t* ac, const int8_t* wc,
+    const T* bias, int n, int packed_k, float as, float ws) {
+  const int lane = threadIdx.x & 31;
+  const int col = blockIdx.x * 4 + threadIdx.x / 32;
+  const int row = blockIdx.y;
+  __shared__ int a_codes[16], w_codes[16];
+  if (threadIdx.x < 16) { a_codes[threadIdx.x] = ac[threadIdx.x]; w_codes[threadIdx.x] = wc[threadIdx.x]; }
+  __syncthreads();
+  if (col >= n) return;
+  int sum = 0;
+  if (packed_k % 4 == 0 && (reinterpret_cast<uintptr_t>(x) & 3) == 0 && (reinterpret_cast<uintptr_t>(w) & 3) == 0) {
+    const uint32_t* xp = reinterpret_cast<const uint32_t*>(x + row * packed_k);
+    const uint32_t* wp = reinterpret_cast<const uint32_t*>(w + col * packed_k);
+    for (int k = lane; k < packed_k / 4; k += 32) {
+      const uint32_t av = xp[k], bv = wp[k];
+      uint32_t al = 0, ah = 0, bl = 0, bh = 0;
+      #pragma unroll
+      for (int j = 0; j < 4; ++j) {
+        al |= uint32_t(uint8_t(a_codes[(av >> (j * 8)) & 15])) << (j * 8);
+        ah |= uint32_t(uint8_t(a_codes[(av >> (j * 8 + 4)) & 15])) << (j * 8);
+        bl |= uint32_t(uint8_t(w_codes[(bv >> (j * 8)) & 15])) << (j * 8);
+        bh |= uint32_t(uint8_t(w_codes[(bv >> (j * 8 + 4)) & 15])) << (j * 8);
+      }
+      sum = __dp4a(static_cast<int>(al), static_cast<int>(bl), sum);
+      sum = __dp4a(static_cast<int>(ah), static_cast<int>(bh), sum);
+    }
+  } else {
+    for (int k = lane; k < packed_k; k += 32) {
+      const uint8_t a = x[row * packed_k + k];
+      const uint8_t b = w[col * packed_k + k];
+      sum += a_codes[a & 15] * w_codes[b & 15];
+      sum += a_codes[a >> 4] * w_codes[b >> 4];
+    }
+  }
+  #pragma unroll
+  for (int offset = 16; offset; offset >>= 1) sum += __shfl_down_sync(0xffffffff, sum, offset);
+  if (lane == 0) {
+    float value = static_cast<float>(sum);
+    value *= xn[row] * static_cast<float>(wn[col]) * (as * ws);
+    if (bias) value += static_cast<float>(bias[col]);
+    out[row * n + col] = static_cast<T>(value);
+  }
+}
+
+inline bool orbitquant_w4a4_gemv_disabled() {
+  static const bool disabled = []() {
+    const char *value = std::getenv("ORBITQUANT_W4A4_DISABLE_GEMV");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return disabled;
+}
+
 // Escape hatch (and A/B benchmarking toggle) for the cp.async-pipelined mma64
 // path: set ORBITQUANT_MMA64_DISABLE_PIPELINE=1 to force the legacy kernel.
 inline bool orbitquant_mma64_pipeline_disabled() {
@@ -1812,6 +1868,27 @@ void matmul_packed_w4a4_int8(
   TORCH_CHECK(
       properties->major > 7 || (properties->major == 7 && properties->minor >= 5),
       "packed W4A4 INT8 Tensor Core matmul requires compute capability 7.5+");
+  // Keep the existing layout/tile path for prefill, K-major weights and wide K.
+  if (rows <= 8 && in_features <= 16384 && !weight_k_major &&
+      !orbitquant_w4a4_gemv_disabled()) {
+    const dim3 gemv_grid((out_features + 3) / 4, rows);
+    const auto gemv_stream = at::cuda::getCurrentCUDAStream();
+#define ORBITQUANT_LAUNCH_DECODE_GEMV(T)                                      \
+    orbitquant_packed_w4a4_gemv<T><<<gemv_grid, 128, 0, gemv_stream>>>(         \
+        out.data_ptr<T>(), packed_activations.data_ptr<uint8_t>(),             \
+        packed_weight_indices.data_ptr<uint8_t>(), token_norms.data_ptr<float>(), \
+        row_norms.data_ptr<c10::BFloat16>(), activation_codes.data_ptr<int8_t>(), \
+        weight_codes.data_ptr<int8_t>(), has_bias ? bias.data_ptr<T>() : nullptr, \
+        out_features, in_features / 2, activation_scale, weight_scale)
+    if (out.scalar_type() == torch::kBFloat16) {
+      ORBITQUANT_LAUNCH_DECODE_GEMV(c10::BFloat16);
+    } else {
+      ORBITQUANT_LAUNCH_DECODE_GEMV(c10::Half);
+    }
+#undef ORBITQUANT_LAUNCH_DECODE_GEMV
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return;
+  }
   const int warp_count = static_cast<int>((tile_m / 16) * (tile_n / 128));
   const dim3 block(warp_count * 32);
   const dim3 grid(

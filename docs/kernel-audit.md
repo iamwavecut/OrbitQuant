@@ -16,7 +16,7 @@ evidence exists.
 
 | Device | Default dispatch | Required support |
 | --- | --- | --- |
-| CUDA | Native activation kernel plus packed W4A4 tensor-core path; native or Triton packed fallback | A matching native package for the fastest path; Triton for the CUTLASS epilogue and generic packed fallback |
+| CUDA | Native activation kernel plus packed W4A4 GEMV/decode and tensor-core paths; native or Triton packed fallback | A matching native package for the fastest path; Triton for the CUTLASS epilogue and generic packed fallback |
 | MPS | Native packed matmul | An importable local Metal package |
 | CPU | Native exact activation, packed low-bit matmul, and packed INT4 AdaLN when the CPU variant is importable; reference fallback otherwise | A matching native CPU package for packed execution |
 
@@ -699,3 +699,41 @@ execution with both weight materialization plus `F.linear` and, where stated,
 a permanently resident pre-dequantized weight. Model-level performance claims
 must use native model settings and report the reference configuration beside
 the packed configuration.
+
+
+## Packed W4A4 decode GEMV
+
+OrbitQuant 0.9.3 adds a CUDA DP4A path to the existing native W4A4 API for
+1–8 activation rows, row-major packed weights, and input widths up to 16384.
+It reads packed bytes directly, decodes INT8 surrogate codes in registers,
+and preserves the existing norm/scale/bias epilogue. No persistent unpacked
+weight cache is added. Unaligned contiguous slices use scalar byte loads;
+other row counts and K-major layouts retain the Tensor Core path.
+
+Set `ORBITQUANT_W4A4_DISABLE_GEMV=1` before starting the process to force the
+previous path. Existing installed native binaries remain compatible but do
+not gain this optimization until rebuilt or replaced with an updated binary.
+The Python package version alone does not identify the loaded native binary.
+
+Measured on RTX PRO 6000 Blackwell Server Edition, PyTorch 2.10.0+cu128,
+CUDA 12.8, SM120. CUDA graph measurements use 16 calls per graph, 50 replays,
+and the median of five repeats; these are operator timings, not model speedups.
+The benchmark is `native-kernels/orbitquant-packed-matmul/benchmarks/benchmark_decode.py`.
+Run once with the environment override above and once without it, in separate
+processes with the updated native package importable.
+
+| Rows | Output | Input | Previous (µs) | GEMV (µs) | Ratio |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1024 | 2048 | 150.26 | 3.74 | 40.14x |
+| 1 | 2048 | 2048 | 149.67 | 3.97 | 37.69x |
+| 1 | 4096 | 2048 | 149.76 | 5.38 | 27.83x |
+| 1 | 12288 | 2048 | 150.24 | 10.76 | 13.97x |
+| 1 | 2048 | 6144 | 443.91 | 7.94 | 55.90x |
+| 2 | 4096 | 4096 | 294.89 | 13.57 | 21.74x |
+| 8 | 8192 | 8192 | 592.52 | 174.64 | 3.39x |
+| 16 | 2048 | 2048 | 151.85 | 152.00 | 1.00x (unchanged dispatch) |
+
+All eight benchmark output hashes matched. Forty GPU cases cover BF16/FP16,
+bias, integer-oracle comparison, unaligned storage, K-major fallback, row-count
+fallback, and CUDA graph replay. Hardware performance on other GPUs is not
+established by this measurement.
