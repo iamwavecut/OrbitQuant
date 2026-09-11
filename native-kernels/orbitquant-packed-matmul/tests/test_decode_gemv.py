@@ -7,7 +7,17 @@ from orbitquant_packed_matmul import matmul_packed_w4a4_int8, supports_device
 
 @pytest.mark.kernels_ci
 @pytest.mark.parametrize(
-    "rows,n,k", [(1, 129, 64), (2, 1024, 2048), (8, 2048, 6144), (1, 257, 16384), (9, 129, 128)]
+    "rows,n,k",
+    [
+        (1, 129, 64),
+        (8, 3, 64),
+        (1, 129, 512),
+        (8, 129, 1024),
+        (2, 1024, 2048),
+        (8, 2048, 6144),
+        (1, 257, 16384),
+        (9, 129, 128),
+    ],
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 @pytest.mark.parametrize(
@@ -20,7 +30,10 @@ def test_decode_against_integer_oracle(rows, n, k, dtype, offset, bias_enabled, 
     torch.manual_seed(42)
     x = torch.randint(0, 256, (rows * k // 2 + offset,), dtype=torch.uint8)[offset:]
     w = torch.randint(0, 256, (n * k // 2 + offset,), dtype=torch.uint8)[offset:]
-    ac = torch.randint(-127, 128, (16,), dtype=torch.int8)
+    # Exercise every code, including signed INT8 extremes and mixed nibble signs.
+    ac = torch.tensor(
+        [-128, 127, -1, 0, 1, -64, 64, -32, 32, -16, 16, -8, 8, -4, 4, 2], dtype=torch.int8
+    )
     wc = ac.flip(0)
 
     def unpack(values, count):

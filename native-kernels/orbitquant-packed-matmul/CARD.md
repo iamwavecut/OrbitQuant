@@ -45,6 +45,16 @@ The CUDA package also exports the operations used by OrbitQuant's W4A4 runtime:
 - `matmul_packed_w4a4_int8`: direct packed A4/W4 CUDA MMA with fused token norm,
   row norm, surrogate scales, and bias epilogue.
 
+For one to eight rows, row-major weights, and input width at most 16384,
+`matmul_packed_w4a4_int8` dispatches a DP4A GEMV. Native release 1.0.2 uses two
+256-entry shared tables (2 KiB per block) for widths 1024–16384 to decode a packed byte into a pair
+of signed INT8 values. Smaller widths retain the previous 16-entry tables.
+Aligned inputs retain 32-bit vector loads; unaligned
+contiguous views use the byte-load path. The packed format, output dtypes,
+norms, and bias behavior are unchanged. Larger batches and K-major weights
+continue to use the existing Tensor Core path. Set
+`ORBITQUANT_W4A4_DISABLE_GEMV=1` before process startup to disable GEMV.
+
 On CUDA compute capability 8.0 or newer, OrbitQuant normally combines
 `quantize_activations_int8` with chunked packed-weight decode and Torch's
 CUTLASS-backed INT8 matmul. The direct packed MMA operation remains available

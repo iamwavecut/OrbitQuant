@@ -296,6 +296,30 @@ pipe = load_quantized_pipeline_from_artifact(
 )
 ```
 
+## CUDA Decode
+
+Version 0.9.5 includes the native 1.0.2 byte-pair lookup GEMV. For row-major
+W4A4 inputs with one to eight rows and input width from 1024 to 16384, it decodes
+each packed byte into two signed INT8 lanes through a shared lookup table.
+This halves the codebook lookups in the vectorized DP4A path while retaining
+the packed weights and the existing norm, scale, and bias epilogue.
+
+On an RTX PRO 4500 Blackwell, a YuE2 fixed-token decode probe improved from
+3.141 to 2.936 ms per step (512 tokens, first 64 excluded). The 128 recorded
+semantic-logit vectors matched exactly. This measures decode, not complete
+song generation or a cross-model guarantee. In a separate interleaved
+full-song test, the original and byte-pair paths generated the same 187.64 s
+of audio in 31.82 and 30.34 s on average (two timed runs each, after warmup).
+Separate cache-hot projection
+measurements improved by 15–24% for YuE2's QKV, output, gate/up, and down shapes.
+
+The Python package and the native kernel are separate installations. Existing
+importable or cached native packages retain priority; upgrading `orbitquant`
+alone does not replace them. Install the matching 1.0.2 native wheel from the
+[`kernels-v1` release](https://github.com/iamwavecut/OrbitQuant/releases/tag/kernels-v1),
+or build the bundled source with kernel-builder and select its variant using
+`LOCAL_KERNELS`. `ORBITQUANT_W4A4_DISABLE_GEMV=1` selects the Tensor Core fallback.
+
 ## Reproduce Load Memory
 
 Version 0.9.4 fixes a model-lifetime leak in the registry used by `torch.compile`.

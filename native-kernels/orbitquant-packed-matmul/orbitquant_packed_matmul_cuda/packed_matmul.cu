@@ -65,6 +65,52 @@ __global__ void orbitquant_packed_w4a4_gemv(T* out, const uint8_t* x, const uint
   }
 }
 
+// Pair tables amortize their initialization once K reaches 1024.
+template<class T>
+__global__ void orbitquant_packed_w4a4_gemv_byte_pairs(T* out, const uint8_t* x, const uint8_t* w,
+    const float* xn, const c10::BFloat16* wn, const int8_t* ac, const int8_t* wc,
+    const T* bias, int n, int packed_k, float as, float ws) {
+  const int lane = threadIdx.x & 31;
+  const int col = blockIdx.x * 4 + threadIdx.x / 32;
+  const int row = blockIdx.y;
+  __shared__ uint32_t a_pairs[256], w_pairs[256];
+  for (int byte = threadIdx.x; byte < 256; byte += blockDim.x) {
+    a_pairs[byte] = uint32_t(uint8_t(ac[byte & 15])) | (uint32_t(uint8_t(ac[byte >> 4])) << 8);
+    w_pairs[byte] = uint32_t(uint8_t(wc[byte & 15])) | (uint32_t(uint8_t(wc[byte >> 4])) << 8);
+  }
+  __syncthreads();
+  if (col >= n) return;
+  int sum = 0;
+  if (packed_k % 4 == 0 && (reinterpret_cast<uintptr_t>(x) & 3) == 0 && (reinterpret_cast<uintptr_t>(w) & 3) == 0) {
+    const uint32_t* xp = reinterpret_cast<const uint32_t*>(x + row * packed_k);
+    const uint32_t* wp = reinterpret_cast<const uint32_t*>(w + col * packed_k);
+    for (int k = lane; k < packed_k / 4; k += 32) {
+      const uint32_t av = xp[k], bv = wp[k];
+      // One table load decodes both nibbles of a byte to signed INT8 lanes.
+      const uint32_t al = a_pairs[av & 255] | (a_pairs[(av >> 8) & 255] << 16);
+      const uint32_t ah = a_pairs[(av >> 16) & 255] | (a_pairs[av >> 24] << 16);
+      const uint32_t bl = w_pairs[bv & 255] | (w_pairs[(bv >> 8) & 255] << 16);
+      const uint32_t bh = w_pairs[(bv >> 16) & 255] | (w_pairs[bv >> 24] << 16);
+      sum = __dp4a(static_cast<int>(al), static_cast<int>(bl), sum);
+      sum = __dp4a(static_cast<int>(ah), static_cast<int>(bh), sum);
+    }
+  } else {
+    for (int k = lane; k < packed_k; k += 32) {
+      const uint8_t a = x[row * packed_k + k];
+      const uint8_t b = w[col * packed_k + k];
+      sum = __dp4a(static_cast<int>(a_pairs[a]), static_cast<int>(w_pairs[b]), sum);
+    }
+  }
+  #pragma unroll
+  for (int offset = 16; offset; offset >>= 1) sum += __shfl_down_sync(0xffffffff, sum, offset);
+  if (lane == 0) {
+    float value = static_cast<float>(sum);
+    value *= xn[row] * static_cast<float>(wn[col]) * (as * ws);
+    if (bias) value += static_cast<float>(bias[col]);
+    out[row * n + col] = static_cast<T>(value);
+  }
+}
+
 inline bool orbitquant_w4a4_gemv_disabled() {
   static const bool disabled = []() {
     const char *value = std::getenv("ORBITQUANT_W4A4_DISABLE_GEMV");
@@ -1873,17 +1919,25 @@ void matmul_packed_w4a4_int8(
       !orbitquant_w4a4_gemv_disabled()) {
     const dim3 gemv_grid((out_features + 3) / 4, rows);
     const auto gemv_stream = at::cuda::getCurrentCUDAStream();
-#define ORBITQUANT_LAUNCH_DECODE_GEMV(T)                                      \
-    orbitquant_packed_w4a4_gemv<T><<<gemv_grid, 128, 0, gemv_stream>>>(         \
+#define ORBITQUANT_LAUNCH_DECODE_GEMV(KERNEL, T)                                      \
+    KERNEL<T><<<gemv_grid, 128, 0, gemv_stream>>>(         \
         out.data_ptr<T>(), packed_activations.data_ptr<uint8_t>(),             \
         packed_weight_indices.data_ptr<uint8_t>(), token_norms.data_ptr<float>(), \
         row_norms.data_ptr<c10::BFloat16>(), activation_codes.data_ptr<int8_t>(), \
         weight_codes.data_ptr<int8_t>(), has_bias ? bias.data_ptr<T>() : nullptr, \
         out_features, in_features / 2, activation_scale, weight_scale)
     if (out.scalar_type() == torch::kBFloat16) {
-      ORBITQUANT_LAUNCH_DECODE_GEMV(c10::BFloat16);
+      if (in_features >= 1024) {
+        ORBITQUANT_LAUNCH_DECODE_GEMV(orbitquant_packed_w4a4_gemv_byte_pairs, c10::BFloat16);
+      } else {
+        ORBITQUANT_LAUNCH_DECODE_GEMV(orbitquant_packed_w4a4_gemv, c10::BFloat16);
+      }
     } else {
-      ORBITQUANT_LAUNCH_DECODE_GEMV(c10::Half);
+      if (in_features >= 1024) {
+        ORBITQUANT_LAUNCH_DECODE_GEMV(orbitquant_packed_w4a4_gemv_byte_pairs, c10::Half);
+      } else {
+        ORBITQUANT_LAUNCH_DECODE_GEMV(orbitquant_packed_w4a4_gemv, c10::Half);
+      }
     }
 #undef ORBITQUANT_LAUNCH_DECODE_GEMV
     C10_CUDA_KERNEL_LAUNCH_CHECK();
