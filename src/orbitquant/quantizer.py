@@ -37,6 +37,29 @@ def _require_safetensors(checkpoint_files: list[Any], *, framework: str) -> None
         )
 
 
+def _mark_quantized_gpt_projection_parents_initialized(model: torch.nn.Module) -> None:
+    # These upstream parent initializers only rescale c_proj.weight. Packed
+    # projections have no such tensor; HF still visits and initializes children.
+    parent_types = {
+        "transformers.models.gpt2.modeling_gpt2.GPT2Attention",
+        "transformers.models.gpt2.modeling_gpt2.GPT2MLP",
+        "transformers.models.gpt_bigcode.modeling_gpt_bigcode.GPTBigCodeAttention",
+        "transformers.models.gpt_bigcode.modeling_gpt_bigcode.GPTBigCodeMLP",
+    }
+    for module in model.modules():
+        cls = type(module)
+        if f"{cls.__module__}.{cls.__qualname__}" not in parent_types:
+            continue
+        if not isinstance(getattr(module, "c_proj", None), OrbitQuantLinear | RTNInt4Linear):
+            continue
+        # Do not suppress initialization if an upstream revision adds parent state.
+        if next(module.parameters(recurse=False), None) is not None:
+            continue
+        if next(module.buffers(recurse=False), None) is not None:
+            continue
+        module._is_hf_initialized = True
+
+
 def _hf_base_classes() -> tuple[type, ...]:
     bases: list[type] = []
     try:
@@ -521,6 +544,7 @@ class OrbitQuantizer(*_hf_base_classes()):
                 model,
                 self.quantization_config,
             )
+            _mark_quantized_gpt_projection_parents_initialized(model)
         if self._diffusers_streaming_quantization:
             self._diffusers_model = model
             self._update_diffusers_loaded_keys()

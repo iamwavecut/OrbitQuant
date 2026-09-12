@@ -34,6 +34,17 @@ def _tiny_models():
                 eos_token_id=2,
             )
         ),
+        "gpt_bigcode": transformers.GPTBigCodeForCausalLM(
+            transformers.GPTBigCodeConfig(
+                n_embd=32,
+                n_layer=1,
+                n_head=4,
+                n_positions=16,
+                vocab_size=64,
+                bos_token_id=1,
+                eos_token_id=2,
+            )
+        ),
         "llama": transformers.LlamaForCausalLM(
             transformers.LlamaConfig(
                 hidden_size=32,
@@ -75,6 +86,7 @@ def _tiny_models():
     [
         ("bert", 6, {"Linear": 7}),
         ("gpt2", 4, {"transformers.Conv1D": 4, "Linear": 1}),
+        ("gpt_bigcode", 4, {"Linear": 5}),
         ("llama", 7, {"Linear": 8}),
         ("t5", 16, {"Linear": 17}),
         ("vit", 6, {"Linear": 7}),
@@ -94,10 +106,11 @@ def test_universal_policy_covers_transformer_families_without_model_recipes(
     assert Counter(item["adapter"] for item in report["modules"]) == adapter_counts
 
 
-def test_gpt2_conv1d_quantize_save_and_prequantized_restore(tmp_path):
+@pytest.mark.parametrize("model_name", ["gpt2", "gpt_bigcode"])
+def test_gpt_quantize_save_and_prequantized_restore(tmp_path, model_name):
     source_dir = tmp_path / "source"
     quantized_dir = tmp_path / "quantized"
-    model = _tiny_models()["gpt2"]
+    model = _tiny_models()[model_name]
     model.save_pretrained(source_dir)
     config = OrbitQuantConfig(
         block_size=8,
@@ -105,7 +118,7 @@ def test_gpt2_conv1d_quantize_save_and_prequantized_restore(tmp_path):
         activation_kernel_backend="cpu",
     )
 
-    quantized, loading_info = transformers.GPT2LMHeadModel.from_pretrained(
+    quantized, loading_info = type(model).from_pretrained(
         source_dir,
         quantization_config=config,
         output_loading_info=True,
@@ -116,13 +129,14 @@ def test_gpt2_conv1d_quantize_save_and_prequantized_restore(tmp_path):
     assert not loading_info["missing_keys"]
     assert not loading_info["unexpected_keys"]
     assert isinstance(quantized.transformer.h[0].attn.c_attn, OrbitQuantLinear)
-    assert quantized.transformer.h[0].attn.c_attn.source_weight_layout == "in_out"
+    expected_layout = "in_out" if model_name == "gpt2" else "out_in"
+    assert quantized.transformer.h[0].attn.c_attn.source_weight_layout == expected_layout
     assert isinstance(quantized.lm_head, torch.nn.Linear)
     assert quantized.lm_head.weight is quantized.transformer.wte.weight
     assert torch.isfinite(logits).all()
 
     quantized.save_pretrained(quantized_dir)
-    restored, restored_info = transformers.GPT2LMHeadModel.from_pretrained(
+    restored, restored_info = type(model).from_pretrained(
         quantized_dir,
         output_loading_info=True,
     )
@@ -162,9 +176,10 @@ def test_gpt2_streaming_quantization_accepts_base_model_prefix_checkpoint_keys(t
     assert torch.isfinite(quantized(input_ids=torch.tensor([[1, 2, 3]])).logits).all()
 
 
-def test_gpt2_debug_no_quant_streaming_loads_rotated_weights(tmp_path):
+@pytest.mark.parametrize("model_name", ["gpt2", "gpt_bigcode"])
+def test_gpt_debug_no_quant_streaming_loads_rotated_weights(tmp_path, model_name):
     source_dir = tmp_path / "source"
-    model = _tiny_models()["gpt2"].eval()
+    model = _tiny_models()[model_name].eval()
     input_ids = torch.tensor([[1, 2, 3]])
     with torch.inference_mode():
         expected = model(input_ids=input_ids).logits
@@ -175,7 +190,7 @@ def test_gpt2_debug_no_quant_streaming_loads_rotated_weights(tmp_path):
         activation_kernel_backend="cpu",
     )
 
-    quantized, loading_info = transformers.GPT2LMHeadModel.from_pretrained(
+    quantized, loading_info = type(model).from_pretrained(
         source_dir,
         quantization_config=config,
         output_loading_info=True,
@@ -186,3 +201,34 @@ def test_gpt2_debug_no_quant_streaming_loads_rotated_weights(tmp_path):
     with torch.inference_mode():
         actual = quantized(input_ids=input_ids).logits
     torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("model_name", ["gpt2", "gpt_bigcode"])
+def test_gpt_quantized_parent_still_initializes_missing_unquantized_child(tmp_path, model_name):
+    model = _tiny_models()[model_name]
+    model.save_pretrained(tmp_path)
+    checkpoint_path = tmp_path / "model.safetensors"
+    checkpoint = load_file(checkpoint_path)
+    missing_key = "transformer.h.0.attn.c_attn.bias"
+    del checkpoint[missing_key]
+    save_file(checkpoint, checkpoint_path, metadata={"format": "pt"})
+
+    quantized, loading_info = type(model).from_pretrained(
+        tmp_path,
+        quantization_config=OrbitQuantConfig(
+            block_size=8,
+            runtime_mode="dequant_bf16",
+            activation_kernel_backend="cpu",
+            modules_to_not_convert=["transformer.h.0.attn.c_attn"],
+        ),
+        output_loading_info=True,
+    )
+
+    assert set(loading_info["missing_keys"]) == {missing_key}
+    assert not loading_info["unexpected_keys"]
+    attn = quantized.transformer.h[0].attn
+    assert isinstance(attn.c_proj, OrbitQuantLinear)
+    assert not isinstance(attn.c_attn, OrbitQuantLinear)
+    torch.testing.assert_close(attn.c_attn.bias, torch.zeros_like(attn.c_attn.bias))
+    torch.testing.assert_close(attn.c_attn.weight, model.transformer.h[0].attn.c_attn.weight)
+    assert torch.isfinite(quantized(input_ids=torch.tensor([[1, 2, 3]])).logits).all()

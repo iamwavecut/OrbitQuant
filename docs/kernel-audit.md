@@ -737,3 +737,39 @@ All eight benchmark output hashes matched. Forty GPU cases cover BF16/FP16,
 bias, integer-oracle comparison, unaligned storage, K-major fallback, row-count
 fallback, and CUDA graph replay. Hardware performance on other GPUs is not
 established by this measurement.
+
+### Paired-row dispatch
+
+Native 1.0.3 reuses packed-weight loads and byte-pair lookup results across two
+activation rows per warp. It applies to row-major W4A4, 2–8 rows, input widths
+1024–16384, and output widths at least 2048. Smaller outputs retain the
+single-row kernel because pairing removes too much parallelism. Odd rows and
+unaligned contiguous byte storage are supported. The existing environment
+override, K-major path, and larger-batch dispatch are unchanged.
+
+The new epilogue explicitly uses FP32 fused multiply-add when bias is present,
+matching the native integer-oracle tests. Compared with older compiler-generated
+epilogues, a biased result can differ by a rounding unit. The unbiased YuE2
+validation below was exact; this is not a universal bitwise-parity claim.
+
+On RTX PRO 4500 Blackwell, Torch 2.10.0+cu128, the integrated native package
+passed 208 GPU tests, with 30 unrelated backend cases skipped. Coverage includes
+the output threshold, odd rows, short input fallback, bias, FP16/BF16,
+misaligned storage, K-major layouts, current streams, and CUDA graph replay.
+A fixed 512-token YuE2 CFG2 probe measured 3.9533 ms per step for native 1.0.2
+and 3.6541 ms for the paired kernel, excluding the first 64 steps. All 128 saved
+logit vectors on both branches matched exactly.
+
+Five complete Russian-song runs (warmup, baseline, paired, paired, baseline)
+used CFG 1.5, combined decode/sampling graphs, and fused RMS quantization. Both
+paths produced identical 183.9587 s PCM; the two timed means were:
+
+| Phase | Native 1.0.2 | Paired rows |
+| --- | ---: | ---: |
+| Whole generation | 33.3960 s | 31.7818 s |
+| Semantic generation | 21.3650 s | 19.9003 s |
+
+The shared-process runs establish latency and output equivalence, not a fresh
+process memory comparison. The kernel adds no persistent weight cache. The
+existing `benchmarks/benchmark_decode.py` can compare native wheel versions;
+its two-row and eight-row cases exercise the new dispatch.

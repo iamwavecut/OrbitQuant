@@ -111,6 +111,66 @@ __global__ void orbitquant_packed_w4a4_gemv_byte_pairs(T* out, const uint8_t* x,
   }
 }
 
+// Reuse each packed weight vector across two rows; the host keeps small
+// output widths on the single-row kernel to retain enough parallel blocks.
+template<class T>
+__global__ void orbitquant_packed_w4a4_gemv_paired_rows(T* out, const uint8_t* x, const uint8_t* w,
+    const float* xn, const c10::BFloat16* wn, const int8_t* ac, const int8_t* wc,
+    const T* bias, int n, int packed_k, int rows, float as, float ws) {
+  const int lane = threadIdx.x & 31;
+  const int col = blockIdx.x * 4 + threadIdx.x / 32;
+  const int row = blockIdx.y * 2;
+  __shared__ uint32_t a_pairs[256], w_pairs[256];
+  for (int byte = threadIdx.x; byte < 256; byte += blockDim.x) {
+    a_pairs[byte] = uint32_t(uint8_t(ac[byte & 15])) | (uint32_t(uint8_t(ac[byte >> 4])) << 8);
+    w_pairs[byte] = uint32_t(uint8_t(wc[byte & 15])) | (uint32_t(uint8_t(wc[byte >> 4])) << 8);
+  }
+  __syncthreads();
+  if (col >= n) return;
+  int sum[2] = {0, 0};
+  if (packed_k % 4 == 0 && (reinterpret_cast<uintptr_t>(x) & 3) == 0 && (reinterpret_cast<uintptr_t>(w) & 3) == 0) {
+    const uint32_t* wp = reinterpret_cast<const uint32_t*>(w + col * packed_k);
+    for (int k = lane; k < packed_k / 4; k += 32) {
+      const uint32_t bv = wp[k];
+      const uint32_t bl = w_pairs[bv & 255] | (w_pairs[(bv >> 8) & 255] << 16);
+      const uint32_t bh = w_pairs[(bv >> 16) & 255] | (w_pairs[bv >> 24] << 16);
+      #pragma unroll
+      for (int r = 0; r < 2; ++r) {
+        if (row + r < rows) {
+          const uint32_t av = reinterpret_cast<const uint32_t*>(x + (row + r) * packed_k)[k];
+          const uint32_t al = a_pairs[av & 255] | (a_pairs[(av >> 8) & 255] << 16);
+          const uint32_t ah = a_pairs[(av >> 16) & 255] | (a_pairs[av >> 24] << 16);
+          sum[r] = __dp4a(static_cast<int>(al), static_cast<int>(bl), sum[r]);
+          sum[r] = __dp4a(static_cast<int>(ah), static_cast<int>(bh), sum[r]);
+        }
+      }
+    }
+  } else {
+    for (int k = lane; k < packed_k; k += 32) {
+      const uint32_t b = w_pairs[w[col * packed_k + k]];
+      #pragma unroll
+      for (int r = 0; r < 2; ++r) {
+        if (row + r < rows) {
+          const uint32_t a = a_pairs[x[(row + r) * packed_k + k]];
+          sum[r] = __dp4a(static_cast<int>(a), static_cast<int>(b), sum[r]);
+        }
+      }
+    }
+  }
+  #pragma unroll
+  for (int r = 0; r < 2; ++r) {
+    #pragma unroll
+    for (int offset = 16; offset; offset >>= 1)
+      sum[r] += __shfl_down_sync(0xffffffff, sum[r], offset);
+    if (lane == 0 && row + r < rows) {
+      float value = static_cast<float>(sum[r]);
+      const float scale = xn[row + r] * static_cast<float>(wn[col]) * (as * ws);
+      value = bias ? fmaf(value, scale, static_cast<float>(bias[col])) : value * scale;
+      out[(row + r) * n + col] = static_cast<T>(value);
+    }
+  }
+}
+
 inline bool orbitquant_w4a4_gemv_disabled() {
   static const bool disabled = []() {
     const char *value = std::getenv("ORBITQUANT_W4A4_DISABLE_GEMV");
@@ -1917,6 +1977,25 @@ void matmul_packed_w4a4_int8(
   // Keep the existing layout/tile path for prefill, K-major weights and wide K.
   if (rows <= 8 && in_features <= 16384 && !weight_k_major &&
       !orbitquant_w4a4_gemv_disabled()) {
+    if (rows >= 2 && out_features >= 2048 && in_features >= 1024) {
+      const dim3 paired_grid((out_features + 3) / 4, (rows + 1) / 2);
+      const auto paired_stream = at::cuda::getCurrentCUDAStream();
+#define ORBITQUANT_LAUNCH_PAIRED_GEMV(T) \
+      orbitquant_packed_w4a4_gemv_paired_rows<T><<<paired_grid, 128, 0, paired_stream>>>( \
+          out.data_ptr<T>(), packed_activations.data_ptr<uint8_t>(), \
+          packed_weight_indices.data_ptr<uint8_t>(), token_norms.data_ptr<float>(), \
+          row_norms.data_ptr<c10::BFloat16>(), activation_codes.data_ptr<int8_t>(), \
+          weight_codes.data_ptr<int8_t>(), has_bias ? bias.data_ptr<T>() : nullptr, \
+          out_features, in_features / 2, rows, activation_scale, weight_scale)
+      if (out.scalar_type() == torch::kBFloat16) {
+        ORBITQUANT_LAUNCH_PAIRED_GEMV(c10::BFloat16);
+      } else {
+        ORBITQUANT_LAUNCH_PAIRED_GEMV(c10::Half);
+      }
+#undef ORBITQUANT_LAUNCH_PAIRED_GEMV
+      C10_CUDA_KERNEL_LAUNCH_CHECK();
+      return;
+    }
     const dim3 gemv_grid((out_features + 3) / 4, rows);
     const auto gemv_stream = at::cuda::getCurrentCUDAStream();
 #define ORBITQUANT_LAUNCH_DECODE_GEMV(KERNEL, T)                                      \

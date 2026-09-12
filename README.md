@@ -298,24 +298,24 @@ pipe = load_quantized_pipeline_from_artifact(
 
 ## CUDA Decode
 
-Version 0.9.5 includes the native 1.0.2 byte-pair lookup GEMV. For row-major
+Version 0.9.6 includes the native 1.0.3 paired-row GEMV. For row-major
 W4A4 inputs with one to eight rows and input width from 1024 to 16384, it decodes
 each packed byte into two signed INT8 lanes through a shared lookup table.
-This halves the codebook lookups in the vectorized DP4A path while retaining
-the packed weights and the existing norm, scale, and bias epilogue.
+With two to eight rows and at least 2048 output features, each warp reuses
+decoded weights across two activation rows. Single-row and smaller-output
+calls retain the byte-pair kernel. No unpacked weight cache is introduced.
 
-On an RTX PRO 4500 Blackwell, a YuE2 fixed-token decode probe improved from
-3.141 to 2.936 ms per step (512 tokens, first 64 excluded). The 128 recorded
-semantic-logit vectors matched exactly. This measures decode, not complete
-song generation or a cross-model guarantee. In a separate interleaved
-full-song test, the original and byte-pair paths generated the same 187.64 s
-of audio in 31.82 and 30.34 s on average (two timed runs each, after warmup).
-Separate cache-hot projection
-measurements improved by 15–24% for YuE2's QKV, output, gate/up, and down shapes.
+On an RTX PRO 4500 Blackwell, YuE2 two-branch CFG decode improved from
+3.953 to 3.654 ms per step versus native 1.0.2 (512 fixed tokens, first 64
+excluded). The 128 recorded logit vectors on both branches matched exactly.
+In an interleaved full-song test with CFG 1.5, combined CUDA graphs, and fused
+RMS quantization, both kernels generated identical 183.96 s audio. Mean wall
+time fell from 33.40 to 31.78 s, with two timed runs per kernel after warmup.
+These measurements do not establish a gain for single-row decode or other GPUs.
 
 The Python package and the native kernel are separate installations. Existing
 importable or cached native packages retain priority; upgrading `orbitquant`
-alone does not replace them. Install the matching 1.0.2 native wheel from the
+alone does not replace them. Install the matching 1.0.3 native wheel from the
 [`kernels-v1` release](https://github.com/iamwavecut/OrbitQuant/releases/tag/kernels-v1),
 or build the bundled source with kernel-builder and select its variant using
 `LOCAL_KERNELS`. `ORBITQUANT_W4A4_DISABLE_GEMV=1` selects the Tensor Core fallback.
@@ -424,6 +424,7 @@ encoder-decoder, causal LM, and vision transformer families:
 | --- | --- |
 | BERT | `torch.nn.Linear` |
 | GPT-2 | Hugging Face `Conv1D` with transposed source weights |
+| GPTBigCode | `torch.nn.Linear`, including multi-query attention |
 | Llama | `torch.nn.Linear`, including GQA projections |
 | T5 | encoder and decoder `torch.nn.Linear` projections |
 | ViT | vision transformer `torch.nn.Linear` projections |
@@ -432,7 +433,7 @@ The paper-aligned release artifacts remain FLUX.1-schnell, Z-Image-Turbo, and
 Wan 2.1 T2V. FLUX.2 Klein is an additional validated diffusion target.
 
 Architecture coverage means the model can be discovered, quantized, executed,
-saved, and restored without model-name-specific code. It does not guarantee a
+saved, and restored through the same public quantization API. It does not guarantee a
 quality-preserving bit setting. OrbitQuant was evaluated in the paper on image
 and video diffusion transformers; language and classification models can be
 more sensitive, and their quality must be measured before publishing a
