@@ -94,7 +94,7 @@ def _make_variant_dir(root: Path, variant: str, *, marker=True) -> Path:
 
 def test_provision_uses_cached_variant(monkeypatch):
     _patch_runtime(monkeypatch, torch_version="2.12.1")
-    cache_root = provision.kernels_cache_root() / f"v{provision.KERNEL_VERSION}" / "prebuilt"
+    cache_root = provision._managed_cache_root() / "prebuilt"
     variant = provision.cpu_variant_name()
     variant_dir = _make_variant_dir(cache_root, variant)
 
@@ -108,12 +108,36 @@ def test_provision_uses_cached_variant(monkeypatch):
 
 def test_provision_ignores_cache_without_marker(monkeypatch):
     _patch_runtime(monkeypatch, torch_version="2.12.1")
-    cache_root = provision.kernels_cache_root() / f"v{provision.KERNEL_VERSION}" / "prebuilt"
+    cache_root = provision._managed_cache_root() / "prebuilt"
     _make_variant_dir(cache_root, provision.cpu_variant_name(), marker=False)
 
     report = provision.provision_native_kernel_package(allow_fetch=False, allow_build=False)
 
     assert report.source == "unavailable"
+
+
+@pytest.mark.parametrize("namespace", ["", "1.0.3"])
+def test_upgrade_preserves_but_does_not_load_older_managed_cache(monkeypatch, namespace):
+    _patch_runtime(monkeypatch, torch_version="2.12.1")
+    old_root = provision.kernels_cache_root() / f"v{provision.KERNEL_VERSION}" / namespace
+    old_dir = _make_variant_dir(old_root / "prebuilt", provision.cpu_variant_name())
+
+    report = provision.provision_native_kernel_package(allow_fetch=False, allow_build=False)
+
+    assert report.source == "unavailable"
+    assert old_dir.is_dir()
+    assert str(old_dir) not in sys.path
+    assert provision.provision_status()["cached_variants"] == {}
+
+
+def test_explicit_importable_package_keeps_priority(monkeypatch, tmp_path):
+    _patch_runtime(monkeypatch, torch_version="2.12.1")
+    installed = _make_variant_dir(tmp_path, "installed", marker=False)
+    monkeypatch.syspath_prepend(str(installed))
+
+    report = provision.provision_native_kernel_package(allow_fetch=False, allow_build=False)
+
+    assert report.source == "already-importable"
 
 
 def test_provision_uses_local_kernels_env(monkeypatch, tmp_path):
@@ -155,8 +179,11 @@ def _wheel_bytes() -> bytes:
     return buffer.getvalue()
 
 
-def _serve_release(monkeypatch, variant: str, wheel_payload: bytes, *, sha256=None):
-    filename = f"{variant}.whl"
+def _serve_release(
+    monkeypatch, variant: str, wheel_payload: bytes, *, sha256=None,
+    version=provision.NATIVE_RELEASE_MINIMUM,
+):
+    filename = f"orbitquant_packed_matmul-{version}-cp39-abi3-manylinux_2_34_x86_64.whl"
     manifest = {
         "kernel_version": provision.KERNEL_VERSION,
         "variants": {
@@ -211,9 +238,38 @@ def test_provision_rejects_checksum_mismatch(monkeypatch):
     assert report.source == "unavailable"
     assert "checksum mismatch" in report.detail
     cache_dir = (
-        provision.kernels_cache_root() / f"v{provision.KERNEL_VERSION}" / "prebuilt" / variant
+        provision._managed_cache_root() / "prebuilt" / variant
     )
     assert not cache_dir.exists()
+
+
+def test_provision_rejects_older_release_before_download(monkeypatch):
+    _patch_runtime(monkeypatch, torch_version="2.12.1")
+    variant = provision.cpu_variant_name()
+    _serve_release(monkeypatch, variant, _wheel_bytes(), version="1.0.3")
+    original_get = provision._http_get
+
+    def manifest_only(url, timeout):
+        assert url.endswith(provision._MANIFEST_FILENAME)
+        return original_get(url, timeout)
+
+    monkeypatch.setattr(provision, "_http_get", manifest_only)
+    report = provision.provision_native_kernel_package(allow_build=False)
+
+    assert report.source == "unavailable"
+    assert "does not satisfy" in report.detail
+    assert not provision._managed_cache_root().exists()
+
+
+def test_provision_accepts_newer_compatible_release(monkeypatch):
+    _patch_runtime(monkeypatch, torch_version="2.12.1")
+    _serve_release(monkeypatch, provision.cpu_variant_name(), _wheel_bytes(), version="1.1.0")
+
+    report = provision.provision_native_kernel_package(allow_build=False)
+
+    assert report.source == "release"
+    marker = Path(report.sys_path_entry) / provision._PROVISION_MARKER
+    assert json.loads(marker.read_text())["native_release"] == "1.1.0"
 
 
 def test_provision_respects_autofetch_disable(monkeypatch):

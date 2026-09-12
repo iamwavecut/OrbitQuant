@@ -298,27 +298,34 @@ pipe = load_quantized_pipeline_from_artifact(
 
 ## CUDA Decode
 
-Version 0.9.6 includes the native 1.0.3 paired-row GEMV. For row-major
-W4A4 inputs with one to eight rows and input width from 1024 to 16384, it decodes
-each packed byte into two signed INT8 lanes through a shared lookup table.
-With two to eight rows and at least 2048 output features, each warp reuses
-decoded weights across two activation rows. Single-row and smaller-output
-calls retain the byte-pair kernel. No unpacked weight cache is introduced.
+Version 0.9.7 includes native 1.0.4 register-codebook GEMV for SM120 GPUs.
+For row-major W4A4 inputs with one to eight rows, input width 1024–16384,
+and at least 2048 output features, it decodes arbitrary 16-entry signed INT8
+codebooks with register byte permutations. Two rows share each decoded weight
+vector. The kernel needs no shared lookup table or unpacked weight cache.
+Other devices and shapes keep the existing native dispatch.
 
-On an RTX PRO 4500 Blackwell, YuE2 two-branch CFG decode improved from
-3.953 to 3.654 ms per step versus native 1.0.2 (512 fixed tokens, first 64
-excluded). The 128 recorded logit vectors on both branches matched exactly.
-In an interleaved full-song test with CFG 1.5, combined CUDA graphs, and fused
-RMS quantization, both kernels generated identical 183.96 s audio. Mean wall
-time fell from 33.40 to 31.78 s, with two timed runs per kernel after warmup.
-These measurements do not establish a gain for single-row decode or other GPUs.
+On RTX PRO 4500 Blackwell with Torch 2.10.0+cu128, interleaved full YuE2
+songs measured 22.61 → 22.16 s at CFG 1 and 26.04 → 24.57 s at CFG 1.5
+versus native 1.0.3. Each setting used one warmup followed by two timed runs
+per kernel, with INT8 KV cache, fused RMS quantization, eight ODE steps, and
+FP16 VAE. All ten PCM outputs matched their corresponding control song.
+These are warm-generation measurements on one GPU, not a universal gain or
+a fresh-process memory comparison.
 
-The Python package and the native kernel are separate installations. Existing
-importable or cached native packages retain priority; upgrading `orbitquant`
-alone does not replace them. Install the matching 1.0.3 native wheel from the
+The Python package and native kernel are separate installations. Managed
+caches are partitioned by the minimum native release (currently 1.0.4), so an
+upgrade does not silently reuse an older managed binary. Older cache directories
+are preserved. Downloaded wheels must satisfy that version floor and match the
+release checksum; a current cached variant remains usable offline. Provision the
+new variant before taking an upgraded installation offline.
+
+Explicitly installed packages and `LOCAL_KERNELS` retain priority. Upgrade an
+explicit installation with the matching wheel from the
 [`kernels-v1` release](https://github.com/iamwavecut/OrbitQuant/releases/tag/kernels-v1),
-or build the bundled source with kernel-builder and select its variant using
-`LOCAL_KERNELS`. `ORBITQUANT_W4A4_DISABLE_GEMV=1` selects the Tensor Core fallback.
+or build the bundled source with kernel-builder. `orbitquant kernels-status`
+reports the native version floor and managed cache selection.
+`ORBITQUANT_W4A4_DISABLE_GEMV=1` selects the Tensor Core fallback.
 
 ## Reproduce Load Memory
 

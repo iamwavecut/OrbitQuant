@@ -12,6 +12,8 @@ from orbitquant_packed_matmul import matmul_packed_w4a4_int8, supports_device
         (1, 129, 64),
         (8, 3, 64),
         (1, 129, 512),
+        (1, 2048, 1024),
+        (1, 32768, 2048),
         (8, 129, 1024),
         (2, 1024, 2048),
         (2, 2047, 1024),
@@ -29,7 +31,7 @@ from orbitquant_packed_matmul import matmul_packed_w4a4_int8, supports_device
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 @pytest.mark.parametrize(
     "offset,bias_enabled,k_major",
-    [(0, False, False), (1, True, False), (3, False, False), (0, True, True)],
+    [(0, False, False), (0, True, False), (1, True, False), (3, False, False), (0, True, True)],
 )
 def test_decode_against_integer_oracle(rows, n, k, dtype, offset, bias_enabled, k_major):
     if not torch.cuda.is_available() or not supports_device("cuda"):
@@ -64,11 +66,15 @@ def test_decode_against_integer_oracle(rows, n, k, dtype, offset, bias_enabled, 
     bias = torch.rand(n, device="cuda", dtype=dtype) if bias_enabled else None
     # Binary-exact scales isolate the integer accumulation and norm epilogue.
     expected = sums.cuda().float() * (xn[:, None] * wn.float()[None, :] * 0.001953125)
+    alternate = expected
     if bias is not None:
-        # CUDA fuses the accumulator scaling and bias addition into one FMA.
+        # Existing kernels permit both contracted and separate FP32 multiply/
+        # add epilogues. Check exactly those two results, not a loose tolerance.
+        alternate = expected + bias.float()
         scale = xn[:, None] * wn.float()[None, :] * 0.001953125
         expected = (sums.cuda().float().double() * scale.double() + bias.double()).float()
     expected = expected.to(dtype)
+    alternate = alternate.to(dtype)
     args = (xd, wd, xn, wn, ac.cuda(), wc.cuda())
     kwargs = dict(
         activation_scale=0.03125,
@@ -79,7 +85,8 @@ def test_decode_against_integer_oracle(rows, n, k, dtype, offset, bias_enabled, 
         output_dtype=dtype,
         weight_k_major=k_major,
     )
-    torch.testing.assert_close(matmul_packed_w4a4_int8(*args, **kwargs), expected, rtol=0, atol=0)
+    actual = matmul_packed_w4a4_int8(*args, **kwargs)
+    assert torch.all((actual == expected) | (actual == alternate))
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
@@ -91,4 +98,4 @@ def test_decode_against_integer_oracle(rows, n, k, dtype, offset, bias_enabled, 
         captured = matmul_packed_w4a4_int8(*args, **kwargs)
     graph.replay()
     torch.cuda.synchronize()
-    torch.testing.assert_close(captured, expected, rtol=0, atol=0)
+    torch.testing.assert_close(captured, actual, rtol=0, atol=0)

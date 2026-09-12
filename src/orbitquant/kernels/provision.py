@@ -41,8 +41,11 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from packaging.utils import InvalidWheelFilename, parse_wheel_filename
+from packaging.version import Version
 
 KERNEL_VERSION = 1
+NATIVE_RELEASE_MINIMUM = "1.0.4"
 KERNEL_PACKAGE_NAME = "orbitquant_packed_matmul"
 KERNEL_REPO_ID = "WaveCut/orbitquant-packed-matmul"
 _RELEASE_TAG = f"kernels-v{KERNEL_VERSION}"
@@ -192,8 +195,14 @@ def _local_kernels_variant_dirs() -> list[Path]:
 
 
 def _cached_variant_dirs(variant: str) -> list[Path]:
-    root = kernels_cache_root() / f"v{KERNEL_VERSION}"
+    root = _managed_cache_root()
     return [root / "prebuilt" / variant, root / "jit" / variant]
+
+
+def _managed_cache_root() -> Path:
+    # API-compatible kernels can still predate the optimizations shipped by
+    # this Python release. Keep older installations' caches intact.
+    return kernels_cache_root() / f"v{KERNEL_VERSION}" / NATIVE_RELEASE_MINIMUM
 
 
 def _write_provision_marker(variant_dir: Path, payload: dict[str, Any]) -> None:
@@ -246,6 +255,16 @@ def _fetch_prebuilt_variant(variant: str) -> tuple[Path | None, str]:
     expected_sha256 = entry.get("sha256")
     if not isinstance(filename, str) or not isinstance(expected_sha256, str):
         return None, f"release manifest entry for {variant} is malformed"
+    try:
+        package, version, _, _ = parse_wheel_filename(filename)
+    except InvalidWheelFilename:
+        return None, f"release manifest wheel filename for {variant} is malformed"
+    if package != KERNEL_PACKAGE_NAME.replace("_", "-") or version < Version(
+        NATIVE_RELEASE_MINIMUM
+    ):
+        return None, (
+            f"{filename} does not satisfy {KERNEL_PACKAGE_NAME}>={NATIVE_RELEASE_MINIMUM}"
+        )
 
     try:
         payload = _http_get(
@@ -261,7 +280,7 @@ def _fetch_prebuilt_variant(variant: str) -> tuple[Path | None, str]:
             f"got {actual_sha256}"
         )
 
-    final_dir = kernels_cache_root() / f"v{KERNEL_VERSION}" / "prebuilt" / variant
+    final_dir = _managed_cache_root() / "prebuilt" / variant
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     staging_root = tempfile.mkdtemp(prefix=f"{variant}.", dir=final_dir.parent)
     try:
@@ -281,6 +300,7 @@ def _fetch_prebuilt_variant(variant: str) -> tuple[Path | None, str]:
                 "filename": filename,
                 "sha256": actual_sha256,
                 "kernel_version": KERNEL_VERSION,
+                "native_release": str(version),
             },
         )
         if final_dir.exists():
@@ -412,7 +432,7 @@ def build_native_kernel_package_jit() -> Path:
     )
 
     built_library = Path(module.__file__)
-    variant_dir = kernels_cache_root() / f"v{KERNEL_VERSION}" / "jit" / variant
+    variant_dir = _managed_cache_root() / "jit" / variant
     package_dir = variant_dir / KERNEL_PACKAGE_NAME
     package_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(
@@ -580,6 +600,7 @@ def provision_status() -> dict[str, Any]:
                 break
     return {
         "kernel_version": KERNEL_VERSION,
+        "native_release_minimum": NATIVE_RELEASE_MINIMUM,
         "package": KERNEL_PACKAGE_NAME,
         "importable": _kernel_package_importable(),
         "candidate_variants": list(requested),

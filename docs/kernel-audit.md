@@ -61,6 +61,16 @@ The runtime resolves the native `orbitquant_packed_matmul` package through
    builds need a matching `nvcc`; the Metal variant is prebuilt-only because
    its shader library is embedded at build time).
 
+OrbitQuant 0.9.7 partitions managed prebuilt and JIT caches under
+`v1/1.0.4/`, where `1.0.4` is the minimum native release required by this
+Python version. It preserves older directories but does not select them.
+Release wheels below that version floor are rejected before downloading;
+newer API-compatible wheels are accepted. Cached current variants work offline.
+Upgraded offline installations must provision the new variant first or select
+an explicit installed/local package. `kernels-status` reports
+`native_release_minimum`; explicit importable packages and `LOCAL_KERNELS`
+continue to take priority.
+
 Accelerator variants are preferred over the CPU variant. The resolver runs at
 most once per process, only when a packed runtime path first needs the native
 package, and never inside the forward path. `orbitquant kernels-status` prints
@@ -773,3 +783,40 @@ The shared-process runs establish latency and output equivalence, not a fresh
 process memory comparison. The kernel adds no persistent weight cache. The
 existing `benchmarks/benchmark_decode.py` can compare native wheel versions;
 its two-row and eight-row cases exercise the new dispatch.
+
+### SM120 register-codebook dispatch
+
+Native 1.0.4 uses register byte permutations instead of shared byte-pair tables
+for SM120 row-major W4A4 calls with 1–8 rows, input width 1024–16384, and
+output width at least 2048. Each codebook remains an arbitrary 16-entry signed
+INT8 table; no symmetry assumption or new quantization is introduced. Two-row
+warps reuse each decoded weight vector, including guarded odd-row tails.
+Unaligned contiguous storage uses byte loads. Other architectures and shapes,
+K-major weights, larger batches, and the explicit GEMV override retain their
+previous dispatch. The kernel adds no persistent state or dense weight copy.
+
+The integrated CUDA package passed 258 tests on RTX PRO 4500 Blackwell with
+Torch 2.10.0+cu128; 30 cases for other backends were skipped. The integer oracle
+covers signed INT8 extremes, BF16/FP16 outputs, aligned and unaligned bias
+cases, output thresholds, odd rows, K-major fallback, and graph replay. Bias
+checks accept exactly the contracted or separate FP32 multiply/add result,
+since both epilogues exist in the established dispatch; replay must match
+the eager result exactly.
+
+In full YuE2 runtime-v8 interleaves on that device, source revision
+`c7a8520621db157e99a57a755fb509ccaf8799c8`, the native 1.0.3 control used
+binary SHA-256 `acf88118b2cd6087494420ee3c8b98fa8d25427ba67699cd0fc6ce77887c03db`.
+Each CFG setting used warmup, control, candidate, candidate, control within
+one pipeline. The default Russian prompt used seed 12300, INT8 KV cache,
+fused RMS quantization, eight ODE steps, FP16 VAE, and expandable allocator
+segments. Means exclude warmup:
+
+| CFG | Native 1.0.3 | Register codebook | Audio duration |
+| ---: | ---: | ---: | ---: |
+| 1 | 22.6111 s | 22.1628 s | 166.4387 s |
+| 1.5 | 26.0375 s | 24.5738 s | 164.9187 s |
+
+All ten complete PCM arrays matched their corresponding archived control,
+without truncation or non-finite samples. These results measure generation
+latency after loading; shared-process NVML does not establish fresh-profile
+memory use, and other architectures have no performance claim from this run.

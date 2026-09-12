@@ -17,6 +17,89 @@ using namespace nvcuda;
 
 namespace {
 
+__device__ __forceinline__ uint32_t orbitquant_code_word(const int8_t* codes, int base) {
+  return uint32_t(uint8_t(codes[base])) | (uint32_t(uint8_t(codes[base + 1])) << 8) |
+         (uint32_t(uint8_t(codes[base + 2])) << 16) |
+         (uint32_t(uint8_t(codes[base + 3])) << 24);
+}
+
+__device__ __forceinline__ uint32_t orbitquant_decode_four(
+    uint32_t selectors, uint32_t c0, uint32_t c1, uint32_t c2, uint32_t c3) {
+  // byte_perm uses the low three bits of each selector nibble. Its fourth
+  // bit selects the other half of the arbitrary 16-entry signed codebook.
+  const uint32_t low = __byte_perm(c0, c1, selectors);
+  const uint32_t high = __byte_perm(c2, c3, selectors);
+  const uint32_t mask = __byte_perm(0x0000ff00u, 0, (selectors >> 3) & 0x1111u);
+  return (low & ~mask) | (high & mask);
+}
+
+// Register lookup removes shared-table initialization and bank conflicts.
+// The host restricts this path to measured SM120 decode shapes.
+template<class T, int RowsPerWarp>
+__global__ void orbitquant_packed_w4a4_gemv_register(T* out, const uint8_t* x,
+    const uint8_t* w, const float* xn, const c10::BFloat16* wn, const int8_t* ac,
+    const int8_t* wc, const T* bias, int n, int packed_k, int rows, float as, float ws) {
+  static_assert(RowsPerWarp == 1 || RowsPerWarp == 2);
+  const int lane = threadIdx.x & 31;
+  const int col = blockIdx.x * 4 + threadIdx.x / 32;
+  const int row = blockIdx.y * RowsPerWarp;
+  if (col >= n) return;
+  const uint32_t a0 = orbitquant_code_word(ac, 0), a1 = orbitquant_code_word(ac, 4);
+  const uint32_t a2 = orbitquant_code_word(ac, 8), a3 = orbitquant_code_word(ac, 12);
+  const uint32_t w0 = orbitquant_code_word(wc, 0), w1 = orbitquant_code_word(wc, 4);
+  const uint32_t w2 = orbitquant_code_word(wc, 8), w3 = orbitquant_code_word(wc, 12);
+  int sums[RowsPerWarp] = {};
+  if (packed_k % 4 == 0 && (reinterpret_cast<uintptr_t>(x) & 3) == 0 &&
+      (reinterpret_cast<uintptr_t>(w) & 3) == 0) {
+    const uint32_t* wp = reinterpret_cast<const uint32_t*>(w + col * packed_k);
+    for (int k = lane; k < packed_k / 4; k += 32) {
+      const uint32_t bv = wp[k];
+      const uint32_t bl = orbitquant_decode_four(bv, w0, w1, w2, w3);
+      const uint32_t bh = orbitquant_decode_four(bv >> 16, w0, w1, w2, w3);
+      #pragma unroll
+      for (int r = 0; r < RowsPerWarp; ++r) {
+        if (row + r < rows) {
+          const uint32_t av = reinterpret_cast<const uint32_t*>(x + (row + r) * packed_k)[k];
+          const uint32_t al = orbitquant_decode_four(av, a0, a1, a2, a3);
+          const uint32_t ah = orbitquant_decode_four(av >> 16, a0, a1, a2, a3);
+          sums[r] = __dp4a(static_cast<int>(al), static_cast<int>(bl), sums[r]);
+          sums[r] = __dp4a(static_cast<int>(ah), static_cast<int>(bh), sums[r]);
+        }
+      }
+    }
+  } else {
+    for (int k = lane; k < packed_k; k += 32) {
+      const uint32_t b = orbitquant_decode_four(w[col * packed_k + k], w0, w1, w2, w3) & 65535u;
+      #pragma unroll
+      for (int r = 0; r < RowsPerWarp; ++r) {
+        if (row + r < rows) {
+          const uint32_t a = orbitquant_decode_four(x[(row + r) * packed_k + k], a0, a1, a2, a3) & 65535u;
+          sums[r] = __dp4a(static_cast<int>(a), static_cast<int>(b), sums[r]);
+        }
+      }
+    }
+  }
+  #pragma unroll
+  for (int r = 0; r < RowsPerWarp; ++r) {
+    #pragma unroll
+    for (int offset = 16; offset; offset >>= 1)
+      sums[r] += __shfl_down_sync(0xffffffff, sums[r], offset);
+    if (lane == 0 && row + r < rows) {
+      const float scale = xn[row + r] * static_cast<float>(wn[col]) * (as * ws);
+      // Preserve the existing single-row and paired-row epilogue rounding.
+      float value = __fmul_rn(static_cast<float>(sums[r]), scale);
+      if (bias) {
+        if constexpr (RowsPerWarp == 2) {
+          value = fmaf(static_cast<float>(sums[r]), scale, static_cast<float>(bias[col]));
+        } else {
+          value += static_cast<float>(bias[col]);
+        }
+      }
+      out[(row + r) * n + col] = static_cast<T>(value);
+    }
+  }
+}
+
 // One warp per output avoids the mostly empty Tensor Core tiles in decode.
 // Vector loads require aligned base pointers; contiguous slices can be unaligned.
 template<class T>
@@ -1977,6 +2060,29 @@ void matmul_packed_w4a4_int8(
   // Keep the existing layout/tile path for prefill, K-major weights and wide K.
   if (rows <= 8 && in_features <= 16384 && !weight_k_major &&
       !orbitquant_w4a4_gemv_disabled()) {
+    if (properties->major == 12 && properties->minor == 0 &&
+        out_features >= 2048 && in_features >= 1024) {
+      const int group = rows >= 2 ? 2 : 1;
+      const dim3 register_grid((out_features + 3) / 4, (rows + group - 1) / group);
+      const auto register_stream = at::cuda::getCurrentCUDAStream();
+#define ORBITQUANT_LAUNCH_REGISTER_GEMV(T, R) \
+      orbitquant_packed_w4a4_gemv_register<T, R><<<register_grid, 128, 0, register_stream>>>( \
+          out.data_ptr<T>(), packed_activations.data_ptr<uint8_t>(), \
+          packed_weight_indices.data_ptr<uint8_t>(), token_norms.data_ptr<float>(), \
+          row_norms.data_ptr<c10::BFloat16>(), activation_codes.data_ptr<int8_t>(), \
+          weight_codes.data_ptr<int8_t>(), has_bias ? bias.data_ptr<T>() : nullptr, \
+          out_features, in_features / 2, rows, activation_scale, weight_scale)
+      if (out.scalar_type() == torch::kBFloat16) {
+        if (group == 2) { ORBITQUANT_LAUNCH_REGISTER_GEMV(c10::BFloat16, 2); }
+        else { ORBITQUANT_LAUNCH_REGISTER_GEMV(c10::BFloat16, 1); }
+      } else {
+        if (group == 2) { ORBITQUANT_LAUNCH_REGISTER_GEMV(c10::Half, 2); }
+        else { ORBITQUANT_LAUNCH_REGISTER_GEMV(c10::Half, 1); }
+      }
+#undef ORBITQUANT_LAUNCH_REGISTER_GEMV
+      C10_CUDA_KERNEL_LAUNCH_CHECK();
+      return;
+    }
     if (rows >= 2 && out_features >= 2048 && in_features >= 1024) {
       const dim3 paired_grid((out_features + 3) / 4, (rows + 1) / 2);
       const auto paired_stream = at::cuda::getCurrentCUDAStream();
