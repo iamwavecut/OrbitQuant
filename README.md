@@ -298,7 +298,8 @@ pipe = load_quantized_pipeline_from_artifact(
 
 ## CUDA Decode
 
-Version 0.9.7 includes native 1.0.4 register-codebook GEMV for SM120 GPUs.
+Version 0.9.8 includes native 1.0.5 register-codebook GEMV for SM89 (Ada)
+and SM120 GPUs.
 For row-major W4A4 inputs with one to eight rows, input width 1024–16384,
 and at least 2048 output features, it decodes arbitrary 16-entry signed INT8
 codebooks with register byte permutations. Two rows share each decoded weight
@@ -314,7 +315,7 @@ These are warm-generation measurements on one GPU, not a universal gain or
 a fresh-process memory comparison.
 
 The Python package and native kernel are separate installations. Managed
-caches are partitioned by the minimum native release (currently 1.0.4), so an
+caches are partitioned by the minimum native release (currently 1.0.5), so an
 upgrade does not silently reuse an older managed binary. Older cache directories
 are preserved. Downloaded wheels must satisfy that version floor and match the
 release checksum; a current cached variant remains usable offline. Provision the

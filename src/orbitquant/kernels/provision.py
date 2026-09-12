@@ -45,7 +45,7 @@ from packaging.utils import InvalidWheelFilename, parse_wheel_filename
 from packaging.version import Version
 
 KERNEL_VERSION = 1
-NATIVE_RELEASE_MINIMUM = "1.0.4"
+NATIVE_RELEASE_MINIMUM = "1.0.5"
 KERNEL_PACKAGE_NAME = "orbitquant_packed_matmul"
 KERNEL_REPO_ID = "WaveCut/orbitquant-packed-matmul"
 _RELEASE_TAG = f"kernels-v{KERNEL_VERSION}"

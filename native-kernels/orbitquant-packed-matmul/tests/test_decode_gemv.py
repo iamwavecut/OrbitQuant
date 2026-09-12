@@ -115,15 +115,27 @@ def test_register_decode_dispatch_on_validated_devices(rows, tmp_path):
     xn = torch.ones(rows, device="cuda")
     wn = torch.ones(2048, device="cuda", dtype=torch.bfloat16)
     codes = torch.arange(-8, 8, device="cuda", dtype=torch.int8)
-    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
-                                            torch.profiler.ProfilerActivity.CUDA]) as prof:
-        actual = matmul_packed_w4a4_int8(x, w, xn, wn, codes, codes,
-            activation_scale=1.0, weight_scale=1.0, out_features=2048,
-            in_features=1024, output_dtype=torch.bfloat16)
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+    ) as prof:
+        actual = matmul_packed_w4a4_int8(
+            x,
+            w,
+            xn,
+            wn,
+            codes,
+            codes,
+            activation_scale=1.0,
+            weight_scale=1.0,
+            out_features=2048,
+            in_features=1024,
+            output_dtype=torch.bfloat16,
+        )
         torch.cuda.synchronize()
     assert torch.all(actual == 65536)
     trace = tmp_path / "dispatch.json"
     prof.export_chrome_trace(str(trace))
-    kernels = [e["name"] for e in json.loads(trace.read_text())["traceEvents"]
-               if e.get("cat") == "kernel"]
+    kernels = [
+        e["name"] for e in json.loads(trace.read_text())["traceEvents"] if e.get("cat") == "kernel"
+    ]
     assert any("orbitquant_packed_w4a4_gemv_register" in name for name in kernels), kernels
