@@ -389,3 +389,55 @@ def quantize_activations_int8(
         quantized.reshape(*original_shape[:-1], dim),
         norms.reshape(original_shape[:-1]),
     )
+
+
+def quantize_rows_int8(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-row absmax INT8 quantization of a BF16 [rows, K] tensor (K multiple of 4)."""
+    if not x.is_cuda:
+        raise RuntimeError("native INT8 row quantization requires CUDA tensors")
+    if x.dtype != torch.bfloat16:
+        raise ValueError("x must be bfloat16")
+    original_shape = x.shape
+    values = x.contiguous().reshape(-1, original_shape[-1])
+    out = torch.empty(values.shape, device=x.device, dtype=torch.int8)
+    scales = torch.empty(values.shape[0], device=x.device, dtype=torch.float32)
+    ops.quantize_rows_int8(out, scales, values)
+    return out.reshape(original_shape), scales.reshape(original_shape[:-1])
+
+
+def matmul_int8_rows(
+    x_int8: torch.Tensor,
+    x_scales: torch.Tensor,
+    weight_int8: torch.Tensor,
+    weight_scales: torch.Tensor,
+    *,
+    bias: torch.Tensor | None = None,
+    output_dtype: torch.dtype = torch.bfloat16,
+) -> torch.Tensor:
+    """INT8 activations [rows, K] x INT8 row-quantized weights [N, K] -> [rows, N] (rows 1..8).
+
+    The epilogue computes float(sum) * (x_scale * weight_scale) (+ bias), matching the
+    torch._int_mm based reference bit for bit.
+    """
+    if not x_int8.is_cuda:
+        raise RuntimeError("native INT8 row GEMV requires CUDA tensors")
+    if output_dtype not in {torch.bfloat16, torch.float16}:
+        raise ValueError("output_dtype must be bfloat16 or float16")
+    original_shape = x_int8.shape
+    values = x_int8.contiguous().reshape(-1, original_shape[-1])
+    n = weight_int8.shape[0]
+    out = torch.empty((values.shape[0], n), device=x_int8.device, dtype=output_dtype)
+    if bias is None:
+        bias_values = out
+    else:
+        bias_values = bias.to(device=x_int8.device, dtype=output_dtype).contiguous()
+    ops.matmul_int8_rows(
+        out,
+        values,
+        x_scales.to(device=x_int8.device, dtype=torch.float32).contiguous().reshape(-1),
+        weight_int8.contiguous(),
+        weight_scales.to(device=x_int8.device, dtype=torch.float32).contiguous(),
+        bias_values,
+        bias is not None,
+    )
+    return out.reshape(*original_shape[:-1], n)

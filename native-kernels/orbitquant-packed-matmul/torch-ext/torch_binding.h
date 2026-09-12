@@ -89,4 +89,15 @@ void quantize_activations_int8(
     double eps,
     double inv_sqrt_block,
     int64_t threads);
+
+void quantize_rows_int8(torch::Tensor &out, torch::Tensor &scales, torch::Tensor const &x);
+
+void matmul_int8_rows(
+    torch::Tensor &out,
+    torch::Tensor const &x,
+    torch::Tensor const &x_scales,
+    torch::Tensor const &w,
+    torch::Tensor const &w_scales,
+    torch::Tensor const &bias,
+    bool has_bias);
 #endif

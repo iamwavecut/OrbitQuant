@@ -2479,3 +2479,127 @@ void quantize_activations_int8(
 #undef ORBITQUANT_LAUNCH_RPBH_INT8
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
+
+// ---------------------------------------------------------------------------
+// INT8 row-quantized GEMV for output heads (per-row INT8 weights, per-token INT8
+// activations, DP4A accumulation). One warp per output row, four rows per block;
+// the epilogue mirrors the torch._int_mm reference: float(sum) * (xs[row] * ws[col]).
+// ---------------------------------------------------------------------------
+namespace {
+
+__global__ void orbitquant_quantize_rows_int8_kernel(
+    int8_t *__restrict__ out, float *__restrict__ scales, const c10::BFloat16 *__restrict__ x,
+    int64_t k) {
+  const int64_t row = blockIdx.x;
+  const int t = threadIdx.x;
+  __shared__ float red[256];
+  float m = 0.f;
+  for (int64_t j = t; j < k; j += 256) m = fmaxf(m, fabsf(static_cast<float>(x[row * k + j])));
+  red[t] = m;
+  __syncthreads();
+  for (int s = 128; s > 0; s >>= 1) {
+    if (t < s) red[t] = fmaxf(red[t], red[t + s]);
+    __syncthreads();
+  }
+  // Round-to-nearest intrinsics keep host/PyTorch parity regardless of fast-math or FMA contraction.
+  const float scale = __fdiv_rn(fmaxf(red[0], 1e-12f), 127.0f);
+  if (t == 0) scales[row] = scale;
+  for (int64_t j = t; j < k; j += 256) {
+    const float v = rintf(__fdiv_rn(static_cast<float>(x[row * k + j]), scale));
+    out[row * k + j] = static_cast<int8_t>(fminf(fmaxf(v, -127.f), 127.f));
+  }
+}
+
+template <class T, int RowsPerWarp>
+__global__ void __launch_bounds__(128) orbitquant_int8_rows_gemv_kernel(
+    T *__restrict__ out, const int8_t *__restrict__ x, const float *__restrict__ xs,
+    const int8_t *__restrict__ w, const float *__restrict__ ws, const T *__restrict__ bias,
+    int n, int k, int rows) {
+  const int lane = threadIdx.x & 31;
+  const int col = blockIdx.x * 4 + (threadIdx.x >> 5);
+  const int row = blockIdx.y * RowsPerWarp;
+  if (col >= n) return;
+  const int words = k / 4;
+  const uint32_t *wp = reinterpret_cast<const uint32_t *>(w + static_cast<size_t>(col) * k);
+  int sums[RowsPerWarp] = {};
+  for (int i = lane; i < words; i += 32) {
+    const uint32_t bv = __ldg(wp + i);
+#pragma unroll
+    for (int r = 0; r < RowsPerWarp; ++r) {
+      if (row + r < rows) {
+        const uint32_t av = reinterpret_cast<const uint32_t *>(x + static_cast<size_t>(row + r) * k)[i];
+        sums[r] = __dp4a(static_cast<int>(av), static_cast<int>(bv), sums[r]);
+      }
+    }
+  }
+#pragma unroll
+  for (int r = 0; r < RowsPerWarp; ++r) {
+#pragma unroll
+    for (int offset = 16; offset; offset >>= 1) sums[r] += __shfl_down_sync(0xffffffff, sums[r], offset);
+    if (lane == 0 && row + r < rows) {
+      // Same operation order as the torch._int_mm reference: (x_scale * w_scale), multiply, add bias.
+      const float scale = __fmul_rn(xs[row + r], ws[col]);
+      float value = __fmul_rn(static_cast<float>(sums[r]), scale);
+      if (bias) value = __fadd_rn(value, static_cast<float>(bias[col]));
+      out[static_cast<size_t>(row + r) * n + col] = static_cast<T>(value);
+    }
+  }
+}
+
+}  // namespace
+
+void quantize_rows_int8(torch::Tensor &out, torch::Tensor &scales, torch::Tensor const &x) {
+  TORCH_CHECK(x.is_cuda() && x.is_contiguous() && x.scalar_type() == torch::kBFloat16 && x.dim() == 2,
+              "quantize_rows_int8 expects contiguous CUDA BF16 [rows, K]");
+  const int64_t rows = x.size(0), k = x.size(1);
+  TORCH_CHECK(k > 0 && k % 4 == 0, "K must be a positive multiple of 4");
+  TORCH_CHECK(out.device() == x.device() && out.is_contiguous() && out.scalar_type() == torch::kChar &&
+                  out.sizes() == x.sizes(), "invalid INT8 output");
+  TORCH_CHECK(scales.device() == x.device() && scales.is_contiguous() && scales.scalar_type() == torch::kFloat &&
+                  scales.numel() == rows, "invalid scales");
+  const at::cuda::OptionalCUDAGuard guard(device_of(x));
+  if (!rows) return;
+  orbitquant_quantize_rows_int8_kernel<<<rows, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+      out.data_ptr<int8_t>(), scales.data_ptr<float>(), x.data_ptr<c10::BFloat16>(), k);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void matmul_int8_rows(torch::Tensor &out, torch::Tensor const &x, torch::Tensor const &x_scales,
+                      torch::Tensor const &w, torch::Tensor const &w_scales, torch::Tensor const &bias,
+                      bool has_bias) {
+  TORCH_CHECK(x.is_cuda() && x.is_contiguous() && x.scalar_type() == torch::kChar && x.dim() == 2,
+              "matmul_int8_rows expects contiguous CUDA INT8 activations [rows, K]");
+  const int rows = x.size(0), k = x.size(1);
+  TORCH_CHECK(rows >= 1 && rows <= 8, "matmul_int8_rows serves 1..8 rows; use INT8 GEMM for larger batches");
+  TORCH_CHECK(k > 0 && k % 4 == 0, "K must be a positive multiple of 4");
+  TORCH_CHECK(w.device() == x.device() && w.is_contiguous() && w.scalar_type() == torch::kChar && w.dim() == 2 &&
+                  w.size(1) == k, "weights must be contiguous INT8 [N, K]");
+  const int n = w.size(0);
+  TORCH_CHECK(n >= 1, "N must be positive");
+  TORCH_CHECK(w_scales.device() == x.device() && w_scales.is_contiguous() && w_scales.scalar_type() == torch::kFloat &&
+                  w_scales.numel() == n, "invalid weight scales");
+  TORCH_CHECK(x_scales.device() == x.device() && x_scales.is_contiguous() && x_scales.scalar_type() == torch::kFloat &&
+                  x_scales.numel() == rows, "invalid activation scales");
+  TORCH_CHECK(out.device() == x.device() && out.is_contiguous() && out.dim() == 2 && out.size(0) == rows &&
+                  out.size(1) == n && (out.scalar_type() == torch::kBFloat16 || out.scalar_type() == torch::kHalf),
+              "invalid output");
+  TORCH_CHECK((reinterpret_cast<uintptr_t>(w.data_ptr()) & 3) == 0 && (reinterpret_cast<uintptr_t>(x.data_ptr()) & 3) == 0,
+              "INT8 tensors must be 4-byte aligned");
+  if (has_bias)
+    TORCH_CHECK(bias.device() == x.device() && bias.is_contiguous() && bias.scalar_type() == out.scalar_type() &&
+                    bias.numel() == n, "invalid bias");
+  const at::cuda::OptionalCUDAGuard guard(device_of(x));
+  const auto stream = at::cuda::getCurrentCUDAStream();
+  const dim3 grid((n + 3) / 4, rows == 1 ? 1 : (rows + 1) / 2);
+#define ORBITQUANT_LAUNCH_INT8_ROWS(T, R)                                                                   \
+  orbitquant_int8_rows_gemv_kernel<T, R><<<grid, 128, 0, stream>>>(                                        \
+      out.data_ptr<T>(), x.data_ptr<int8_t>(), x_scales.data_ptr<float>(), w.data_ptr<int8_t>(),          \
+      w_scales.data_ptr<float>(), has_bias ? bias.data_ptr<T>() : nullptr, n, k, rows)
+  if (out.scalar_type() == torch::kBFloat16) {
+    if (rows == 1) { ORBITQUANT_LAUNCH_INT8_ROWS(c10::BFloat16, 1); } else { ORBITQUANT_LAUNCH_INT8_ROWS(c10::BFloat16, 2); }
+  } else {
+    if (rows == 1) { ORBITQUANT_LAUNCH_INT8_ROWS(c10::Half, 1); } else { ORBITQUANT_LAUNCH_INT8_ROWS(c10::Half, 2); }
+  }
+#undef ORBITQUANT_LAUNCH_INT8_ROWS
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}

@@ -32,6 +32,26 @@ Embeddings, timestep modules, task heads, and common final projections are
 kept in source precision by default. Every automatic decision is available as
 a machine-readable inventory before quantization.
 
+## INT8 output heads (opt-in)
+
+Output heads stay in source precision by default. For memory-bound decode the head can be
+the largest per-token read (a 150k-row BF16 vocabulary head is 0.6 GB per step), so
+OrbitQuant also offers an explicit per-row INT8 head:
+
+```python
+from orbitquant import quantize_output_heads
+
+quantize_output_heads(model, names=("lm_head",))   # in-place Int8RowLinear replacement
+```
+
+`Int8RowLinear` stores per-row absmax INT8 weights plus FP32 scales (2x smaller than BF16),
+quantizes activations per token at forward time, and serves 1..8-row decode with the native
+`matmul_int8_rows` DP4A kernel (CUDA package 1.0.5+), falling back to `torch._int_mm` for
+larger batches or when the native package is unavailable. All paths share the epilogue
+`float(sum) * (x_scale * w_scale)`, so results are identical across them. Head quantization
+changes logits at the INT8 rounding level (~0.4% relative); measure sampled outputs before
+adopting it for a model.
+
 ## Install
 
 ```bash
