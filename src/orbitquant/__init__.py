@@ -1,6 +1,12 @@
 """Calibration-free OrbitQuant for transformer linear projections."""
 
 from orbitquant.config import OrbitQuantConfig
+from orbitquant.int8_head import (
+    Int8RowLinear,
+    absmax_int8_scales,
+    quantize_int8_rows,
+    quantize_output_heads,
+)
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.linear_adapters import register_linear_adapter
 from orbitquant.modeling import (
@@ -18,7 +24,7 @@ from orbitquant.pipeline import (
 from orbitquant.quantizer import register_hf_quantizers
 from orbitquant.recipes import recipe
 
-__version__ = "0.9.7"
+__version__ = "0.9.8"
 
 register_hf_quantizers()
 
@@ -37,4 +43,8 @@ __all__ = [
     "register_linear_adapter",
     "register_hf_quantizers",
     "save_quantized_pipeline_component",
+    "Int8RowLinear",
+    "absmax_int8_scales",
+    "quantize_int8_rows",
+    "quantize_output_heads",
 ]

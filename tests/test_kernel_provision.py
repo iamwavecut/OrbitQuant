@@ -116,7 +116,7 @@ def test_provision_ignores_cache_without_marker(monkeypatch):
     assert report.source == "unavailable"
 
 
-@pytest.mark.parametrize("namespace", ["", "1.0.3"])
+@pytest.mark.parametrize("namespace", ["", "1.0.3", "1.0.4"])
 def test_upgrade_preserves_but_does_not_load_older_managed_cache(monkeypatch, namespace):
     _patch_runtime(monkeypatch, torch_version="2.12.1")
     old_root = provision.kernels_cache_root() / f"v{provision.KERNEL_VERSION}" / namespace
@@ -243,10 +243,11 @@ def test_provision_rejects_checksum_mismatch(monkeypatch):
     assert not cache_dir.exists()
 
 
-def test_provision_rejects_older_release_before_download(monkeypatch):
+@pytest.mark.parametrize("version", ["1.0.3", "1.0.4"])
+def test_provision_rejects_older_release_before_download(monkeypatch, version):
     _patch_runtime(monkeypatch, torch_version="2.12.1")
     variant = provision.cpu_variant_name()
-    _serve_release(monkeypatch, variant, _wheel_bytes(), version="1.0.3")
+    _serve_release(monkeypatch, variant, _wheel_bytes(), version=version)
     original_get = provision._http_get
 
     def manifest_only(url, timeout):

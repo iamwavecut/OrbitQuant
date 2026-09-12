@@ -32,6 +32,26 @@ Embeddings, timestep modules, task heads, and common final projections are
 kept in source precision by default. Every automatic decision is available as
 a machine-readable inventory before quantization.
 
+## INT8 output heads (opt-in)
+
+Output heads stay in source precision by default. For memory-bound decode the head can be
+the largest per-token read (a 150k-row BF16 vocabulary head is 0.6 GB per step), so
+OrbitQuant also offers an explicit per-row INT8 head:
+
+```python
+from orbitquant import quantize_output_heads
+
+quantize_output_heads(model, names=("lm_head",))   # in-place Int8RowLinear replacement
+```
+
+`Int8RowLinear` stores per-row absmax INT8 weights plus FP32 scales (2x smaller than BF16),
+quantizes activations per token at forward time, and serves 1..8-row decode with the native
+`matmul_int8_rows` DP4A kernel (CUDA package 1.0.5+), falling back to `torch._int_mm` for
+larger batches or when the native package is unavailable. All paths share the epilogue
+`float(sum) * (x_scale * w_scale)`, so results are identical across them. Head quantization
+changes logits at the INT8 rounding level (~0.4% relative); measure sampled outputs before
+adopting it for a model.
+
 ## Install
 
 ```bash
@@ -298,7 +318,8 @@ pipe = load_quantized_pipeline_from_artifact(
 
 ## CUDA Decode
 
-Version 0.9.7 includes native 1.0.4 register-codebook GEMV for SM120 GPUs.
+Version 0.9.8 includes native 1.0.5 register-codebook GEMV for SM89 (Ada)
+and SM120 GPUs.
 For row-major W4A4 inputs with one to eight rows, input width 1024–16384,
 and at least 2048 output features, it decodes arbitrary 16-entry signed INT8
 codebooks with register byte permutations. Two rows share each decoded weight
@@ -314,7 +335,7 @@ These are warm-generation measurements on one GPU, not a universal gain or
 a fresh-process memory comparison.
 
 The Python package and native kernel are separate installations. Managed
-caches are partitioned by the minimum native release (currently 1.0.4), so an
+caches are partitioned by the minimum native release (currently 1.0.5), so an
 upgrade does not silently reuse an older managed binary. Older cache directories
 are preserved. Downloaded wheels must satisfy that version floor and match the
 release checksum; a current cached variant remains usable offline. Provision the

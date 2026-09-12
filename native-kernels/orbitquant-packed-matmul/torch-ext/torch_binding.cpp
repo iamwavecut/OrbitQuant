@@ -60,6 +60,12 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "quantize_activations_int8",
       torch::kCUDA,
       &quantize_activations_int8);
+  ops.def("quantize_rows_int8(Tensor! out, Tensor! scales, Tensor x) -> ()");
+  ops.impl("quantize_rows_int8", torch::kCUDA, &quantize_rows_int8);
+  ops.def(
+      "matmul_int8_rows(Tensor! out, Tensor x, Tensor x_scales, Tensor w, Tensor w_scales, "
+      "Tensor bias, bool has_bias) -> ()");
+  ops.impl("matmul_int8_rows", torch::kCUDA, &matmul_int8_rows);
 #elif defined(METAL_KERNEL)
   ops.impl("matmul_packed_weight", torch::kMPS, &matmul_packed_weight);
 #endif

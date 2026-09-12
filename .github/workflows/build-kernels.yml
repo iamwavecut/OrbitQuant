@@ -184,7 +184,7 @@ jobs:
           "$builder" create-pyproject --unique-id ${{ matrix.unique_id }} -f "$kernel_root"
           .venv/bin/python "$kernel_root/scripts/prepare_wheel_project.py" \
             "$kernel_root" \
-            --version "1.0.4+${{ matrix.local_tag }}" \
+            --version "1.0.5+${{ matrix.local_tag }}" \
             --torch-requirement "${{ matrix.torch_requirement }}"
 
       - name: Build CUDA wheel
@@ -345,7 +345,7 @@ jobs:
           & .venv\Scripts\python.exe `
             "$kernelRoot\scripts\prepare_wheel_project.py" `
             $kernelRoot `
-            --version "1.0.4+${{ matrix.local_tag }}" `
+            --version "1.0.5+${{ matrix.local_tag }}" `
             --torch-requirement "${{ matrix.torch_requirement }}"
 
       - name: Build CUDA wheel with MSVC
@@ -466,7 +466,7 @@ jobs:
           "$builder" create-pyproject --unique-id ${{ matrix.unique_id }} -f "$kernel_root"
           .venv/bin/python "$kernel_root/scripts/prepare_wheel_project.py" \
             "$kernel_root" \
-            --version "1.0.4+${{ matrix.local_tag }}" \
+            --version "1.0.5+${{ matrix.local_tag }}" \
             --torch-requirement "${{ matrix.torch_requirement }}"
 
       - name: Build Metal wheel
@@ -553,7 +553,7 @@ jobs:
           "$builder" create-pyproject --unique-id rel_cpu_darwin -f "$kernel_root"
           .venv/bin/python "$kernel_root/scripts/prepare_wheel_project.py" \
             "$kernel_root" \
-            --version "1.0.4"
+            --version "1.0.5"
 
       - name: Build ABI3 CPU wheel
         working-directory: native-kernels/orbitquant-packed-matmul
@@ -641,7 +641,7 @@ jobs:
           uv run --no-project --with setuptools python \
             "$kernel_root/scripts/prepare_wheel_project.py" \
             "$kernel_root" \
-            --version "1.0.4"
+            --version "1.0.5"
 
       - name: Build manylinux 2.28 ABI3 wheel
         env:
@@ -738,7 +738,7 @@ jobs:
           & .venv\Scripts\python.exe `
             "$kernelRoot\scripts\prepare_wheel_project.py" `
             $kernelRoot `
-            --version "1.0.4"
+            --version "1.0.5"
 
       - name: Build ABI3 CPU wheel with MSVC
         shell: pwsh

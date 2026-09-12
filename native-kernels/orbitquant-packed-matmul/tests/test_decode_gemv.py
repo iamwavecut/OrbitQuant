@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 import torch
 from orbitquant_packed_matmul import matmul_packed_w4a4_int8, supports_device
@@ -99,3 +101,41 @@ def test_decode_against_integer_oracle(rows, n, k, dtype, offset, bias_enabled, 
     graph.replay()
     torch.cuda.synchronize()
     torch.testing.assert_close(captured, actual, rtol=0, atol=0)
+
+
+@pytest.mark.kernels_ci
+@pytest.mark.parametrize("rows", [1, 2])
+def test_register_decode_dispatch_on_validated_devices(rows, tmp_path):
+    if not torch.cuda.is_available() or not supports_device("cuda"):
+        pytest.skip("CUDA kernel required")
+    if torch.cuda.get_device_capability() not in {(8, 9), (12, 0)}:
+        pytest.skip("Register decode is enabled only on measured GPU architectures")
+    x = torch.zeros((rows, 512), device="cuda", dtype=torch.uint8)
+    w = torch.zeros(2048 * 512, device="cuda", dtype=torch.uint8)
+    xn = torch.ones(rows, device="cuda")
+    wn = torch.ones(2048, device="cuda", dtype=torch.bfloat16)
+    codes = torch.arange(-8, 8, device="cuda", dtype=torch.int8)
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+    ) as prof:
+        actual = matmul_packed_w4a4_int8(
+            x,
+            w,
+            xn,
+            wn,
+            codes,
+            codes,
+            activation_scale=1.0,
+            weight_scale=1.0,
+            out_features=2048,
+            in_features=1024,
+            output_dtype=torch.bfloat16,
+        )
+        torch.cuda.synchronize()
+    assert torch.all(actual == 65536)
+    trace = tmp_path / "dispatch.json"
+    prof.export_chrome_trace(str(trace))
+    kernels = [
+        e["name"] for e in json.loads(trace.read_text())["traceEvents"] if e.get("cat") == "kernel"
+    ]
+    assert any("orbitquant_packed_w4a4_gemv_register" in name for name in kernels), kernels

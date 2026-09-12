@@ -820,3 +820,31 @@ All ten complete PCM arrays matched their corresponding archived control,
 without truncation or non-finite samples. These results measure generation
 latency after loading; shared-process NVML does not establish fresh-profile
 memory use, and other architectures have no performance claim from this run.
+
+## INT8 row-quantized output heads
+
+Native 1.0.5 adds two CUDA operators for output heads kept outside the W4A4
+packed format: `quantize_rows_int8` (per-token absmax INT8 activations of a
+BF16 `[rows, K]` tensor) and `matmul_int8_rows` (one warp per output row,
+four rows per block, DP4A accumulation over per-row absmax INT8 weights,
+1–8 activation rows, `K` a multiple of 4, BF16 or FP16 output, optional bias).
+The epilogue is `float(sum) * (x_scale * w_scale) (+ bias)`, the same formula
+the Python `Int8RowLinear` module uses for its cuBLASLt `torch._int_mm`
+fallback, and both derive `scale = absmax / 127` with a true IEEE division
+(`__fdiv_rn` in the kernel, a same-device tensor divisor in PyTorch: dividing a
+CUDA tensor by a Python scalar makes PyTorch multiply by a reciprocal, which
+is 1 ulp off in some rows), so both paths return identical values. No dense dequantized copy or
+persistent state is added; larger batches keep the INT8 GEMM fallback.
+
+`orbitquant.Int8RowLinear` / `quantize_output_heads` are opt-in. They change
+logits at INT8 rounding level; the YuE2-3B semantic head (32,769 classes)
+measured a mean forward KL of 0.0015 over 128 forced positions with top-1
+agreement 0.914, and the ABC head (151,644 classes) 0.0002 with top-1
+agreement 1.0, both against the BF16 head on RTX 4090.
+
+On RTX 4090 (Torch 2.10.0+cu128) the 151,644 x 2048 head reads 310 MB per
+step in 331 us (937 GB/s) versus 649 us for the BF16 cuBLAS GEMV of the same
+rows; the padded `torch._int_mm` fallback was about twice slower than the
+native kernel for one row. Native package tests for the new operators compare
+against `torch._int_mm` bit for bit across 129–151,644 rows, K of 64–4096,
+BF16/FP16 outputs, bias, graph replay, and the contract errors.
