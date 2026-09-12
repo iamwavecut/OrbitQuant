@@ -34,7 +34,7 @@ __device__ __forceinline__ uint32_t orbitquant_decode_four(
 }
 
 // Register lookup removes shared-table initialization and bank conflicts.
-// The host restricts this path to measured SM120 decode shapes.
+// The host restricts this path to measured SM89/SM120 decode shapes.
 template<class T, int RowsPerWarp>
 __global__ void orbitquant_packed_w4a4_gemv_register(T* out, const uint8_t* x,
     const uint8_t* w, const float* xn, const c10::BFloat16* wn, const int8_t* ac,
@@ -2060,7 +2060,8 @@ void matmul_packed_w4a4_int8(
   // Keep the existing layout/tile path for prefill, K-major weights and wide K.
   if (rows <= 8 && in_features <= 16384 && !weight_k_major &&
       !orbitquant_w4a4_gemv_disabled()) {
-    if (properties->major == 12 && properties->minor == 0 &&
+    if (((properties->major == 12 && properties->minor == 0) ||
+         (properties->major == 8 && properties->minor == 9)) &&
         out_features >= 2048 && in_features >= 1024) {
       const int group = rows >= 2 ? 2 : 1;
       const dim3 register_grid((out_features + 3) / 4, (rows + group - 1) / group);
