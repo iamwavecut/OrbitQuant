@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import weakref
+from collections.abc import Callable
 from itertools import count
 
 import torch
@@ -39,6 +41,48 @@ _AUTO_FUSED_DEGRADATION_WARNED: set[tuple[int, int, int, str]] = set()
 # finalizers from ever running and retains discarded model weights.
 _COMPILE_REGISTRY: weakref.WeakValueDictionary[int, object] = weakref.WeakValueDictionary()
 _COMPILE_HANDLE_IDS = count(1)
+
+
+_SHARED_ACTIVATION_CACHE = threading.local()
+
+
+def _clear_shared_activation_cache() -> None:
+    """Drop the current thread's last prepared activation."""
+
+    _SHARED_ACTIVATION_CACHE.entry = None
+
+
+def _get_or_create_shared_activation_quantization(
+    x: torch.Tensor,
+    signature: tuple[object, ...],
+    factory: Callable[[], tuple[torch.Tensor, torch.Tensor]],
+) -> tuple[tuple[torch.Tensor, torch.Tensor], bool]:
+    """Reuse an unchanged activation across consecutive quantized projections.
+
+    Attention Q/K/V (and gate) and SwiGLU gate/up projections receive the same tensor object
+    and use the same RPBH/codebook transform. Keeping only the most recent prepared activation
+    makes that common pattern cheap without an unbounded cache or pointer-based aliasing.
+    """
+
+    if torch.is_grad_enabled():
+        _clear_shared_activation_cache()
+        return factory(), False
+    try:
+        version = x._version
+    except RuntimeError:
+        # Inference tensors hide their version counter, so an in-place mutation between two
+        # projections could not be detected.
+        _clear_shared_activation_cache()
+        return factory(), False
+    metadata = (tuple(x.shape), tuple(x.stride()), x.storage_offset(), x.dtype, x.device, version)
+    entry = getattr(_SHARED_ACTIVATION_CACHE, "entry", None)
+    if entry is not None:
+        input_ref, cached_signature, cached_metadata, prepared = entry
+        if input_ref() is x and cached_signature == signature and cached_metadata == metadata:
+            return prepared, True
+    prepared = factory()
+    _SHARED_ACTIVATION_CACHE.entry = (weakref.ref(x), signature, metadata, prepared)
+    return prepared, False
 
 
 def _compile_registry_lookup(handle: int):
@@ -419,6 +463,7 @@ class OrbitQuantLinear(nn.Module):
         self.last_native_w4a4_enabled = False
         self.last_native_w4_activation_enabled = False
         self.last_native_int8_activation_enabled = False
+        self.last_activation_cache_hit = False
         self._derived_constants_valid = True
 
     @classmethod
@@ -1106,6 +1151,7 @@ class OrbitQuantLinear(nn.Module):
         self.last_native_w4a4_enabled = False
         self.last_native_w4_activation_enabled = False
         self.last_native_int8_activation_enabled = False
+        self.last_activation_cache_hit = False
 
         if runtime_mode == "triton_packed_matmul":
             self._validate_triton_packed_matmul_input(x)
@@ -1211,17 +1257,46 @@ class OrbitQuantLinear(nn.Module):
                     quantize_activations_int8_with_native_kernel,
                 )
 
-                int8_x, token_norms = quantize_activations_int8_with_native_kernel(
-                    x,
-                    activation_constants["permutation"],
-                    activation_constants["signs"],
-                    activation_constants["boundaries"],
-                    activation_codes,
-                    eps=self.activation_eps,
-                    inv_sqrt_block=self.rotation.normalization,
-                    threads=512 if capability == (8, 9) else 256,
+                threads = 512 if capability == (8, 9) else 256
+                (int8_x, token_norms), self.last_activation_cache_hit = (
+                    _get_or_create_shared_activation_quantization(
+                        x,
+                        ("native_cuda_int8_surrogate", id(self.rotation),
+                         id(self.activation_codebook), self.activation_eps, threads),
+                        lambda: quantize_activations_int8_with_native_kernel(
+                            x,
+                            activation_constants["permutation"],
+                            activation_constants["signs"],
+                            activation_constants["boundaries"],
+                            activation_codes,
+                            eps=self.activation_eps,
+                            inv_sqrt_block=self.rotation.normalization,
+                            threads=threads,
+                        ),
+                    )
                 )
                 self.last_activation_kernel_backend = "native_cuda_int8_surrogate"
+                self.last_native_w4_activation_enabled = True
+                self.last_native_int8_activation_enabled = True
+            elif use_cutlass_tn and self.rotation.block_size <= 4096:
+                from orbitquant.kernels.triton_cuda import quantize_activations_int8_with_triton
+
+                (int8_x, token_norms), self.last_activation_cache_hit = (
+                    _get_or_create_shared_activation_quantization(
+                        x,
+                        ("triton_cuda_int8_surrogate", id(self.rotation),
+                         id(self.activation_codebook), self.activation_eps),
+                        lambda: quantize_activations_int8_with_triton(
+                            x,
+                            rotation=self.rotation,
+                            codebook=self.activation_codebook,
+                            activation_codes=activation_codes,
+                            eps=self.activation_eps,
+                            constant_tensors=activation_constants,
+                        ),
+                    )
+                )
+                self.last_activation_kernel_backend = "triton_cuda_int8_surrogate"
                 self.last_native_w4_activation_enabled = True
                 self.last_native_int8_activation_enabled = True
             elif self._native_w4_activation_available(x):
