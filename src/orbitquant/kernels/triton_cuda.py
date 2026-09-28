@@ -139,7 +139,7 @@ def _weight_quantization_constants(
 def _row_norm_kernel(
     input_ptr,
     norms_ptr,
-    rows: tl.constexpr,
+    rows,
     dim: tl.constexpr,
     eps: tl.constexpr,
     block_size: tl.constexpr,
@@ -160,7 +160,7 @@ def _permute_sign_normalize_activation_kernel(
     permutation_ptr,
     signs_ptr,
     work_ptr,
-    total: tl.constexpr,
+    total,
     dim: tl.constexpr,
     eps: tl.constexpr,
     block_size: tl.constexpr,
@@ -184,7 +184,7 @@ def _quantize_activation_work_rescale_kernel(
     centroids_ptr,
     boundaries_ptr,
     output_ptr,
-    total: tl.constexpr,
+    total,
     dim: tl.constexpr,
     levels: tl.constexpr,
     inv_sqrt_block: tl.constexpr,
@@ -226,7 +226,7 @@ def _fused_rpbh_quantize_activation_kernel(
     centroids_ptr,
     boundaries_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     dim: tl.constexpr,
     num_blocks: tl.constexpr,
     orbit_block_size: tl.constexpr,
@@ -294,7 +294,7 @@ def _fused_rpbh_quantize_activation_pack_w4_kernel(
     signs_ptr,
     boundaries_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     dim: tl.constexpr,
     num_blocks: tl.constexpr,
     orbit_block_size: tl.constexpr,
@@ -358,13 +358,81 @@ def _fused_rpbh_quantize_activation_pack_w4_kernel(
 
 
 @triton.jit
+def _fused_rpbh_quantize_activation_int8_kernel(
+    input_ptr,
+    norms_ptr,
+    permutation_ptr,
+    signs_ptr,
+    boundaries_ptr,
+    codes_ptr,
+    output_ptr,
+    rows,
+    dim: tl.constexpr,
+    num_blocks: tl.constexpr,
+    orbit_block_size: tl.constexpr,
+    fwht_stages: tl.constexpr,
+    levels: tl.constexpr,
+    eps: tl.constexpr,
+    inv_sqrt_block: tl.constexpr,
+):
+    row_block = tl.program_id(0)
+    row = row_block // num_blocks
+    orbit_block = row_block % num_blocks
+    local_cols = tl.arange(0, orbit_block_size)
+    cols = orbit_block * orbit_block_size + local_cols
+    mask = (row < rows) & (cols < dim)
+    source_cols = tl.load(permutation_ptr + cols, mask=mask, other=0).to(tl.int32)
+    signs = tl.load(signs_ptr + cols, mask=mask, other=1).to(tl.float32)
+    norm = tl.load(norms_ptr + row, mask=row < rows, other=0.0).to(tl.float32)
+    values = tl.load(
+        input_ptr + row * dim + source_cols,
+        mask=mask,
+        other=0.0,
+    ).to(tl.float32)
+    values = values * signs / (norm + eps)
+
+    if fwht_stages > 0:
+        values = _fwht_local_stage(values, orbit_block_size, 1)
+    if fwht_stages > 1:
+        values = _fwht_local_stage(values, orbit_block_size, 2)
+    if fwht_stages > 2:
+        values = _fwht_local_stage(values, orbit_block_size, 4)
+    if fwht_stages > 3:
+        values = _fwht_local_stage(values, orbit_block_size, 8)
+    if fwht_stages > 4:
+        values = _fwht_local_stage(values, orbit_block_size, 16)
+    if fwht_stages > 5:
+        values = _fwht_local_stage(values, orbit_block_size, 32)
+    if fwht_stages > 6:
+        values = _fwht_local_stage(values, orbit_block_size, 64)
+    if fwht_stages > 7:
+        values = _fwht_local_stage(values, orbit_block_size, 128)
+    if fwht_stages > 8:
+        values = _fwht_local_stage(values, orbit_block_size, 256)
+    if fwht_stages > 9:
+        values = _fwht_local_stage(values, orbit_block_size, 512)
+    if fwht_stages > 10:
+        values = _fwht_local_stage(values, orbit_block_size, 1024)
+    if fwht_stages > 11:
+        values = _fwht_local_stage(values, orbit_block_size, 2048)
+
+    values *= inv_sqrt_block
+    indices = tl.zeros((orbit_block_size,), dtype=tl.int32)
+    for index in tl.static_range(0, levels - 1):
+        boundary = tl.load(boundaries_ptr + index)
+        indices += (values > boundary).to(tl.int32)
+    quantized = tl.load(codes_ptr + indices)
+    tl.store(output_ptr + row * dim + cols, quantized.to(tl.int8), mask=mask)
+
+
+@triton.jit
 def _fused_rpbh_fwht_1024_chunk_kernel(
     input_ptr,
     norms_ptr,
     permutation_ptr,
     signs_ptr,
     work_ptr,
-    rows: tl.constexpr,
+    rows,
     dim: tl.constexpr,
     num_blocks: tl.constexpr,
     orbit_block_size: tl.constexpr,
@@ -408,7 +476,7 @@ def _codebook_rescale_kernel(
     centroids_ptr,
     boundaries_ptr,
     output_ptr,
-    total: tl.constexpr,
+    total,
     dim: tl.constexpr,
     block_size: tl.constexpr,
     levels: tl.constexpr,
@@ -431,7 +499,7 @@ def _quantize_activation_work_pack_w4_kernel(
     work_ptr,
     boundaries_ptr,
     output_ptr,
-    packed_total: tl.constexpr,
+    packed_total,
     levels: tl.constexpr,
     inv_sqrt_block: tl.constexpr,
     block_size: tl.constexpr,
@@ -456,7 +524,7 @@ def _quantize_activation_work_pack_w4_kernel(
 @triton.jit
 def _fwht_stage_kernel(
     work_ptr,
-    total_pairs: tl.constexpr,
+    total_pairs,
     in_features: tl.constexpr,
     num_blocks: tl.constexpr,
     orbit_block_size: tl.constexpr,
@@ -485,7 +553,7 @@ def _fwht_stage_kernel(
 @triton.jit
 def _fwht_two_stage_kernel(
     work_ptr,
-    total_quads: tl.constexpr,
+    total_quads,
     in_features: tl.constexpr,
     num_blocks: tl.constexpr,
     orbit_block_size: tl.constexpr,
@@ -526,7 +594,7 @@ def _dequantize_packed_weight_kernel(
     row_norms_ptr,
     centroids_ptr,
     output_ptr,
-    total: tl.constexpr,
+    total,
     in_features: tl.constexpr,
     bits: tl.constexpr,
     block_size: tl.constexpr,
@@ -555,7 +623,7 @@ def _matmul_packed_weight_kernel(
     centroids_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     bits: tl.constexpr,
@@ -619,7 +687,7 @@ def _matmul_packed_weight_w4_kernel(
     centroids_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     has_bias: tl.constexpr,
@@ -686,7 +754,7 @@ def _matmul_packed_adaln_int4_group_kernel(
     scales_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     padded_in_features: tl.constexpr,
@@ -757,7 +825,7 @@ def _matmul_packed_adaln_int4_kernel(
     scales_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     padded_in_features: tl.constexpr,
@@ -823,7 +891,7 @@ def _decode_packed_w4_codes_kernel(
     packed_ptr,
     codes_ptr,
     output_ptr,
-    total: tl.constexpr,
+    total,
     block_size: tl.constexpr,
 ):
     offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
@@ -843,7 +911,7 @@ def _scale_int32_matmul_output_chunk_kernel(
     bias_ptr,
     output_ptr,
     output_col_start,
-    rows: tl.constexpr,
+    rows,
     chunk_out_features: tl.constexpr,
     out_features: tl.constexpr,
     combined_scale: tl.constexpr,
@@ -929,7 +997,7 @@ def _permute_sign_weight_kernel(
     permutation_ptr,
     signs_ptr,
     work_ptr,
-    total: tl.constexpr,
+    total,
     in_features: tl.constexpr,
     block_size: tl.constexpr,
 ):
@@ -950,7 +1018,7 @@ def _permute_sign_weight_kernel(
 @triton.jit
 def _fwht_stage_weight_kernel(
     work_ptr,
-    total_pairs: tl.constexpr,
+    total_pairs,
     in_features: tl.constexpr,
     num_blocks: tl.constexpr,
     orbit_block_size: tl.constexpr,
@@ -982,7 +1050,7 @@ def _quantize_rotated_weight_indices_kernel(
     row_norms_ptr,
     boundaries_ptr,
     indices_ptr,
-    total: tl.constexpr,
+    total,
     in_features: tl.constexpr,
     levels: tl.constexpr,
     eps: tl.constexpr,
@@ -1140,7 +1208,7 @@ def _dequantize_adaln_weight_kernel(
     packed_ptr,
     scales_ptr,
     output_ptr,
-    total: tl.constexpr,
+    total,
     in_features: tl.constexpr,
     padded_in_features: tl.constexpr,
     num_groups: tl.constexpr,
@@ -1445,6 +1513,99 @@ def quantize_activations_packed_w4_with_triton(
         block_size=element_block_size,
     )
     return packed.reshape(*original_shape[:-1], dim // 2), norms.reshape(original_shape[:-1])
+
+
+def quantize_activations_int8_with_triton(
+    x: torch.Tensor,
+    *,
+    rotation: RPBHRotation,
+    codebook: LloydMaxCodebook,
+    activation_codes: torch.Tensor,
+    eps: float,
+    constant_tensors: dict[str, torch.Tensor] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Quantize RPBH activations directly to their INT8 centroid surrogates."""
+    _require_triton_tensor(x, "INT8 activation quantization")
+    if codebook.bits != 4:
+        raise ValueError("INT8 activation quantization requires a 4-bit codebook")
+    if x.shape[-1] != rotation.dim:
+        raise ValueError(f"expected last dimension {rotation.dim}, got {x.shape[-1]}")
+    if activation_codes.numel() != 16:
+        raise ValueError("INT8 activation quantization requires 16 surrogate codes")
+
+    triton, _ = _load_triton()
+    original_shape = x.shape
+    dim = int(rotation.dim)
+    input_contiguous = x.contiguous().reshape(-1, dim)
+    rows = input_contiguous.shape[0]
+    output = torch.empty((rows, dim), device=x.device, dtype=torch.int8)
+    norms = torch.empty(rows, device=x.device, dtype=torch.float32)
+    if output.numel() == 0:
+        return output.reshape(original_shape), norms.reshape(original_shape[:-1])
+
+    if rotation.block_size > 4096:
+        packed, norms = quantize_activations_packed_w4_with_triton(
+            x,
+            rotation=rotation,
+            codebook=codebook,
+            eps=eps,
+            constant_tensors=constant_tensors,
+        )
+        _decode_packed_w4_codes_kernel[(triton.cdiv(output.numel(), 256),)](
+            packed,
+            activation_codes.to(device=x.device, dtype=torch.int8).contiguous(),
+            output,
+            total=output.numel(),
+            block_size=256,
+        )
+        return output.reshape(original_shape), norms
+
+    constants = {} if constant_tensors is None else constant_tensors
+    permutation = (
+        constants.get("permutation", rotation.permutation)
+        .to(device=x.device, dtype=torch.int32)
+        .contiguous()
+    )
+    signs = (
+        constants.get("signs", rotation.signs).to(device=x.device, dtype=torch.int8).contiguous()
+    )
+    boundaries = (
+        constants.get("boundaries", codebook.boundaries)
+        .to(device=x.device, dtype=torch.float32)
+        .contiguous()
+    )
+    codes = activation_codes.to(device=x.device, dtype=torch.int8).contiguous()
+
+    _row_norm_kernel[(rows,)](
+        input_contiguous,
+        norms,
+        rows=rows,
+        dim=dim,
+        eps=float(eps),
+        block_size=triton.next_power_of_2(dim),
+        num_warps=8,
+    )
+    orbit_block_size = int(rotation.block_size)
+    num_blocks = int(rotation.num_blocks)
+    _fused_rpbh_quantize_activation_int8_kernel[(rows * num_blocks,)](
+        input_contiguous,
+        norms,
+        permutation,
+        signs,
+        boundaries,
+        codes,
+        output,
+        rows=rows,
+        dim=dim,
+        num_blocks=num_blocks,
+        orbit_block_size=orbit_block_size,
+        fwht_stages=orbit_block_size.bit_length() - 1,
+        levels=codebook.centroids.numel(),
+        eps=float(eps),
+        inv_sqrt_block=float(rotation.normalization),
+        num_warps=8 if orbit_block_size >= 512 else 4,
+    )
+    return output.reshape(original_shape), norms.reshape(original_shape[:-1])
 
 
 def quantize_adaln_weight_with_triton(
@@ -1867,7 +2028,7 @@ def _matmul_packed_w4a4_fused_int8_kernel(
     weight_codes_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     combined_scale: tl.constexpr,
@@ -1942,7 +2103,7 @@ def _matmul_int8act_packed_lowbit_fused_kernel(
     weight_codes_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     combined_scale: tl.constexpr,
@@ -2027,7 +2188,7 @@ def _matmul_packed_w2a4_fused_int8_kernel(
     weight_codes_ptr,
     bias_ptr,
     output_ptr,
-    rows: tl.constexpr,
+    rows,
     out_features: tl.constexpr,
     in_features: tl.constexpr,
     combined_scale: tl.constexpr,
@@ -2474,8 +2635,13 @@ def matmul_packed_w4a4_with_int_mm(
     chunk_out_features: int | None = None,
     activations_are_int8: bool = False,
     decoded_weight: torch.Tensor | None = None,
+    fused_epilogue: bool | None = None,
 ) -> torch.Tensor:
-    """Decode active W4/A4 tiles to INT8 and use PyTorch's CUTLASS GEMM.
+    """Decode active W4/A4 tiles to INT8 and run an INT8 GEMM.
+
+    ``fused_epilogue`` (default on CUDA) runs the Triton INT8 GEMM with the scale epilogue in
+    registers; otherwise PyTorch's cuBLASLt ``_int_mm`` writes int32 and a second kernel
+    scales it. Both produce identical results.
 
     ``decoded_weight`` optionally supplies a persistent INT8 surrogate weight
     (``decode_packed_w4_weight_to_int8``) so the per-forward decode is skipped.
@@ -2554,12 +2720,14 @@ def matmul_packed_w4a4_with_int_mm(
             block_size=decode_block_size,
         )
 
+    if fused_epilogue is None:
+        fused_epilogue = device.type == "cuda" and not getattr(torch.version, "hip", None)
     # cuBLASLt INT8 GEMM rejects some row counts (every m <= 16 and, on some
     # torch/CUDA stacks, shape-dependent m values that are not multiples of
     # 32), so run the GEMM on zero-padded rows and let the epilogue write only
     # the real ones.
     gemm_rows = max(32, -(-rows // 32) * 32)
-    if gemm_rows != rows:
+    if gemm_rows != rows and not fused_epilogue:
         padded_activations = torch.zeros(
             (gemm_rows, in_features), device=device, dtype=torch.int8
         )
@@ -2611,6 +2779,22 @@ def matmul_packed_w4a4_with_int_mm(
                 total=weight_total,
                 block_size=decode_block_size,
             )
+        if fused_epilogue:
+            # Same exact int32 sums and the same epilogue order as the int_mm path below.
+            from orbitquant.kernels.triton_int8_gemm import matmul_int8_scaled_with_triton
+
+            matmul_int8_scaled_with_triton(
+                activation_values,
+                weight_storage,
+                token_norm_values,
+                row_norm_values.narrow(0, output_col_start, current_chunk),
+                alpha=combined_scale,
+                bias=bias_values.narrow(0, output_col_start, current_chunk) if has_bias else None,
+                out=output,
+                col_offset=output_col_start,
+            )
+            del weight_storage
+            continue
         accumulator = torch._int_mm(gemm_activations, weight_storage.t())
         del weight_storage
         epilogue_grid = (

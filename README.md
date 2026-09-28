@@ -22,6 +22,9 @@ The implementation is clean-room and Apache-2.0 licensed.
   `from_pretrained()` integration.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
+- A fused DiT runtime for Krea 2 (`orbitquant.runtime.krea2`): grouped INT8
+  GEMMs with SwiGLU/residual epilogues and an INT8 attention kernel, 2.4x
+  faster than the eager path on an RTX 4060 Ti.
 - `torch.compile(fullgraph=True)` support: quantized forwards run behind a
   registered custom op with a fake implementation, so compiled models match
   eager output exactly. The forward is also CUDA-Graph-capturable;
@@ -442,6 +445,49 @@ targets the LibTorch Stable ABI 2.11, but remains specific to its operating
 system, C++ runtime, and architecture. See
 [`docs/kernel-audit.md`](docs/kernel-audit.md) for tested shapes, benchmark
 methodology, and local package verification.
+
+## Fused DiT Runtime (Krea 2)
+
+Version 0.10 speeds up every W4A4 model on CUDA without API changes:
+
+- Triton kernels take row counts as runtime arguments, so a new prompt length
+  or image size no longer recompiles them.
+- Large-row W4A4 layers use an INT8 GEMM that applies the scale epilogue in
+  registers; the output is bit-identical to the previous `torch._int_mm` path.
+- Projections that read the same tensor (attention Q/K/V, SwiGLU gate/up)
+  share one activation quantization. The reuse needs version counters, so run
+  inference under `torch.no_grad()`; `torch.inference_mode()` disables it.
+
+On an RTX 4060 Ti the Qwen-Image 2.1 W4A4 pipeline went from 15.0 to 10.3 s
+per 1024x1024 image with pixel-identical output.
+
+`orbitquant.runtime.krea2` goes further for Krea 2 Turbo: each block runs one
+grouped Q|K|V|gate GEMM with the sigmoid gate in its epilogue, a fused Q/K
+RMSNorm + RoPE kernel, SwiGLU and gated residual updates in GEMM epilogues,
+W8A8 down projections, and optionally an INT8 Q.K^T / FP16 P.V attention
+kernel (the SageAttention v1 scheme). Blocks whose Q/K RMSNorm scales one
+channel far above the rest keep BF16 attention.
+
+```python
+import torch
+from diffusers import Krea2Pipeline
+from orbitquant.runtime.krea2 import Krea2FastRunner, install, save_fused
+
+pipe = Krea2Pipeline.from_pretrained(model_dir, dtype=torch.bfloat16)
+fused = install(pipe.transformer, attention="int8")  # on the host, before .to("cuda")
+save_fused(fused, "fused_blocks.safetensors")  # optional: map it next time
+pipe.to("cuda")
+runner = Krea2FastRunner(pipe, fused)
+with torch.no_grad():
+    states = runner.encode(prompt, torch.device("cuda"))
+    latents = runner.denoise(states, width=1024, height=1024)
+    image = runner.decode(latents, width=1024, height=1024)
+```
+
+Building the fused buffers copies the block weights into new host memory;
+`install(..., fused_path="fused_blocks.safetensors")` maps a saved file instead.
+On an RTX 4060 Ti a 1024x1024 eight-step image takes 10.8 s (25.9 s with the
+stock pipeline), and the DiT needs 7.3 GB instead of 10 GB.
 
 ## Validated Architecture Coverage
 
