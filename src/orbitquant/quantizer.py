@@ -312,6 +312,13 @@ class OrbitQuantizer(*_hf_base_classes()):
             module, tensor_name = _module_and_tensor_name(model, param_name)
             if not _is_prequantized_state_tensor(module, tensor_name):
                 raise ValueError(f"{param_name} is not an OrbitQuant pre-quantized tensor")
+            from orbitquant.fused.groups import GROUP_TYPES
+
+            stored = state_dict.get(param_name) if isinstance(state_dict, dict) else None
+            if isinstance(module, tuple(GROUP_TYPES.values())) and isinstance(stored, torch.Tensor):
+                # Diffusers casts floating tensors to the model dtype before this call; fused
+                # groups keep their stored dtypes (FP32 row scales, BF16 dense rows).
+                param_value = stored
 
             if tensor_name in module._parameters:
                 old_value = module._parameters[tensor_name]
