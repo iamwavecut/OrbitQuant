@@ -7,7 +7,8 @@ An adapter module defines:
 * ``blocks(model)``: ``(path, kind)`` of every fused block;
 * ``groups(kind, block)``: ``{name: GroupSpec}`` for a block of that kind;
 * ``forward(kind)``: the replacement ``forward`` (same signature as the original block);
-* ``prepare(block, kind)``: per-block settings derived from the loaded weights (optional).
+* ``prepare(block, kind)``: per-block settings derived from the loaded weights (optional);
+* ``install(model)``: model-level changes outside the blocks (optional).
 """
 
 from __future__ import annotations

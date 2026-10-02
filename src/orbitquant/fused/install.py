@@ -128,7 +128,14 @@ def fuse(
         layout["activation_bits"] = widths
     model.oq_fused_layout = layout
     model.__dict__["oq_runtime"] = runtime
+    _install_model(model, adapter)
     return layout
+
+
+def _install_model(model: nn.Module, adapter) -> None:
+    install = getattr(adapter, "install", None)
+    if install is not None:
+        install(model)
 
 
 def _empty_group(block, spec, group_kind: str, config, device, activation_bits=None):
@@ -181,6 +188,7 @@ def prepare_skeleton(
         _attach(model, block, adapter, kind, modules, runtime)
     model.oq_fused_layout = layout
     model.__dict__["oq_runtime"] = runtime
+    _install_model(model, adapter)
 
 
 def finalize(model: nn.Module) -> None:

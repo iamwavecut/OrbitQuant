@@ -88,6 +88,15 @@ def _segments(sizes_and_bits) -> tuple[tuple[int, int], ...]:
     return tuple((rows, bits) for rows, bits in runs)
 
 
+def _register_weights(module: nn.Module, **tensors: torch.Tensor | None) -> None:
+    # Frozen parameters, not buffers: diffusers' streamed group offloading moves only the
+    # parameters of an offloaded module back to the host.
+    for name, tensor in tensors.items():
+        module.register_parameter(
+            name, None if tensor is None else nn.Parameter(tensor, requires_grad=False)
+        )
+
+
 class PackedGroup(nn.Module):
     kind = "packed"
 
@@ -112,9 +121,7 @@ class PackedGroup(nn.Module):
             raise ValueError(f"{tuple(row_norms.shape)} row norms for {self.out_features} rows")
         if tuple(packed.shape) != self.packed_shape(self.segments, self.in_features):
             raise ValueError(f"packed weights {tuple(packed.shape)} do not match {self.segments}")
-        self.register_buffer("packed", packed)
-        self.register_buffer("row_norms", row_norms)
-        self.register_buffer("bias", bias)
+        _register_weights(self, packed=packed, row_norms=row_norms, bias=bias)
         constants = {
             bits: surrogate_constants(
                 self.in_features, bits, self.activation_bits, self.codebook_version
@@ -281,9 +288,7 @@ class Int8Group(nn.Module):
     def __init__(self, q: torch.Tensor, scales: torch.Tensor, bias: torch.Tensor | None):
         super().__init__()
         self.out_features, self.in_features = (int(v) for v in q.shape)
-        self.register_buffer("q", q)
-        self.register_buffer("scales", scales)
-        self.register_buffer("bias", bias)
+        _register_weights(self, q=q, scales=scales, bias=bias)
 
     @classmethod
     def empty(cls, rows: int, in_features: int, *, bias: bool = False, device="meta") -> Int8Group:
@@ -326,8 +331,7 @@ class Bf16Group(nn.Module):
     def __init__(self, weight: torch.Tensor, bias: torch.Tensor | None):
         super().__init__()
         self.out_features, self.in_features = (int(v) for v in weight.shape)
-        self.register_buffer("weight", weight)
-        self.register_buffer("bias", bias)
+        _register_weights(self, weight=weight, bias=bias)
 
     @classmethod
     def empty(cls, rows: int, in_features: int, *, bias: bool = False, device="meta") -> Bf16Group:

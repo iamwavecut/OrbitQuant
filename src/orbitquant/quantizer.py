@@ -94,7 +94,7 @@ def _is_prequantized_state_tensor(module: Any, tensor_name: str) -> bool:
     from orbitquant.fused.groups import GROUP_TYPES
 
     if isinstance(module, tuple(GROUP_TYPES.values())):
-        return tensor_name in module._buffers
+        return tensor_name in module._parameters or tensor_name in module._buffers
     if isinstance(module, OrbitQuantLinear):
         return tensor_name in _ORBITQUANT_STATE_TENSORS and (
             tensor_name in module._parameters or tensor_name in module._buffers
