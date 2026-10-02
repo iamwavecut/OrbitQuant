@@ -19,8 +19,8 @@ from safetensors.torch import save_file
 from torch import nn
 
 from orbitquant.artifacts.checksums import (
+    existing_file_checksums,
     is_ignored_artifact_relative_path,
-    sha256_file,
     write_sha256sums,
 )
 from orbitquant.artifacts.loader import load_orbitquant_artifact
@@ -75,7 +75,9 @@ def fuse_component_artifact(
     fused_manifest = dataclasses.replace(
         manifest,
         module_shapes={name: list(tensor.shape) for name, tensor in state.items()},
-        checksums={name: sha256_file(output / name) for name in manifest.checksums},
+        # A published manifest can list files that a later repository edit removed (accepted
+        # with validate_checksums=False); the fused manifest lists what the fused copy ships.
+        checksums=existing_file_checksums(output, manifest.checksums),
     )
     (output / "orbitquant_manifest.json").write_text(
         json.dumps(fused_manifest.to_dict(), indent=2) + "\n", encoding="utf-8"

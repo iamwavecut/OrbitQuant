@@ -503,13 +503,19 @@ Groups take the activation width of their projections unless the layout
 overrides it: `fuse(..., activation_bits={"qkv": 8})` gives a group 8-bit
 activations (per-token absmax INT8 of the rotated input). Boogu-Image runs all
 its groups this way because its 3360 channels only allow a 32-wide rotation
-block; the GEMMs stay INT8, so the wider codes cost no speed. Low-bit artifacts
-with mixed weight widths (boundary and interior protection) fuse into row
-segments of one GEMM.
+block; the GEMMs stay INT8, so the wider codes cost almost no speed. Low-bit
+artifacts with mixed weight widths (boundary and interior protection) fuse into
+row segments of one GEMM.
 
 The fused runtime needs CUDA and Triton. Run inference under `torch.no_grad()`
-or `torch.inference_mode()`. `orbitquant.runtime.krea2` from 0.10 remains for
-existing deployments.
+or `torch.inference_mode()`. Fused weights are frozen parameters, so model CPU
+offload and Diffusers block-level group offloading (including streamed
+`use_stream=True` prefetching) move them with their blocks; leaf-level group
+offloading does not, because a fused block reads its groups directly instead of
+calling them. Stream without `record_stream`: recorded streams keep every
+streamed block reserved until the compute stream has used it, which grew
+MiniMax-H3's GPU memory to its 12 GiB cap (5.1 GiB without).
+`orbitquant.runtime.krea2` from 0.10 remains for existing deployments.
 
 ## Validated Architecture Coverage
 

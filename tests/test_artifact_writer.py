@@ -18,6 +18,7 @@ from orbitquant.artifacts import (
     validate_orbitquant_artifact,
 )
 from orbitquant.artifacts.checksums import (
+    existing_file_checksums,
     read_sha256sums,
     validate_sha256sums,
     write_sha256sums,
@@ -317,6 +318,19 @@ def test_sha256sums_ignore_huggingface_local_dir_cache_metadata(tmp_path):
     validated = validate_sha256sums(tmp_path)
     assert validated[".gitattributes"] == "0" * 64
     assert validated[".cache/huggingface/download/.gitattributes.metadata"] == "0" * 64
+
+
+def test_existing_file_checksums_leave_out_missing_paths(tmp_path):
+    (tmp_path / "benchmark").mkdir()
+    (tmp_path / "benchmark" / "summary.json").write_text("{}", encoding="utf-8")
+
+    checksums = existing_file_checksums(
+        tmp_path, ["benchmark/summary.json", "benchmark/comparison.metrics.csv"]
+    )
+
+    assert checksums == {
+        "benchmark/summary.json": sha256_file(tmp_path / "benchmark" / "summary.json")
+    }
 
 
 def test_load_orbitquant_artifact_restores_quantized_modules_into_matching_model(tmp_path):
