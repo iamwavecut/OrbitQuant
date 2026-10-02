@@ -22,9 +22,10 @@ The implementation is clean-room and Apache-2.0 licensed.
   `from_pretrained()` integration.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
-- A fused DiT runtime for Krea 2 (`orbitquant.runtime.krea2`): grouped INT8
-  GEMMs with SwiGLU/residual epilogues and an INT8 attention kernel, 2.4x
-  faster than the eager path on an RTX 4060 Ti.
+- Fused transformer checkpoints for Krea 2, FLUX.2, Ideogram 4, Qwen-Image 2.1,
+  MiniMax-H3 and Boogu-Image (`orbitquant.fused`): each block runs grouped INT8
+  GEMMs with norm/modulation prologues and SwiGLU/gated-residual epilogues plus
+  an INT8 attention kernel, and the checkpoint stores only the fused groups.
 - `torch.compile(fullgraph=True)` support: quantized forwards run behind a
   registered custom op with a fake implementation, so compiled models match
   eager output exactly. The forward is also CUDA-Graph-capturable;
@@ -446,48 +447,75 @@ system, C++ runtime, and architecture. See
 [`docs/kernel-audit.md`](docs/kernel-audit.md) for tested shapes, benchmark
 methodology, and local package verification.
 
-## Fused DiT Runtime (Krea 2)
+## Fused Transformers
 
-Version 0.10 speeds up every W4A4 model on CUDA without API changes:
+Version 0.11 runs the transformer blocks of supported diffusion models fused:
+the projections that read one input (attention Q|K|V, SwiGLU gate|up, the two
+streams of a joint attention) form one weight matrix and one INT8-surrogate
+GEMM, the RMSNorm/LayerNorm and AdaLN modulation in front of them run in the
+activation-quantization prologue, and SwiGLU, sigmoid gates and gated residual
+updates run in the GEMM epilogue. Q/K normalization and RoPE are one kernel,
+and attention uses an INT8 Q.K^T / FP16-accumulated P.V kernel (the
+SageAttention v1 scheme); blocks whose Q/K RMSNorm scales one channel far above
+the rest keep BF16 attention.
 
-- Triton kernels take row counts as runtime arguments, so a new prompt length
-  or image size no longer recompiles them.
-- Large-row W4A4 layers use an INT8 GEMM that applies the scale epilogue in
-  registers; the output is bit-identical to the previous `torch._int_mm` path.
-- Projections that read the same tensor (attention Q/K/V, SwiGLU gate/up)
-  share one activation quantization. The reuse needs version counters, so run
-  inference under `torch.no_grad()`; `torch.inference_mode()` disables it.
-
-On an RTX 4060 Ti the Qwen-Image 2.1 W4A4 pipeline went from 15.0 to 10.3 s
-per 1024x1024 image with pixel-identical output.
-
-`orbitquant.runtime.krea2` goes further for Krea 2 Turbo: each block runs one
-grouped Q|K|V|gate GEMM with the sigmoid gate in its epilogue, a fused Q/K
-RMSNorm + RoPE kernel, SwiGLU and gated residual updates in GEMM epilogues,
-W8A8 down projections, and optionally an INT8 Q.K^T / FP16 P.V attention
-kernel (the SageAttention v1 scheme). Blocks whose Q/K RMSNorm scales one
-channel far above the rest keep BF16 attention.
+A fused checkpoint stores only the fused groups and records the layout in its
+`quantization_config`, so the usual loader returns the fused transformer:
 
 ```python
 import torch
+import orbitquant  # registers the loader
 from diffusers import Krea2Pipeline
-from orbitquant.runtime.krea2 import Krea2FastRunner, install, save_fused
 
-pipe = Krea2Pipeline.from_pretrained(model_dir, dtype=torch.bfloat16)
-fused = install(pipe.transformer, attention="int8")  # on the host, before .to("cuda")
-save_fused(fused, "fused_blocks.safetensors")  # optional: map it next time
-pipe.to("cuda")
-runner = Krea2FastRunner(pipe, fused)
-with torch.no_grad():
-    states = runner.encode(prompt, torch.device("cuda"))
-    latents = runner.denoise(states, width=1024, height=1024)
-    image = runner.decode(latents, width=1024, height=1024)
+pipe = Krea2Pipeline.from_pretrained(
+    "WaveCut/Krea-2-Turbo-OrbitQuant-W4A4", torch_dtype=torch.bfloat16
+).to("cuda")
 ```
 
-Building the fused buffers copies the block weights into new host memory;
-`install(..., fused_path="fused_blocks.safetensors")` maps a saved file instead.
-On an RTX 4060 Ti a 1024x1024 eight-step image takes 10.8 s (25.9 s with the
-stock pipeline), and the DiT needs 7.3 GB instead of 10 GB.
+Fuse a per-projection checkpoint on the host and save it:
+
+```python
+import torch
+from diffusers import Flux2Transformer2DModel
+from orbitquant import fused
+
+transformer = Flux2Transformer2DModel.from_pretrained(
+    model_dir, subfolder="transformer", torch_dtype=torch.bfloat16
+)
+fused.fuse(transformer)  # attention="flash" keeps BF16 attention everywhere
+fused.save_pretrained(transformer, "fused/transformer")
+```
+
+`orbitquant.fused.fuse_component_artifact(model, source_dir, output_dir)` does
+the same for an `orbitquant-v1` component artifact, and
+`load_orbitquant_artifact` loads the result fused.
+
+| Family | Transformer class | Fused blocks |
+| --- | --- | --- |
+| Krea 2 | `Krea2Transformer2DModel` | Q\|K\|V\|gate, gated output, SwiGLU; W8A8 down projections |
+| FLUX.2 | `Flux2Transformer2DModel` | double-stream (per-stream Q\|K\|V, gated residuals) and single-stream blocks; reference-image KV cache |
+| Ideogram 4 | `Ideogram4Transformer2DModel` | sandwich-norm blocks with row-indexed modulation |
+| Qwen-Image 2.1 | `QwenImage21Transformer2DModel` | block-causal prefill and KV-cached decode |
+| MiniMax-H3 | `MiniMaxH3Transformer3DModel` | per-row (timestep, modality) AdaLN tables, partial rotate-half RoPE |
+| Boogu-Image | `BooguImageTransformer2DModel` | refiner, single- and double-stream blocks; 8-bit activations |
+
+Groups take the activation width of their projections unless the layout
+overrides it: `fuse(..., activation_bits={"qkv": 8})` gives a group 8-bit
+activations (per-token absmax INT8 of the rotated input). Boogu-Image runs all
+its groups this way because its 3360 channels only allow a 32-wide rotation
+block; the GEMMs stay INT8, so the wider codes cost almost no speed. Low-bit
+artifacts with mixed weight widths (boundary and interior protection) fuse into
+row segments of one GEMM.
+
+The fused runtime needs CUDA and Triton. Run inference under `torch.no_grad()`
+or `torch.inference_mode()`. Fused weights are frozen parameters, so model CPU
+offload and Diffusers block-level group offloading (including streamed
+`use_stream=True` prefetching) move them with their blocks; leaf-level group
+offloading does not, because a fused block reads its groups directly instead of
+calling them. Stream without `record_stream`: recorded streams keep every
+streamed block reserved until the compute stream has used it, which grew
+MiniMax-H3's GPU memory to its 12 GiB cap (5.1 GiB without).
+`orbitquant.runtime.krea2` from 0.10 remains for existing deployments.
 
 ## Validated Architecture Coverage
 

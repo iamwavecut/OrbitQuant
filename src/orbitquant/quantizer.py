@@ -91,6 +91,10 @@ def _module_and_tensor_name(model: Any, param_name: str) -> tuple[Any, str]:
 
 
 def _is_prequantized_state_tensor(module: Any, tensor_name: str) -> bool:
+    from orbitquant.fused.groups import GROUP_TYPES
+
+    if isinstance(module, tuple(GROUP_TYPES.values())):
+        return tensor_name in module._parameters or tensor_name in module._buffers
     if isinstance(module, OrbitQuantLinear):
         return tensor_name in _ORBITQUANT_STATE_TENSORS and (
             tensor_name in module._parameters or tensor_name in module._buffers
@@ -308,6 +312,13 @@ class OrbitQuantizer(*_hf_base_classes()):
             module, tensor_name = _module_and_tensor_name(model, param_name)
             if not _is_prequantized_state_tensor(module, tensor_name):
                 raise ValueError(f"{param_name} is not an OrbitQuant pre-quantized tensor")
+            from orbitquant.fused.groups import GROUP_TYPES
+
+            stored = state_dict.get(param_name) if isinstance(state_dict, dict) else None
+            if isinstance(module, tuple(GROUP_TYPES.values())) and isinstance(stored, torch.Tensor):
+                # Diffusers casts floating tensors to the model dtype before this call; fused
+                # groups keep their stored dtypes (FP32 row scales, BF16 dense rows).
+                param_value = stored
 
             if tensor_name in module._parameters:
                 old_value = module._parameters[tensor_name]
@@ -544,6 +555,14 @@ class OrbitQuantizer(*_hf_base_classes()):
                 model,
                 self.quantization_config,
             )
+            if self.pre_quantized and self.quantization_config.fused_layout:
+                from orbitquant.fused import prepare_skeleton
+
+                prepare_skeleton(
+                    model,
+                    self.quantization_config.fused_layout,
+                    config=self.quantization_config,
+                )
             _mark_quantized_gpt_projection_parents_initialized(model)
         if self._diffusers_streaming_quantization:
             self._diffusers_model = model
@@ -551,6 +570,10 @@ class OrbitQuantizer(*_hf_base_classes()):
         return model
 
     def _process_model_after_weight_loading(self, model: Any, *args: Any, **kwargs: Any) -> Any:
+        if self.pre_quantized and self.quantization_config.fused_layout:
+            from orbitquant.fused import finalize
+
+            finalize(model)
         if (
             not self.pre_quantized
             and not self._transformers_streaming_quantization

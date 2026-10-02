@@ -106,6 +106,11 @@ def load_orbitquant_artifact(
         parent, child_name = _parent_and_child(model, name)
         _set_child(parent, child_name, replacement)
 
+    if config.fused_layout:
+        from orbitquant.fused import prepare_skeleton
+
+        prepare_skeleton(model, config.fused_layout, config=config)
+
     state_dict = load_file(
         artifact_path / "model.safetensors",
         device=_safetensors_load_device(device, model),
@@ -113,4 +118,8 @@ def load_orbitquant_artifact(
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
     if strict and (missing or unexpected):
         raise RuntimeError(f"artifact state mismatch: missing={missing}, unexpected={unexpected}")
+    if config.fused_layout:
+        from orbitquant.fused import finalize
+
+        finalize(model)
     return manifest

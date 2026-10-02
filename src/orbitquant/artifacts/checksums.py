@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from pathlib import Path
 
 _IGNORED_ARTIFACT_PATH_PARTS = {
@@ -23,6 +24,16 @@ def sha256_file(path: str | Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def existing_file_checksums(root: str | Path, relative_paths: Iterable[str]) -> dict[str, str]:
+    """SHA-256 of each listed path that is a file under ``root``; missing paths are left out."""
+    root_path = Path(root)
+    return {
+        relative_path: sha256_file(root_path / relative_path)
+        for relative_path in relative_paths
+        if (root_path / relative_path).is_file()
+    }
 
 
 def write_sha256sums(root: str | Path, output: str | Path | None = None) -> Path:

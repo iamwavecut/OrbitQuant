@@ -14,8 +14,10 @@ rounds to bf16 exactly where the eager ops it replaces do:
 
 * ``EPILOGUE_SWIGLU``: rows of ``b`` interleave gate and up in chunks of ``BLOCK_N // 2``;
   the kernel writes ``bf16(silu(bf16(gate))) * bf16(up)`` (half as many columns).
-* ``EPILOGUE_RESIDUAL_GATE``: ``out = res + bf16(gate[n] * bf16(y))`` (in place allowed).
+* ``EPILOGUE_RESIDUAL_GATE``: ``out = res + bf16(gate[n] * bf16(y))`` (in place allowed); the
+  gate may be selected per row from a table (``gate_index``).
 * ``EPILOGUE_SIGMOID_TAIL``: columns ``>= sig_from`` store ``sigmoid(bf16(y))``.
+* ``EPILOGUE_GELU_TANH``: ``gelu_tanh(bf16(y))``.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ EPILOGUE_PLAIN = 0
 EPILOGUE_SWIGLU = 1
 EPILOGUE_RESIDUAL_GATE = 2
 EPILOGUE_SIGMOID_TAIL = 3
+EPILOGUE_GELU_TANH = 4
 
 # The SwiGLU epilogue pairs gate/up halves inside one N tile; weights packed for it interleave
 # rows in chunks of this size.
@@ -89,17 +92,20 @@ def _int8_scaled_gemm_body(
     bias_ptr,
     res_ptr,
     gate_ptr,
+    gate_index_ptr,
     M,
     N,
     K,
     stride_om,
     col_offset,
+    gate_stride,
     M_BUCKET,
     alpha,
     sig_from,
     HAS_BIAS: tl.constexpr,
     SCALE_MODE: tl.constexpr,
     EPILOGUE: tl.constexpr,
+    GATE_INDEXED: tl.constexpr,
     EVEN_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -158,13 +164,23 @@ def _int8_scaled_gemm_body(
     elif EPILOGUE == 2:
         cols = (col_offset + offs_n)[None, :]
         mask = mask_m[:, None] & mask_n[None, :]
-        gate = tl.load(gate_ptr + col_offset + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        if GATE_INDEXED:
+            gate_rows = tl.load(gate_index_ptr + offs_m, mask=mask_m, other=0).to(tl.int64)
+            gate = tl.load(
+                gate_ptr + gate_rows[:, None] * gate_stride + cols, mask=mask, other=0.0
+            ).to(tl.float32)
+        else:
+            gate = tl.load(gate_ptr + col_offset + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            gate = gate[None, :]
         res = tl.load(res_ptr + rows + cols, mask=mask, other=0.0).to(tl.float32)
-        out = res + _bf16(gate[None, :] * _bf16(y))
+        out = res + _bf16(gate * _bf16(y))
         tl.store(out_ptr + rows + cols, out.to(out_ptr.dtype.element_ty), mask=mask)
-    elif EPILOGUE == 3:
+    elif EPILOGUE == 3 or EPILOGUE == 4:
         y = _bf16(y)
-        if pid_n * BLOCK_N >= sig_from:
+        if EPILOGUE == 4:
+            inner = 0.7978845608028654 * (y + 0.044715 * y * y * y)
+            y = 0.5 * y * (1.0 + libdevice.tanh(inner))
+        elif pid_n * BLOCK_N >= sig_from:
             y = libdevice.div_rn(1.0, 1.0 + libdevice.exp(-y))
         tl.store(
             out_ptr + rows + (col_offset + offs_n)[None, :],
@@ -179,7 +195,7 @@ def _int8_scaled_gemm_body(
         )
 
 
-_KEY = ["M_BUCKET", "N", "K", "SCALE_MODE", "HAS_BIAS", "EPILOGUE"]
+_KEY = ["M_BUCKET", "N", "K", "SCALE_MODE", "HAS_BIAS", "EPILOGUE", "GATE_INDEXED"]
 # The residual-gate epilogue usually updates its output in place: every benchmark run of the
 # autotuner would add the projection to the residual again.
 _int8_scaled_gemm = autotune(_configs(), _KEY, restore_value=["out_ptr"])(_int8_scaled_gemm_body)
@@ -207,6 +223,7 @@ def matmul_int8_scaled_with_triton(
     epilogue: int = EPILOGUE_PLAIN,
     residual: torch.Tensor | None = None,
     gate: torch.Tensor | None = None,
+    gate_index: torch.Tensor | None = None,
     sig_from: int = 0,
 ) -> torch.Tensor:
     """Scaled ``a @ b.T`` for INT8 ``a [M, K]`` and ``b [N, K]``.
@@ -214,7 +231,8 @@ def matmul_int8_scaled_with_triton(
     ``out`` may be a wider row-major buffer; the result lands in columns
     ``[col_offset, col_offset + N)`` (``N // 2`` for SwiGLU) so chunked weight decodes write in
     place. The residual-gate epilogue reads ``residual`` with the same layout as ``out`` and may
-    alias it.
+    alias it; its ``gate`` is a vector over the output columns, or with ``gate_index`` a row-major
+    table whose row ``gate_index[m]`` gates output row ``m``.
     """
     if a.dtype != torch.int8 or b.dtype != torch.int8:
         raise ValueError("matmul_int8_scaled_with_triton expects INT8 operands")
@@ -243,6 +261,8 @@ def matmul_int8_scaled_with_triton(
     def grid(meta):
         return (triton.cdiv(rows, meta["BLOCK_M"]) * triton.cdiv(n, meta["BLOCK_N"]),)
 
+    if gate_index is not None and gate.stride(-1) != 1:
+        gate = gate.contiguous()
     kernel[grid](
         a,
         b,
@@ -252,17 +272,20 @@ def matmul_int8_scaled_with_triton(
         bias if bias is not None else a_scale,
         residual if residual is not None else out,
         gate if gate is not None else a_scale,
+        gate_index if gate_index is not None else a_scale,
         rows,
         n,
         k,
         out.stride(0),
         int(col_offset),
+        gate.stride(0) if gate_index is not None else 0,
         _row_bucket(rows),
         float(alpha),
         int(sig_from),
         HAS_BIAS=bias is not None,
         SCALE_MODE=int(scale_mode),
         EPILOGUE=int(epilogue),
+        GATE_INDEXED=gate_index is not None,
         EVEN_K=k % 128 == 0,
     )
     return out
