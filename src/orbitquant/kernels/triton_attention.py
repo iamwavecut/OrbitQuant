@@ -10,10 +10,12 @@ rate, so FlashAttention-style BF16 kernels leave most of the tensor throughput u
   kernel exponentiates with ``exp2``.
 * The online softmax runs in FP32.
 * P and V are FP16; each ``BLOCK_N``-token tile of ``P @ V`` accumulates in FP16 and is added
-  to an FP32 accumulator.
+  to an FP32 accumulator. V is converted once up front: converting each tile inside the loop
+  costs about 10% of the kernel time.
 
 Tensors use the ``[batch=1, tokens, heads, head_dim]`` layout of DiT projections; rows may be
-strided (e.g. a column slice of a fused Q|K|V GEMM output).
+strided (e.g. a column slice of a fused Q|K|V GEMM output). Keys and values may be a different
+(e.g. compacted, padding-free) sequence than the queries.
 """
 
 from __future__ import annotations
@@ -103,6 +105,7 @@ def _attention_kernel(
     k_scale_ptr,
     o_ptr,
     seq,
+    seq_kv,
     stride_qr,
     stride_qh,
     stride_kr,
@@ -125,7 +128,7 @@ def _attention_kernel(
     q_rows = offs_m[:, None].to(tl.int64) * stride_qr + head * stride_qh
     q = tl.load(q_ptr + q_rows + offs_d[None, :], mask=offs_m[:, None] < seq, other=0)
     q_scale = tl.load(q_scale_ptr + head * tl.cdiv(seq, BLOCK_M) + start_m)
-    k_scales = k_scale_ptr + kv_head * tl.cdiv(seq, BLOCK_N)
+    k_scales = k_scale_ptr + kv_head * tl.cdiv(seq_kv, BLOCK_N)
     k_ptrs = k_ptr + offs_n[None, :].to(tl.int64) * stride_kr + kv_head * stride_kh
     k_ptrs += offs_d[:, None]
     v_ptrs = v_ptr + offs_n[:, None].to(tl.int64) * stride_vr + kv_head * stride_vh
@@ -133,7 +136,7 @@ def _attention_kernel(
     m_i = tl.full([BLOCK_M], float("-inf"), tl.float32)
     l_i = tl.zeros([BLOCK_M], tl.float32)
     acc = tl.zeros([BLOCK_M, D], tl.float32)
-    full = seq // BLOCK_N
+    full = seq_kv // BLOCK_N
     for block in range(0, full):
         qk_scale = q_scale * tl.load(k_scales + block)
         acc, l_i, m_i = _attention_tile(
@@ -141,10 +144,10 @@ def _attention_kernel(
         )
         k_ptrs += BLOCK_N * stride_kr
         v_ptrs += BLOCK_N * stride_vr
-    if full * BLOCK_N < seq:
+    if full * BLOCK_N < seq_kv:
         qk_scale = q_scale * tl.load(k_scales + full)
         acc, l_i, m_i = _attention_tile(
-            acc, l_i, m_i, q, qk_scale, k_ptrs, v_ptrs, seq - full * BLOCK_N, True, BLOCK_N
+            acc, l_i, m_i, q, qk_scale, k_ptrs, v_ptrs, seq_kv - full * BLOCK_N, True, BLOCK_N
         )
     out = acc / l_i[:, None]
     o_rows = offs_m[:, None].to(tl.int64) * stride_or + head * stride_oh
@@ -157,8 +160,13 @@ def _attention_kernel(
 
 _attention = autotune(
     [triton.Config({}, num_warps=w, num_stages=s) for w in (4, 8) for s in (2, 3, 4)],
-    ["GROUPS", "D"],
+    ["GROUPS", "D", "BLOCK_M"],
 )(_attention_kernel)
+
+
+def _query_block(dim: int) -> int:
+    # The FP32 accumulator is BLOCK_M x D: wide heads take shorter query tiles.
+    return BLOCK_Q if dim <= 128 else 64
 
 
 def _quantize_blocks(x, block, multiplier, mean=None):
@@ -191,26 +199,28 @@ def int8_attention_with_triton(
     *,
     sm_scale: float | None = None,
 ) -> torch.Tensor:
-    """``softmax(q k^T * sm_scale) v`` for ``[1, S, Hq, D]`` queries and ``[1, S, Hkv, D]``
+    """``softmax(q k^T * sm_scale) v`` for ``[1, S, Hq, D]`` queries and ``[1, Skv, Hkv, D]``
     keys/values (``Hq`` a multiple of ``Hkv``, ``D`` a power of two, last dim contiguous).
-    Returns ``[1, S, Hq, D]`` in the query dtype."""
+    Returns ``[1, S, Hq, D]`` in the query dtype. A head padded with zero channels to a power of
+    two gives the unpadded result in its leading channels when ``sm_scale`` is the unpadded one."""
     if query.dim() != 4 or query.shape[0] != 1:
         raise ValueError("expected [1, tokens, heads, head_dim] tensors")
     q, k, v = query[0], key[0], value[0]
     seq, heads, dim = q.shape
-    kv_heads = k.shape[1]
+    seq_kv, kv_heads = k.shape[0], k.shape[1]
     if heads % kv_heads:
         raise ValueError(f"{heads} query heads are not a multiple of {kv_heads} kv heads")
     if dim & (dim - 1) or q.stride(-1) != 1 or k.stride(-1) != 1 or v.stride(-1) != 1:
         raise ValueError("head_dim must be a power of two and contiguous")
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(dim)
-    q_codes, q_scales = _quantize_blocks(q, BLOCK_Q, sm_scale * LOG2E)
-    k_codes, k_scales = _quantize_blocks(k, BLOCK_KV, 1.0, k.float().mean(dim=0).contiguous())
-    v16 = v.to(torch.float16)
+    block_q = _query_block(dim)
+    q_codes, q_scales = _quantize_blocks(q, block_q, sm_scale * LOG2E)
+    k_codes, k_scales = _quantize_blocks(k, BLOCK_KV, 1.0, k.mean(dim=0, dtype=torch.float32))
+    v16 = v if v.dtype == torch.float16 else v.to(torch.float16)
     out = torch.empty((1, seq, heads, dim), device=q.device, dtype=query.dtype)
     o = out[0]
-    _attention[(triton.cdiv(seq, BLOCK_Q), heads)](
+    _attention[(triton.cdiv(seq, block_q), heads)](
         q_codes,
         k_codes,
         v16,
@@ -218,6 +228,7 @@ def int8_attention_with_triton(
         k_scales,
         o,
         seq,
+        seq_kv,
         q_codes.stride(0),
         q_codes.stride(1),
         k_codes.stride(0),
@@ -228,7 +239,7 @@ def int8_attention_with_triton(
         o.stride(1),
         GROUPS=heads // kv_heads,
         D=dim,
-        BLOCK_M=BLOCK_Q,
+        BLOCK_M=block_q,
         BLOCK_N=BLOCK_KV,
     )
     return out

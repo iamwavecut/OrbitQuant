@@ -112,6 +112,9 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     # Known model policies keep their existing paper-aligned recipes. True
     # forces this policy for any target; False disables it.
     lowbit_interior_protection: bool | str = "auto"
+    # Fused-block checkpoints (orbitquant.fused): family, layout version and group kinds. The
+    # loader rebuilds the fused groups from it before the weights load.
+    fused_layout: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.weight_bits not in _SUPPORTED_BITS:
