@@ -41,6 +41,72 @@ def prepare(block, kind):
 
 
 def install(model):
+    _run_on_valid_text_rows(model)
+    _cache_text_fusion(model)
+
+
+def _run_on_valid_text_rows(model):
+    """The pipeline pads the prompt to its maximum length and masks the padding. Padded rows
+    get no attention weight and never reach the output, so a batch-1 forward runs on the valid
+    text rows only and needs no mask: no per-block gather and scatter of the padded sequence,
+    and RoPE and the text projection cover fewer rows. The trimmed tensors of the last two
+    prompts are reused (a CFG pipeline alternates two), which keeps the text-fusion cache warm."""
+    run = model.forward
+    entries = []
+
+    def same(held, tensors):
+        return all(
+            ref() is t and version == t._version
+            for (ref, version), t in zip(held, tensors, strict=True)
+        )
+
+    def trimmed(encoder_hidden_states, mask, position_ids):
+        tensors = (encoder_hidden_states, mask, position_ids)
+        for held, out in entries:
+            if same(held, tensors):
+                return out
+        text_len = encoder_hidden_states.shape[1]
+        rows = mask.reshape(-1).nonzero().squeeze(1)
+        out = (
+            encoder_hidden_states[:, rows],
+            torch.cat([position_ids[rows], position_ids[text_len:]]),
+        )
+        entries.insert(0, (tuple((weakref.ref(t), t._version) for t in tensors), out))
+        del entries[2:]
+        return out
+
+    def forward(
+        hidden_states,
+        encoder_hidden_states,
+        timestep,
+        position_ids,
+        encoder_attention_mask=None,
+        attention_kwargs=None,
+        return_dict=True,
+    ):
+        if (
+            encoder_attention_mask is not None
+            and hidden_states.shape[0] == 1
+            and not torch.is_grad_enabled()
+        ):
+            encoder_hidden_states, position_ids = trimmed(
+                encoder_hidden_states, encoder_attention_mask, position_ids
+            )
+            encoder_attention_mask = None
+        return run(
+            hidden_states,
+            encoder_hidden_states,
+            timestep,
+            position_ids,
+            encoder_attention_mask=encoder_attention_mask,
+            attention_kwargs=attention_kwargs,
+            return_dict=return_dict,
+        )
+
+    model.forward = forward
+
+
+def _cache_text_fusion(model):
     """The text fusion stack does not depend on the timestep: run it once per prompt instead of
     in every denoising step. The last two results are kept (a CFG pipeline alternates two
     prompts), each for the same embeddings and mask tensor objects at the same versions, so a new

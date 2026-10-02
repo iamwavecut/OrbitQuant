@@ -492,7 +492,7 @@ the same for an `orbitquant-v1` component artifact, and
 
 | Family | Transformer class | Fused blocks |
 | --- | --- | --- |
-| Krea 2 | `Krea2Transformer2DModel` | Q\|K\|V\|gate, gated output, SwiGLU; W8A8 down projections |
+| Krea 2 | `Krea2Transformer2DModel` | Q\|K\|V\|gate, gated output, SwiGLU; W8A8 down projections; the text fusion runs once per prompt and batch-1 forwards skip the padded prompt rows |
 | FLUX.2 | `Flux2Transformer2DModel` | double-stream (per-stream Q\|K\|V, gated residuals) and single-stream blocks; reference-image KV cache |
 | Ideogram 4 | `Ideogram4Transformer2DModel` | sandwich-norm blocks with row-indexed modulation |
 | Qwen-Image 2.1 | `QwenImage21Transformer2DModel` | block-causal prefill and KV-cached decode |

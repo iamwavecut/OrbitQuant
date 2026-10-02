@@ -300,3 +300,43 @@ def test_lloyd_max_activation_codes_match_the_rotated_reference(dim):
     index = torch.bucketize(unit, codebook.boundaries.to("cuda", torch.float32))
     expected = quantizer.codes[index]
     assert (codes != expected).float().mean().item() < 1e-3
+
+
+def test_krea2_batch_one_forward_runs_on_the_valid_text_rows():
+    _require_cuda()
+    from orbitquant.fused.families import krea2
+
+    calls = []
+
+    class Transformer(torch.nn.Module):
+        def forward(
+            self,
+            hidden_states,
+            encoder_hidden_states,
+            timestep,
+            position_ids,
+            encoder_attention_mask=None,
+            attention_kwargs=None,
+            return_dict=True,
+        ):
+            calls.append((encoder_hidden_states, position_ids, encoder_attention_mask))
+            return hidden_states
+
+    model = Transformer()
+    krea2._run_on_valid_text_rows(model)
+    # The pipeline's layout: [prompt | padding | template suffix].
+    text = torch.randn(1, 6, 2, 4, device="cuda")
+    mask = torch.tensor([[True, True, False, False, True, True]], device="cuda")
+    positions = torch.cat(
+        [torch.zeros(6, 3, device="cuda"), torch.arange(9.0, device="cuda").view(3, 3)]
+    )
+    latents = torch.randn(1, 3, 8, device="cuda")
+    with torch.no_grad():
+        for _ in range(2):
+            model.forward(latents, text, torch.ones(1), positions, encoder_attention_mask=mask)
+
+    (text_1, positions_1, mask_1), (text_2, positions_2, _) = calls
+    assert mask_1 is None and text_1 is text_2 and positions_1 is positions_2
+    valid = torch.tensor([0, 1, 4, 5], device="cuda")
+    torch.testing.assert_close(text_1, text[:, valid])
+    torch.testing.assert_close(positions_1, torch.cat([positions[valid], positions[6:]]))
