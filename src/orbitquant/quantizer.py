@@ -293,7 +293,20 @@ class OrbitQuantizer(*_hf_base_classes()):
             module, tensor_name = _module_and_tensor_name(model, param_name)
         except (AttributeError, IndexError, KeyError):
             return False
-        return _is_prequantized_state_tensor(module, tensor_name)
+        return _is_prequantized_state_tensor(module, tensor_name) or self._preserves_fp32_param(
+            model, param_name
+        )
+
+    def _preserves_fp32_param(self, model: Any, param_name: str) -> bool:
+        module_name, _, tensor_name = param_name.rpartition(".")
+        if tensor_name not in {"weight", "bias"}:
+            return False
+        decision = self._classified_decisions(model).get(module_name)
+        return (
+            decision is not None
+            and decision.action == "bf16_skip"
+            and decision.dtype in {"float32", "fp32"}
+        )
 
     def check_quantized_param(self, *args: Any, **kwargs: Any) -> bool:
         return self.check_if_quantized_param(*args, **kwargs)
@@ -310,11 +323,18 @@ class OrbitQuantizer(*_hf_base_classes()):
     ) -> None:
         if self.pre_quantized or self._diffusers_streaming_quantization:
             module, tensor_name = _module_and_tensor_name(model, param_name)
-            if not _is_prequantized_state_tensor(module, tensor_name):
+            preserves_fp32 = self._preserves_fp32_param(model, param_name)
+            if not _is_prequantized_state_tensor(module, tensor_name) and not preserves_fp32:
                 raise ValueError(f"{param_name} is not an OrbitQuant pre-quantized tensor")
             from orbitquant.fused.groups import GROUP_TYPES
 
             stored = state_dict.get(param_name) if isinstance(state_dict, dict) else None
+            if preserves_fp32:
+                # Diffusers' FP32 allowlist matches complete path components;
+                # names such as va_modulation do not match its "modulation" entry.
+                # Restore the source tensor before a model-wide BF16 cast loses precision.
+                param_value = stored if isinstance(stored, torch.Tensor) else param_value
+                param_value = param_value.to(torch.float32)
             if isinstance(module, tuple(GROUP_TYPES.values())) and isinstance(stored, torch.Tensor):
                 # Diffusers casts floating tensors to the model dtype before this call; fused
                 # groups keep their stored dtypes (FP32 row scales, BF16 dense rows).

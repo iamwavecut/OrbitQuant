@@ -71,9 +71,12 @@ def _get_or_create_shared_activation_quantization(
         version = x._version
     except RuntimeError:
         # Inference tensors hide their version counter, so an in-place mutation between two
-        # projections could not be detected.
-        _clear_shared_activation_cache()
-        return factory(), False
+        # arbitrary projections could not be detected. The bounded projection helper owns
+        # the complete sequence of pure forwards and clears its cache before returning.
+        if getattr(_SHARED_ACTIVATION_CACHE, "projection_input", None) is not x:
+            _clear_shared_activation_cache()
+            return factory(), False
+        version = None
     metadata = (tuple(x.shape), tuple(x.stride()), x.storage_offset(), x.dtype, x.device, version)
     entry = getattr(_SHARED_ACTIVATION_CACHE, "entry", None)
     if entry is not None:
@@ -83,6 +86,37 @@ def _get_or_create_shared_activation_quantization(
     prepared = factory()
     _SHARED_ACTIVATION_CACHE.entry = (weakref.ref(x), signature, metadata, prepared)
     return prepared, False
+
+
+def project_shared_input(x: torch.Tensor, *projections: nn.Module) -> tuple[torch.Tensor, ...]:
+    """Run pure OrbitQuant projections with one prepared input, including inference tensors.
+
+    The cache lasts only for this call. Different quantization signatures still prepare
+    separate inputs. Gradients, custom forwards and module hooks retain ordinary calls.
+    """
+    pure = not torch.is_grad_enabled() and not torch.compiler.is_compiling() and all(
+        type(layer) is OrbitQuantLinear
+        and "forward" not in layer.__dict__
+        and "_forward_impl" not in layer.__dict__
+        and not layer._forward_pre_hooks
+        and not layer._forward_hooks
+        and layer._compiled_call_impl is None
+        for layer in projections
+    )
+    # Global hooks can also modify an input between projections.
+    hooks = torch.nn.modules.module
+    pure = pure and not hooks._global_forward_pre_hooks and not hooks._global_forward_hooks
+    if not pure:
+        return tuple(layer(x) for layer in projections)
+    previous_input = getattr(_SHARED_ACTIVATION_CACHE, "projection_input", None)
+    previous_entry = getattr(_SHARED_ACTIVATION_CACHE, "entry", None)
+    _SHARED_ACTIVATION_CACHE.projection_input = x
+    _clear_shared_activation_cache()
+    try:
+        return tuple(layer(x) for layer in projections)
+    finally:
+        _SHARED_ACTIVATION_CACHE.projection_input = previous_input
+        _SHARED_ACTIVATION_CACHE.entry = previous_entry
 
 
 def _compile_registry_lookup(handle: int):

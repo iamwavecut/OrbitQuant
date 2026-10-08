@@ -41,6 +41,7 @@ _SUPPORTED_TARGET_POLICIES = {
     "flux2",
     "z_image",
     "wan",
+    "kandinsky6",
 }
 _SUPPORTED_MODULE_DTYPES = {"bfloat16", "bf16", "float16", "fp16", "float32", "fp32"}
 _SUPPORTED_CODEBOOK_DTYPES = {"float32", "fp32"}

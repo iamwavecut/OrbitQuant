@@ -31,6 +31,7 @@ def test_documentation_is_product_focused_instead_of_a_release_chronicle():
 
     assert docs == [
         "flux2-klein-9b-sdnq-vs-orbitquant.md",
+        "kandinsky6-runtime.md",
         "kernel-audit.md",
         "paper-methodology-audit.md",
     ]

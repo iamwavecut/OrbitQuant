@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orbitquant"
-version = "0.11.1"
+version = "0.12.0"
 description = "Calibration-free OrbitQuant for transformer linear projections"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -72,7 +72,7 @@ packages = ["src/orbitquant"]
 "native-kernels/orbitquant-packed-matmul/orbitquant_packed_matmul_cuda" = "orbitquant/_kernel_src/orbitquant_packed_matmul_cuda"
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "native-kernels", "tests", "docs", "scripts", "README.md", "LICENSE"]
+include = ["src", "native-kernels", "tests", "docs", "scripts", "examples", "README.md", "LICENSE"]
 
 [tool.ruff]
 line-length = 100

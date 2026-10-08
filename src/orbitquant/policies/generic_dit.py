@@ -91,6 +91,7 @@ class PolicyRules:
     projection_tokens: tuple[str, ...] = ()
     numeric_scope: bool = False
     quantize_all_supported: bool = False
+    fp32_skip_tokens: tuple[str, ...] = ()
 
 
 _POLICY_RULES: dict[str, PolicyRules] = {
@@ -159,6 +160,17 @@ _POLICY_RULES: dict[str, PolicyRules] = {
         modulation_scopes=(),
         projection_tokens=("attn1", "attn2", "ffn", "to_q", "to_k", "to_v", "to_out"),
     ),
+    "kandinsky6": PolicyRules(
+        block_tokens=(
+            "visual_transformer_blocks",
+            "video_text_transformer_blocks",
+            "audio_text_transformer_blocks",
+        ),
+        modulation_tokens=(),
+        modulation_scopes=(),
+        boundary_skip_tokens=("out_layer",),
+        fp32_skip_tokens=("time_embeddings", "modulation"),
+    ),
 }
 
 
@@ -212,6 +224,8 @@ def resolve_target_policy(model: torch.nn.Module, config: OrbitQuantConfig) -> s
         return config.target_policy
 
     class_name = model.__class__.__name__.lower()
+    if class_name == "kandinsky6transformer3dmodel":
+        return "kandinsky6"
     if "flux2" in class_name:
         return "flux2"
     if "zimage" in class_name or "z_image" in class_name:
@@ -277,6 +291,13 @@ def classify_linear_modules(
             )
         elif explicit_skips and _matches_any_pattern(name, explicit_skips):
             decisions[name] = PolicyDecision(name, "bf16_skip", "explicit modules_to_not_convert")
+        elif _contains_component_substring(lowered, rules.fp32_skip_tokens):
+            decisions[name] = PolicyDecision(
+                name,
+                "bf16_skip",
+                "precision-sensitive timestep or modulation projection",
+                dtype="float32",
+            )
         elif _contains_any(lowered, rules.hard_skip_tokens):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "embedding, timestep, or non-denoiser module"

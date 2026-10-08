@@ -188,6 +188,11 @@ known embeddings, timestep modules, task/output heads, and explicit skips. It
 does not depend on names such as `layers`, `blocks`, or a particular model
 class.
 
+Qwen2.5-VL is supported by the universal policy, including W4A6 text and vision
+attention/FFN projections. Token embeddings, the language output head and the
+vision patch embedding remain unquantized. Packed loading is tested with both
+text-only and image-token forwards.
+
 Use `modules_to_convert` as an allowlist and define AdaLN/skips with exact names,
 substrings, or glob patterns:
 
@@ -297,6 +302,15 @@ component opt-in. Diffusers uses the same safetensors row-sliced conversion and
 normal `PipelineQuantizationConfig` loading path. Unknown architectures receive
 structural `target_policy="auto"` coverage, not a quality guarantee; inspect the
 policy and validate output quality before publishing an artifact.
+
+`Kandinsky6Transformer3DModel` resolves to `target_policy="kandinsky6"`.
+It quantizes attention and feed-forward projections in both text branches and
+the joint video/audio blocks, including cross-modal attention. Timestep and
+AdaLN modulation projections stay FP32, matching Diffusers' precision policy;
+input embeddings and final video/audio projections retain their source precision.
+This requires a Diffusers version that provides the Kandinsky 6 classes.
+See [Kandinsky 6 inference](docs/kandinsky6-runtime.md) for opt-in attention,
+pointwise, projection reuse and normalization optimizations.
 
 Published FLUX, Z-Image, and Wan repositories are compact Diffusers component
 artifacts. Their model cards contain the matching pipeline code and validation
