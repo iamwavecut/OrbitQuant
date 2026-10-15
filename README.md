@@ -23,9 +23,10 @@ The implementation is clean-room and Apache-2.0 licensed.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
 - Fused transformer checkpoints for Krea 2, FLUX.2, Ideogram 4, Qwen-Image 2.1,
-  MiniMax-H3 and Boogu-Image (`orbitquant.fused`): each block runs grouped INT8
-  GEMMs with norm/modulation prologues and SwiGLU/gated-residual epilogues plus
-  an INT8 attention kernel, and the checkpoint stores only the fused groups.
+  MiniMax-H3, Boogu-Image and FLUX.3 Klein (`orbitquant.fused`): each block runs
+  grouped INT8 GEMMs with norm/modulation prologues and SwiGLU/gated-residual
+  epilogues plus an INT8 attention kernel, and the checkpoint stores only the
+  fused groups.
 - `torch.compile(fullgraph=True)` support: quantized forwards run behind a
   registered custom op with a fake implementation, so compiled models match
   eager output exactly. The forward is also CUDA-Graph-capturable;
@@ -512,6 +513,7 @@ the same for an `orbitquant-v1` component artifact, and
 | Qwen-Image 2.1 | `QwenImage21Transformer2DModel` | block-causal prefill and KV-cached decode |
 | MiniMax-H3 | `MiniMaxH3Transformer3DModel` | per-row (timestep, modality) AdaLN tables, partial rotate-half RoPE |
 | Boogu-Image | `BooguImageTransformer2DModel` | refiner, single- and double-stream blocks; 8-bit activations |
+| FLUX.3 Klein | `flux3.dit.DiT` (Black Forest Labs' `flux3` package) | per-mode and single-stream blocks: Q\|K\|V, SwiGLU, gated residuals; one sample at a time |
 
 Groups take the activation width of their projections unless the layout
 overrides it: `fuse(..., activation_bits={"qkv": 8})` gives a group 8-bit

@@ -23,3 +23,14 @@ def test_recognizing_fused_checkpoints_does_not_need_the_triton_runtime():
     command = [sys.executable, "-c", code]
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "False"
+
+
+def test_host_constants_move_to_the_weight_device_once():
+    import torch
+
+    group = torch.nn.Module()
+    group.register_buffer("codes_w4", torch.arange(16, dtype=torch.int8), persistent=False)
+    first = PackedGroup._on_device(group, "codes_w4", torch.device("meta"))
+    assert first.device.type == "meta" and group.codes_w4 is first
+    assert PackedGroup._on_device(group, "codes_w4", torch.device("meta")) is first
+    assert "codes_w4" in dict(group.named_buffers())
