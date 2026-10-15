@@ -256,7 +256,16 @@ class PackedGroup(nn.Module):
         codebook surrogate has a different scale than the first one)."""
         if self.scale_factor is None:
             return self.row_norms
-        return self.row_norms * self.scale_factor.to(self.row_norms.device)
+        return self.row_norms * self._on_device("scale_factor", self.row_norms.device)
+
+    def _on_device(self, name: str, device: torch.device) -> torch.Tensor:
+        """A host-built constant buffer, moved to ``device`` once. A copy per call would be a
+        blocking host-to-device transfer in every GEMM (and illegal under CUDA graph capture)."""
+        tensor = getattr(self, name)
+        if tensor.device != device:
+            tensor = tensor.to(device)
+            setattr(self, name, tensor)
+        return tensor
 
     def decode(self, workspace: torch.Tensor) -> torch.Tensor:
         from orbitquant.kernels.triton_activation import decode_lowbit_to_int8_with_triton
@@ -268,10 +277,10 @@ class PackedGroup(nn.Module):
         row = offset = 0
         for rows, bits in self.segments:
             nbytes = rows * self.in_features * bits // 8
-            codes = getattr(self, f"codes_w{bits}")
+            codes = self._on_device(f"codes_w{bits}", flat.device)
             decode_lowbit_to_int8_with_triton(
                 flat[offset : offset + nbytes],
-                codes.to(flat.device),
+                codes,
                 bits,
                 rows,
                 self.in_features,

@@ -93,6 +93,7 @@ def _prologue_kernel(
     NORM: tl.constexpr,
     MOD: tl.constexpr,
     ROW_INDEXED: tl.constexpr,
+    STORE_Y: tl.constexpr,
 ):
     row = tl.program_id(0).to(tl.int64)
     offs = tl.arange(0, DP2)
@@ -113,7 +114,8 @@ def _prologue_kernel(
                 y = _bf16(y * scale)
             else:
                 y = _bf16(_bf16(1.0 + scale) * y)
-    tl.store(y_ptr + row * D + offs, y.to(tl.bfloat16), mask=mask)
+    if STORE_Y:
+        tl.store(y_ptr + row * D + offs, y.to(tl.bfloat16), mask=mask)
     tl.store(norms_ptr + row, tl.sqrt(tl.sum(y * y, axis=0)))
 
 
@@ -454,7 +456,18 @@ class ActivationQuantizer:
             mod_scale = mod_scale.reshape(-1, self.dim).contiguous()
             if mod_shift is not None:
                 mod_shift = mod_shift.reshape(-1, self.dim).contiguous()
-        y = torch.empty((rows, self.dim), device=x.device, dtype=torch.bfloat16)
+        # Without a prologue a bf16 input row is its own prologue output; only norms are written.
+        passthrough = (
+            not multiply
+            and norm_mode == NORM_NONE
+            and mod_mode == MOD_NONE
+            and not prologue_only
+            and x.dtype == torch.bfloat16
+            and x.stride(0) == self.dim
+        )
+        y = x
+        if not passthrough:
+            y = torch.empty((rows, self.dim), device=x.device, dtype=torch.bfloat16)
         norms = torch.empty(rows, device=x.device, dtype=torch.float32)
         q = torch.empty((rows, self.dim), device=x.device, dtype=torch.int8)
         if rows == 0:
@@ -478,6 +491,7 @@ class ActivationQuantizer:
             NORM=int(norm_mode),
             MOD=int(mod_mode),
             ROW_INDEXED=mod_index is not None,
+            STORE_Y=not passthrough,
             num_warps=8,
             # Under FP contraction the compiler folds the bf16 round trips that mirror the
             # eager ops' rounding (extf(truncf(x)) -> x) and fuses the multiply-adds.
