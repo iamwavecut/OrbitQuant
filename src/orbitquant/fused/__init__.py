@@ -11,10 +11,12 @@ not, so the quantizer can recognize fused checkpoints anywhere.
 from importlib import import_module
 
 _EXPORTS = {
+    "FusedLinear": "orbitquant.fused.linear",
     "FusedRuntime": "orbitquant.fused.runtime",
     "finalize": "orbitquant.fused.install",
     "fuse": "orbitquant.fused.install",
     "fuse_component_artifact": "orbitquant.fused.convert",
+    "fuse_linears": "orbitquant.fused.linear",
     "prepare_skeleton": "orbitquant.fused.install",
     "release": "orbitquant.fused.install",
     "save_pretrained": "orbitquant.fused.install",

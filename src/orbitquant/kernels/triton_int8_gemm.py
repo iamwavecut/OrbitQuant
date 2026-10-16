@@ -18,6 +18,8 @@ rounds to bf16 exactly where the eager ops it replaces do:
   gate may be selected per row from a table (``gate_index``).
 * ``EPILOGUE_SIGMOID_TAIL``: columns ``>= sig_from`` store ``sigmoid(bf16(y))``.
 * ``EPILOGUE_GELU_TANH``: ``gelu_tanh(bf16(y))``.
+* ``EPILOGUE_SITU``: the SwiGLU layout with MOSS-Image's soft-capped unit,
+  ``bf16(4 tanh(g / 4) * sigmoid(g)) * bf16(25 tanh(u / 25))``.
 """
 
 from __future__ import annotations
@@ -37,6 +39,8 @@ EPILOGUE_SWIGLU = 1
 EPILOGUE_RESIDUAL_GATE = 2
 EPILOGUE_SIGMOID_TAIL = 3
 EPILOGUE_GELU_TANH = 4
+EPILOGUE_SITU = 5
+_PAIRED = (EPILOGUE_SWIGLU, EPILOGUE_SITU)
 
 # The SwiGLU epilogue pairs gate/up halves inside one N tile; weights packed for it interleave
 # rows in chunks of this size.
@@ -151,10 +155,17 @@ def _int8_scaled_gemm_body(
     if HAS_BIAS:
         y += tl.load(bias_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)[None, :]
     rows = offs_m[:, None].to(tl.int64) * stride_om
-    if EPILOGUE == 1:
+    if EPILOGUE == 1 or EPILOGUE == 5:
         pairs = tl.permute(tl.reshape(_bf16(y), (BLOCK_M, 2, BLOCK_N // 2)), (0, 2, 1))
         g, u = tl.split(pairs)
-        h = _bf16(libdevice.div_rn(g, 1.0 + libdevice.exp(-g))) * u
+        if EPILOGUE == 1:
+            h = _bf16(libdevice.div_rn(g, 1.0 + libdevice.exp(-g))) * u
+        else:
+            # Each eager bf16 op of the reference rounds once; so does each step here.
+            soft = _bf16(4.0 * _bf16(libdevice.tanh(g * 0.25)))
+            sig = _bf16(libdevice.div_rn(1.0, 1.0 + libdevice.exp(-g)))
+            cap = _bf16(25.0 * _bf16(libdevice.tanh(_bf16(libdevice.div_rn(u, 25.0)))))
+            h = _bf16(soft * sig) * cap
         offs_h = col_offset + pid_n * (BLOCK_N // 2) + tl.arange(0, BLOCK_N // 2)
         tl.store(
             out_ptr + rows + offs_h[None, :],
@@ -240,11 +251,11 @@ def matmul_int8_scaled_with_triton(
     n = b.shape[0]
     if b.shape[1] != k:
         raise ValueError(f"inner dimensions differ: {k} vs {b.shape[1]}")
-    if epilogue == EPILOGUE_SWIGLU and n % (2 * SWIGLU_INTERLEAVE):
-        raise ValueError(f"SwiGLU epilogue needs N divisible by {2 * SWIGLU_INTERLEAVE}")
+    if epilogue in _PAIRED and n % (2 * SWIGLU_INTERLEAVE):
+        raise ValueError(f"gated-unit epilogues need N divisible by {2 * SWIGLU_INTERLEAVE}")
     if epilogue == EPILOGUE_RESIDUAL_GATE and (residual is None or gate is None):
         raise ValueError("residual-gate epilogue needs residual and gate")
-    out_cols = n // 2 if epilogue == EPILOGUE_SWIGLU else n
+    out_cols = n // 2 if epilogue in _PAIRED else n
     if out is None:
         out = torch.empty((rows, out_cols), device=a.device, dtype=output_dtype)
     if rows == 0:
@@ -256,7 +267,7 @@ def matmul_int8_scaled_with_triton(
         raise ValueError("residual must share the output layout")
     a_scale = a_scale.to(torch.float32).contiguous()
     b_scale = b_scale.to(torch.float32).contiguous()
-    kernel = _int8_scaled_gemm_swiglu if epilogue == EPILOGUE_SWIGLU else _int8_scaled_gemm
+    kernel = _int8_scaled_gemm_swiglu if epilogue in _PAIRED else _int8_scaled_gemm
 
     def grid(meta):
         return (triton.cdiv(rows, meta["BLOCK_M"]) * triton.cdiv(n, meta["BLOCK_N"]),)

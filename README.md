@@ -18,12 +18,14 @@ The implementation is clean-room and Apache-2.0 licensed.
 - RPBH rotation, exact unit-sphere Lloyd-Max codebooks, packed 2/3/4/6/8-bit
   weights, and online activation quantization without calibration data.
 - Model-specific policies for paper-sensitive AdaLN and output-layer handling.
+- Optional GPTQ rounding (`orbitquant.gptq`): calibrated codes in the same codebook and
+  artifact format, for models that lose too much with nearest rounding.
 - Compact `safetensors` artifacts and Hugging Face `save_pretrained()` /
   `from_pretrained()` integration.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
 - Fused transformer checkpoints for Krea 2, FLUX.2, Ideogram 4, Qwen-Image 2.1,
-  MiniMax-H3, Boogu-Image and FLUX.3 Klein (`orbitquant.fused`): each block runs
+  MiniMax-H3, Boogu-Image, FLUX.3 Klein and MOSS-Image (`orbitquant.fused`): each block runs
   grouped INT8 GEMMs with norm/modulation prologues and SwiGLU/gated-residual
   epilogues plus an INT8 attention kernel, and the checkpoint stores only the
   fused groups.
@@ -56,6 +58,43 @@ larger batches or when the native package is unavailable. All paths share the ep
 `float(sum) * (x_scale * w_scale)`, so results are identical across them. Head quantization
 changes logits at the INT8 rounding level (~0.4% relative); measure sampled outputs before
 adopting it for a model.
+
+## GPTQ rounding (opt-in calibration)
+
+Plain OrbitQuant rounds every rotated weight to its nearest Lloyd-Max centroid and uses no
+data. At 4 bits some models lose too much this way. `orbitquant.gptq` keeps the codebook,
+rotation, bit width, BF16 row-norm scale and packed layout, and chooses the codes against the
+Hessian `X^T X` of each projection's rotated calibration inputs: columns are rounded one at a
+time (largest Hessian diagonal first) and each rounding error is compensated in the columns not
+yet rounded. The result is an ordinary OrbitQuant artifact that loads and runs through every
+runtime path unchanged.
+
+```python
+from orbitquant import quantize_model
+from orbitquant.gptq import HessianCollector, load_rounded_codes, round_groups
+
+groups = [["blocks.0.attn.q", "blocks.0.attn.k", "blocks.0.attn.v"], ["blocks.0.attn.o"]]
+with HessianCollector(model, groups, config) as hessians:  # BF16 model on the GPU
+    for batch in calibration:
+        model(**batch)
+codes = round_groups(model, groups, hessians, config)
+quantize_model(model, config)
+load_rounded_codes(model, codes)
+```
+
+- Projections in one group read the same input and share one Hessian.
+- `update_state_dict(state, codes)` rewrites the tensors of an existing artifact's state dict.
+- For a large model, collect and round a few blocks at a time. Groups of the same shape round
+  together on the GPU (`batch`, `memory_budget`). `sequential=True` writes the rounded weights
+  back, so later blocks are calibrated on rounded inputs.
+- Hessians and updates run in full FP32 (TF32 is disabled inside). A Hessian that does not
+  factorize gets 10x more damping, up to six times; `RoundedCodes.damping` reports the value
+  used, and `rtn_error` / `gptq_error` report the Hessian-weighted output error of nearest and
+  GPTQ rounding.
+
+On the MOSS-Image 4-bit transformer, calibrated on 10 prompts at 12 sampling steps, the mean
+LPIPS of 8 generated images against BF16 fell from 0.371 (nearest rounding) to 0.209; 6-bit
+nearest rounding gives 0.166.
 
 ## Install
 
@@ -514,6 +553,7 @@ the same for an `orbitquant-v1` component artifact, and
 | MiniMax-H3 | `MiniMaxH3Transformer3DModel` | per-row (timestep, modality) AdaLN tables, partial rotate-half RoPE |
 | Boogu-Image | `BooguImageTransformer2DModel` | refiner, single- and double-stream blocks; 8-bit activations |
 | FLUX.3 Klein | `flux3.dit.DiT` (Black Forest Labs' `flux3` package) | per-mode and single-stream blocks: Q\|K\|V, SwiGLU, gated residuals; one sample at a time |
+| MOSS-Image | `MOSSImageTransformer` (the model's `pipeline_moss_image.py`) | joint image/text blocks: RMSNorm and shared AdaLN prologues, Q\|K\|V, SiTU gate\|up, gated residuals; one sample at a time |
 
 Groups take the activation width of their projections unless the layout
 overrides it: `fuse(..., activation_bits={"qkv": 8})` gives a group 8-bit
@@ -522,6 +562,21 @@ its groups this way because its 3360 channels only allow a 32-wide rotation
 block; the GEMMs stay INT8, so the wider codes cost almost no speed. Low-bit
 artifacts with mixed weight widths (boundary and interior protection) fuse into
 row segments of one GEMM.
+
+Components without a block family can still run their OrbitQuant projections
+on the fused runtime: `fused.fuse_linears(model)` replaces every loaded
+`OrbitQuantLinear` with a `FusedLinear` (one INT8 GEMM over the projection's
+packed rows) and quantizes its input per token, by default with 8-bit absmax
+activations. Text encoders that run once per prompt use it:
+
+```python
+import orbitquant
+from orbitquant import fused
+from transformers import AutoModel
+
+encoder = AutoModel.from_pretrained(text_encoder_dir, device_map={"": "cuda"})
+fused.fuse_linears(encoder)  # activation_bits=4 keeps the Lloyd-Max codes
+```
 
 The fused runtime needs CUDA and Triton. Run inference under `torch.no_grad()`
 or `torch.inference_mode()`. Fused weights are frozen parameters, so model CPU
@@ -570,6 +625,9 @@ The implementation follows the paper's shared data-agnostic basis:
 - One fixed codebook per `(input dimension, bit width, algorithm version)` and
   no prompt, timestep, or calibration statistics.
 - INT4 group-64 RTN for model policies that identify dynamic AdaLN projections.
+
+GPTQ rounding (`orbitquant.gptq`) is not part of the paper's method: it uses calibration data
+to choose codes within the same codebook and format. The default quantizer never calls it.
 
 The detailed requirement matrix is in
 [`docs/paper-methodology-audit.md`](docs/paper-methodology-audit.md).
