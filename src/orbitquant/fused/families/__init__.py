@@ -18,7 +18,16 @@ from dataclasses import dataclass, field
 
 from orbitquant.fused.groups import RowSource
 
-_MODULES = ("krea2", "flux2", "ideogram4", "minimax_h3", "qwenimage21", "boogu", "flux3")
+_MODULES = (
+    "krea2",
+    "flux2",
+    "ideogram4",
+    "minimax_h3",
+    "qwenimage21",
+    "boogu",
+    "flux3",
+    "moss_image",
+)
 
 
 @dataclass(frozen=True)

@@ -198,11 +198,14 @@ def _dense_epilogue(
 ):
     """Eager equivalents of the GEMM epilogues for BF16 groups (bias is already applied)."""
     del bias
-    if epilogue == gemm.EPILOGUE_SWIGLU:
+    if epilogue in (gemm.EPILOGUE_SWIGLU, gemm.EPILOGUE_SITU):
         rows = y.shape[0]
         chunks = y.reshape(rows, -1, 2, gemm.SWIGLU_INTERLEAVE)
         g, u = chunks[:, :, 0].reshape(rows, -1), chunks[:, :, 1].reshape(rows, -1)
-        y = F.silu(g) * u
+        if epilogue == gemm.EPILOGUE_SWIGLU:
+            y = F.silu(g) * u
+        else:
+            y = (4.0 * torch.tanh(g / 4.0) * torch.sigmoid(g)) * (25.0 * torch.tanh(u / 25.0))
     elif epilogue == gemm.EPILOGUE_GELU_TANH:
         y = F.gelu(y, approximate="tanh")
     elif epilogue == gemm.EPILOGUE_SIGMOID_TAIL:
