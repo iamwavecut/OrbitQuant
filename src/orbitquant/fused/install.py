@@ -24,7 +24,14 @@ import torch
 from torch import nn
 
 from orbitquant.fused.families import adapter_for_class, adapter_for_family
-from orbitquant.fused.groups import GROUP_TYPES, Bf16Group, Int8Group, PackedGroup, _resolve
+from orbitquant.fused.groups import (
+    GROUP_TYPES,
+    Bf16Group,
+    Int8Group,
+    PackedGroup,
+    _resolve,
+    swiglu_half_rows,
+)
 from orbitquant.fused.runtime import FusedRuntime
 from orbitquant.layers import OrbitQuantLinear
 
@@ -154,7 +161,7 @@ def _empty_group(block, spec, group_kind: str, config, device, activation_bits=N
     rows = 0
     for source, layer in zip(spec.sources, layers, strict=True):
         stop = layer.out_features if source.stop is None else source.stop
-        rows += stop - source.start
+        rows += swiglu_half_rows(stop - source.start) if spec.swiglu else stop - source.start
     return GROUP_TYPES[group_kind].empty(rows, first.in_features, bias=bias, device=device)
 
 

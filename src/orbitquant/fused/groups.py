@@ -50,9 +50,20 @@ def _rows(source: RowSource, layer: nn.Module) -> tuple[int, int]:
     return source.start, stop
 
 
+def swiglu_half_rows(rows: int, chunk: int = SWIGLU_INTERLEAVE) -> int:
+    """Rows of one SwiGLU half rounded up to whole interleave chunks."""
+    return -(-rows // chunk) * chunk
+
+
 def _interleave(gate: torch.Tensor, up: torch.Tensor, chunk: int) -> torch.Tensor:
-    if gate.shape != up.shape or gate.shape[0] % chunk:
-        raise ValueError(f"SwiGLU halves need equal row counts divisible by {chunk}")
+    if gate.shape != up.shape:
+        raise ValueError("SwiGLU halves need equal row counts")
+    pad = swiglu_half_rows(gate.shape[0], chunk) - gate.shape[0]
+    if pad:
+        # Zero rows (zero scale, weight and bias) complete the last chunk: their gated outputs
+        # are 0, past the width the next projection reads.
+        zeros = gate.new_zeros((pad, *gate.shape[1:]))
+        gate, up = torch.cat([gate, zeros]), torch.cat([up, zeros])
     pieces = []
     for start in range(0, gate.shape[0], chunk):
         pieces += [gate[start : start + chunk], up[start : start + chunk]]
@@ -188,6 +199,7 @@ class PackedGroup(nn.Module):
                 raise ValueError("a SwiGLU group takes exactly a gate and an up source")
             if sizes[0][1] != sizes[1][1]:
                 raise ValueError("the gate and up halves of a SwiGLU group need one weight width")
+            sizes = [(swiglu_half_rows(rows), bits) for rows, bits in sizes]
         return _segments(sizes)
 
     @classmethod

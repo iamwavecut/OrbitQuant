@@ -25,7 +25,7 @@ The implementation is clean-room and Apache-2.0 licensed.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
 - Fused transformer checkpoints for Krea 2, FLUX.2, Ideogram 4, Qwen-Image 2.1,
-  MiniMax-H3, Boogu-Image, FLUX.3 Klein and MOSS-Image (`orbitquant.fused`): each block runs
+  MiniMax-H3, Boogu-Image, FLUX.3 Klein, MOSS-Image and Fibo 2.0 (`orbitquant.fused`): each block runs
   grouped INT8 GEMMs with norm/modulation prologues and SwiGLU/gated-residual
   epilogues plus an INT8 attention kernel, and the checkpoint stores only the
   fused groups.
@@ -554,6 +554,7 @@ the same for an `orbitquant-v1` component artifact, and
 | Boogu-Image | `BooguImageTransformer2DModel` | refiner, single- and double-stream blocks; 8-bit activations |
 | FLUX.3 Klein | `flux3.dit.DiT` (Black Forest Labs' `flux3` package) | per-mode and single-stream blocks: Q\|K\|V, SwiGLU, gated residuals; one sample at a time |
 | MOSS-Image | `MOSSImageTransformer` (the model's `pipeline_moss_image.py`) | joint image/text blocks: RMSNorm and shared AdaLN prologues, Q\|K\|V, SiTU gate\|up, gated residuals; one sample at a time |
+| Fibo 2.0 | `BriaFibo2Transformer2DModel` | Z-Image blocks with per-token (noisy/clean) modulation tables, sandwich post-norms and tanh gates as row kernels; gated cross-attention of the five injection blocks; Perceiver layers; SwiGLU halves padded to whole interleave chunks; 8-bit activations; one sample at a time |
 
 Groups take the activation width of their projections unless the layout
 overrides it: `fuse(..., activation_bits={"qkv": 8})` gives a group 8-bit
