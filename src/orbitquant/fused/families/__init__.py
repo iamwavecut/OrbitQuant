@@ -27,6 +27,7 @@ _MODULES = (
     "boogu",
     "flux3",
     "moss_image",
+    "fibo2",
 )
 
 
