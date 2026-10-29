@@ -55,6 +55,7 @@ def fuse_linears(model: nn.Module, *, activation_bits: int = 8, config=None) -> 
         group = PackedGroup.from_sources(
             holder, [RowSource("proj")], activation_bits=activation_bits
         )
+        runtime.check_pre_rotation(module)
         parent_path, _, child = name.rpartition(".")
         parent = model.get_submodule(parent_path) if parent_path else model
         fused = FusedLinear(group, runtime)

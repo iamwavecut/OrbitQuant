@@ -11,7 +11,11 @@ from orbitquant.kernels import (
     quantize_activations_kernel,
     select_backend,
 )
-from orbitquant.kernels.executorch_vulkan import ExecuTorchVulkanW4A4Linear
+from orbitquant.kernels.executorch_vulkan import (
+    ExecuTorchVulkanW4A4Linear,
+    ExecuTorchVulkanW4A8Linear,
+    prepare_executorch_vulkan_w4a4_model,
+)
 from orbitquant.layers import OrbitQuantLinear
 from orbitquant.modeling import quantize_linear_modules
 from orbitquant.packing import pack_lowbit, unpack_lowbit
@@ -42,6 +46,75 @@ def test_executorch_vulkan_export_keeps_exact_w4a4_as_one_custom_op():
 
     call_targets = {node.target for node in exported.graph.nodes if node.op == "call_function"}
     assert torch.ops.orbitquant_vulkan.linear_w4a4_exact.default in call_targets
+
+
+def test_executorch_vulkan_export_runs_the_pre_rotation_as_plain_ops():
+    torch.manual_seed(0)
+    source = torch.nn.Linear(96, 40)
+    layer = OrbitQuantLinear.from_linear(
+        source,
+        config=OrbitQuantConfig(rotation_rounds="auto", runtime_mode="dequant_bf16"),
+        module_name="probe",
+    )
+    assert layer.pre_rotation is not None
+    export_layer = ExecuTorchVulkanW4A4Linear(layer)
+    x = torch.randn(5, 96)
+    x[:, 3] *= 50
+
+    with torch.no_grad():
+        torch.testing.assert_close(export_layer(x), layer(x), rtol=1e-5, atol=1e-5)
+    exported = torch.export.export(export_layer, (x,), strict=True)
+    call_targets = {node.target for node in exported.graph.nodes if node.op == "call_function"}
+    assert torch.ops.orbitquant_vulkan.linear_w4a4_exact.default in call_targets
+    assert torch.ops.aten.matmul.default in call_targets
+
+
+def test_executorch_vulkan_export_refuses_outlier_channels():
+    layer = OrbitQuantLinear.from_linear(
+        torch.nn.Linear(96, 40),
+        config=OrbitQuantConfig(
+            runtime_mode="dequant_bf16", outlier_channels={"probe": [3]}
+        ),
+        module_name="probe",
+    )
+    with pytest.raises(ValueError, match="outlier_channels"):
+        ExecuTorchVulkanW4A4Linear(layer)
+
+
+@pytest.mark.parametrize(("in_features", "rotation_rounds"), [(96, "auto"), (1536, 1)])
+def test_executorch_vulkan_w4a8_export_matches_the_absmax_layer(in_features, rotation_rounds):
+    torch.manual_seed(0)
+    layer = OrbitQuantLinear.from_linear(
+        torch.nn.Linear(in_features, 40),
+        config=OrbitQuantConfig(
+            activation_bits=8, rotation_rounds=rotation_rounds, runtime_mode="dequant_bf16"
+        ),
+        module_name="probe",
+    )
+    assert layer.activation_quantizer == "absmax_int8"
+    prepared = prepare_executorch_vulkan_w4a4_model(torch.nn.Sequential(layer))
+    export_layer = prepared[0]
+    assert isinstance(export_layer, ExecuTorchVulkanW4A8Linear)
+    x = torch.randn(5, in_features)
+    x[:, 3] *= 50
+
+    with torch.no_grad():
+        torch.testing.assert_close(export_layer(x), layer(x), rtol=1e-5, atol=1e-5)
+    exported = torch.export.export(export_layer, (x,), strict=True)
+    call_targets = {node.target for node in exported.graph.nodes if node.op == "call_function"}
+    assert torch.ops.orbitquant_vulkan.linear_w4a8_absmax.default in call_targets
+
+
+def test_executorch_vulkan_export_refuses_lloyd_max_a8():
+    layer = OrbitQuantLinear.from_linear(
+        torch.nn.Linear(96, 40),
+        config=OrbitQuantConfig(
+            activation_bits=8, activation_quantizer="lloyd_max", runtime_mode="dequant_bf16"
+        ),
+        module_name="probe",
+    )
+    with pytest.raises(ValueError, match="absmax INT8"):
+        prepare_executorch_vulkan_w4a4_model(layer)
 
 
 def test_executorch_vulkan_export_rejects_unsupported_bfloat16_activations():

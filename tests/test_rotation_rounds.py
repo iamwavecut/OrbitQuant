@@ -170,23 +170,6 @@ def test_two_round_artifact_validates_and_restores_the_same_outputs(tmp_path):
     torch.testing.assert_close(layer(x), source.transformer_blocks[0]["attn"]["to_q"](x))
 
 
-def test_fused_runtime_refuses_two_round_rotations():
-    pytest.importorskip("triton")
-    from orbitquant.fused.groups import PackedGroup, RowSource
-    from orbitquant.fused.runtime import FusedRuntime
-
-    with pytest.raises(ValueError, match="one RPBH round"):
-        FusedRuntime.from_config(OrbitQuantConfig(rotation_rounds=2))
-    holder = torch.nn.Module()
-    holder.proj = OrbitQuantLinear.from_linear(
-        torch.nn.Linear(96, 32),
-        config=OrbitQuantConfig(rotation_rounds=2, runtime_mode="dequant_bf16"),
-        module_name="proj",
-    )
-    with pytest.raises(ValueError, match="one RPBH round"):
-        PackedGroup.from_sources(holder, [RowSource("proj")])
-
-
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_two_round_layer_on_cuda_matches_the_cpu_reference():
     torch.manual_seed(0)
@@ -207,3 +190,40 @@ def test_two_round_layer_on_cuda_matches_the_cpu_reference():
 
     error = (output - expected).pow(2).sum() / expected.pow(2).sum()
     assert float(error) < 5e-3
+
+
+def _mps_shader_available():
+    from orbitquant.kernels.mps import mps_metal_available
+
+    return mps_metal_available()
+
+
+@pytest.mark.skipif(not _mps_shader_available(), reason="MPS Metal shaders required")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(("dim", "block_size"), [(3840, "paper"), (3360, "paper"), (4096, 4096)])
+def test_metal_rpbh_rotation_matches_the_pytorch_rotation_bit_for_bit(dim, block_size, dtype):
+    from orbitquant.kernels.mps import rotate_activations_with_mps
+    from orbitquant.rotations import get_rpbh_rotation
+
+    torch.manual_seed(0)
+    rotation = get_rpbh_rotation(dim, 3, block_size)
+    x = torch.randn(7, 3, dim, dtype=dtype)
+    x[..., 5] *= 300
+    expected = rotation.apply_to_activations(x.float()).to(dtype)
+    assert torch.equal(rotate_activations_with_mps(x.to("mps"), rotation).cpu(), expected)
+
+
+@pytest.mark.skipif(not _mps_shader_available(), reason="MPS Metal shaders required")
+def test_two_round_layer_on_mps_matches_the_cpu_reference():
+    torch.manual_seed(0)
+    linear = torch.nn.Linear(3360, 64)
+    x = _outlier_tokens(3360)
+    config = OrbitQuantConfig(rotation_rounds="auto", runtime_mode="dequant_bf16")
+    reference = OrbitQuantLinear.from_linear(linear, config=config, module_name="proj")
+    layer = OrbitQuantLinear.from_linear(linear, config=config, module_name="proj").to("mps")
+
+    with torch.no_grad():
+        expected = reference(x)
+        output = layer(x.to("mps")).cpu()
+
+    torch.testing.assert_close(output, expected, rtol=1e-3, atol=1e-3)

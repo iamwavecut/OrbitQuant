@@ -581,6 +581,7 @@ class OrbitQuantLinear(nn.Module):
         self._bias_cache: tuple[tuple[str, torch.dtype], torch.Tensor] | None = None
         self._int8_weight_cache: tuple[str, torch.Tensor] | None = None
         self._absmax_quantizer: tuple[str, object] | None = None
+        self._pre_rotator: tuple[str, object] | None = None
         self._compile_handle = _compile_registry_register(self)
         self.last_effective_runtime_mode: str | None = None
         self.last_activation_kernel_backend: str | None = None
@@ -1405,11 +1406,53 @@ class OrbitQuantLinear(nn.Module):
             )
         return output.reshape(*x.shape[:-1], self.out_features)
 
+    def _triton_pre_rotator(self, x: torch.Tensor):
+        """The Triton kernel of the first RPBH round on CUDA, or None for the PyTorch path."""
+        if not x.is_cuda or _torch_uses_hip() or self.pre_rotation.block_size > 16384:
+            return None
+
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels import triton_activation  # noqa: F401
+            except (ImportError, RuntimeError):
+                return False
+            return True
+
+        if not self._cached_runtime_probe("triton_pre_rotation", probe):
+            return None
+        device_key = str(x.device)
+        if self._pre_rotator is None or self._pre_rotator[0] != device_key:
+            from orbitquant.kernels import triton_activation
+
+            self._pre_rotator = (
+                device_key,
+                triton_activation.RPBHRotator(self.pre_rotation, x.device),
+            )
+        return self._pre_rotator[1]
+
     def _pre_rotate(self, x: torch.Tensor) -> torch.Tensor:
         """First RPBH round of a two-round rotation, shared across projections of one input."""
         rotation = self.pre_rotation
 
         def factory() -> torch.Tensor:
+            rotator = self._triton_pre_rotator(x)
+            if rotator is not None:
+                # Same FP32 arithmetic and stage order in one kernel.
+                return rotator(x)
+            if x.device.type == "mps" and rotation.block_size <= 4096:
+                from orbitquant.kernels.mps import mps_metal_available, rotate_activations_with_mps
+
+                if mps_metal_available() and x.dtype in (
+                    torch.float32,
+                    torch.float16,
+                    torch.bfloat16,
+                ):
+                    return rotate_activations_with_mps(
+                        x,
+                        rotation,
+                        permutation=self._pre_rotation_permutation,
+                        signs=self._pre_rotation_signs,
+                    )
             rotated = rotation.apply_to_activations(
                 x.to(torch.float32),
                 permutation=self._pre_rotation_permutation,

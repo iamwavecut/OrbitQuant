@@ -119,6 +119,84 @@ inline void orbitquant_fused_activation_impl(
   }
 }
 
+// First round of a two-round RPBH (rotation_rounds=2): x[perm] * signs, block FWHT, scaled,
+// in FP32 with the stage order of RPBHRotation.apply_to_activations, stored as scalar_t.
+template <typename scalar_t>
+inline void orbitquant_rpbh_rotate_impl(
+    const device scalar_t* input,
+    const device long* permutation,
+    const device char* signs,
+    device scalar_t* output,
+    constant int& rows,
+    constant int& dim,
+    constant int& block_size,
+    constant int& num_blocks,
+    constant float& normalization,
+    threadgroup float* values,
+    uint group,
+    uint thread_index,
+    uint thread_count) {
+  const uint row = group / uint(num_blocks);
+  if (row >= uint(rows)) {
+    return;
+  }
+  const uint block = group - row * uint(num_blocks);
+  const uint block_start = block * uint(block_size);
+  const uint row_offset = row * uint(dim);
+
+  for (uint col = thread_index; col < uint(block_size); col += thread_count) {
+    const uint rotated_col = block_start + col;
+    values[col] = float(input[row_offset + uint(permutation[rotated_col])]) *
+        float(signs[rotated_col]);
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  for (uint stride = 1; stride < uint(block_size); stride <<= 1) {
+    const uint pairs = uint(block_size) >> 1;
+    for (uint pair = thread_index; pair < pairs; pair += thread_count) {
+      const uint pair_group = pair / stride;
+      const uint pair_offset = pair - pair_group * stride;
+      const uint left = pair_group * (stride << 1) + pair_offset;
+      const uint right = left + stride;
+      const float left_value = values[left];
+      const float right_value = values[right];
+      values[left] = left_value + right_value;
+      values[right] = left_value - right_value;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
+  for (uint col = thread_index; col < uint(block_size); col += thread_count) {
+    output[row_offset + block_start + col] = scalar_t(values[col] * normalization);
+  }
+}
+
+#define ORBITQUANT_RPBH_ROTATE_KERNEL(NAME, SCALAR_T)                        \
+kernel void NAME(                                                            \
+    const device SCALAR_T* input [[buffer(0)]],                              \
+    const device long* permutation [[buffer(1)]],                            \
+    const device char* signs [[buffer(2)]],                                  \
+    device SCALAR_T* output [[buffer(3)]],                                   \
+    constant int& rows [[buffer(4)]],                                        \
+    constant int& dim [[buffer(5)]],                                         \
+    constant int& block_size [[buffer(6)]],                                  \
+    constant int& num_blocks [[buffer(7)]],                                  \
+    constant float& normalization [[buffer(8)]],                             \
+    uint3 group_id [[threadgroup_position_in_grid]],                         \
+    uint thread_index [[thread_index_in_threadgroup]],                       \
+    uint3 group_size [[threads_per_threadgroup]]) {                          \
+  threadgroup float values[orbitquant_max_rpbh_block_size];                  \
+  orbitquant_rpbh_rotate_impl(                                               \
+      input, permutation, signs, output, rows, dim, block_size, num_blocks,  \
+      normalization, values, group_id.x, thread_index, group_size.x);        \
+}
+
+ORBITQUANT_RPBH_ROTATE_KERNEL(orbitquant_rpbh_rotate_float, float)
+ORBITQUANT_RPBH_ROTATE_KERNEL(orbitquant_rpbh_rotate_half, half)
+ORBITQUANT_RPBH_ROTATE_KERNEL(orbitquant_rpbh_rotate_bfloat16, bfloat)
+
+#undef ORBITQUANT_RPBH_ROTATE_KERNEL
+
 #define ORBITQUANT_ROW_NORM_KERNEL(NAME, SCALAR_T, THREADS)                  \
 kernel void NAME(                                                            \
     const device SCALAR_T* input [[buffer(0)]],                              \
@@ -359,6 +437,62 @@ def quantize_activations_with_mps(
         eps,
         threads=[groups * activation_threads, 1, 1],
         group_size=[activation_threads, 1, 1],
+    )
+    return output.reshape_as(contiguous)
+
+
+_ROTATE_KERNEL_NAMES = {
+    torch.float32: "orbitquant_rpbh_rotate_float",
+    torch.float16: "orbitquant_rpbh_rotate_half",
+    torch.bfloat16: "orbitquant_rpbh_rotate_bfloat16",
+}
+
+
+def rotate_activations_with_mps(
+    x: torch.Tensor,
+    rotation: RPBHRotation,
+    *,
+    permutation: torch.Tensor | None = None,
+    signs: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """``rotation.apply_to_activations`` in one Metal kernel, rounded to ``x.dtype`` once."""
+    if x.device.type != "mps":
+        raise RuntimeError("mps backend requires MPS tensors")
+    if x.shape[-1] != rotation.dim:
+        raise ValueError(f"expected last dimension {rotation.dim}, got {x.shape[-1]}")
+    if rotation.block_size > _MAX_FUSED_RPBH_BLOCK_SIZE:
+        raise RuntimeError(
+            f"MPS RPBH rotation supports block sizes up to {_MAX_FUSED_RPBH_BLOCK_SIZE}"
+        )
+    try:
+        name = _ROTATE_KERNEL_NAMES[x.dtype]
+    except KeyError as exc:
+        raise TypeError(
+            f"MPS RPBH rotation supports float32, float16 and bfloat16; got {x.dtype}"
+        ) from exc
+    contiguous = x.contiguous()
+    flat = contiguous.reshape(-1, rotation.dim)
+    rows = flat.shape[0]
+    output = torch.empty_like(flat)
+    if rows == 0:
+        return output.reshape_as(contiguous)
+    permutation = (rotation.permutation if permutation is None else permutation).to(
+        device=x.device, dtype=torch.int64
+    )
+    signs = (rotation.signs if signs is None else signs).to(device=x.device, dtype=torch.int8)
+    threads = 256
+    getattr(_mps_shader(_fused_block_bucket(rotation.block_size)), name)(
+        flat,
+        permutation.contiguous(),
+        signs.contiguous(),
+        output,
+        rows,
+        rotation.dim,
+        rotation.block_size,
+        rotation.num_blocks,
+        rotation.normalization,
+        threads=[rows * rotation.num_blocks * threads, 1, 1],
+        group_size=[threads, 1, 1],
     )
     return output.reshape_as(contiguous)
 

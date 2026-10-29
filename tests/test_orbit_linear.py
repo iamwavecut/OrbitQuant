@@ -78,7 +78,9 @@ def test_orbit_linear_shares_codebooks_by_dimension_and_bits_not_module_name():
 def test_orbit_linear_weight_indices_quantize_rotated_unit_directions():
     torch.manual_seed(2)
     source = torch.nn.Linear(16, 7)
-    config = OrbitQuantConfig(weight_bits=4, activation_bits=4, rotation_seed=11, block_size=8)
+    config = OrbitQuantConfig(
+        weight_bits=4, activation_bits=4, rotation_seed=11, rotation_rounds=1, block_size=8
+    )
 
     quantized = OrbitQuantLinear.from_linear(source, config=config, module_name="block.ff.linear")
 
@@ -145,6 +147,7 @@ def test_orbit_linear_quantized_forward_matches_manual_paper_equation(monkeypatc
         weight_bits=3,
         activation_bits=3,
         rotation_seed=13,
+        rotation_rounds=1,
         block_size="paper",
         activation_kernel_backend="cpu",
     )

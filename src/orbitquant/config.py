@@ -79,12 +79,13 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     rotation_seed: int = 0
     block_size: int | str = "paper"
     # 1 is the paper's single RPBH round. 2 adds an independent first RPBH round
-    # in front of it on every projection; "auto" adds it only where the block is
-    # narrower than 512 (d = 3360 gives h = 32, d = 3840 gives h = 256). See
-    # orbitquant.rotations.rpbh. Not supported by the fused block runtime.
-    rotation_rounds: int | str = 1
+    # in front of it on every projection; "auto" (default) adds it only where the
+    # block is narrower than 512 (d = 3360 gives h = 32, d = 3840 gives h = 256).
+    # On Z-Image W4A4 "auto" lowers LPIPS against BF16 from 0.438 to 0.348. See
+    # orbitquant.rotations.rpbh. Loaded artifacts without the field are read as 1.
+    rotation_rounds: int | str = "auto"
     codebook: str = "lloyd_max"
-    codebook_version: int = 2
+    codebook_version: int = 3
     codebook_dtype: str = "float32"
     row_norm_dtype: str = "bfloat16"
     activation_norm_dtype: str = "float32"
@@ -92,8 +93,11 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     # "lloyd_max" is the paper's activation codebook. "absmax_int8" (8-bit
     # activations only) quantizes the rotated input to INT8 with one absmax scale
     # per token, the numerics of the fused runtime's 8-bit activations, on every
-    # backend; CUDA runs it as an INT8 GEMM against the packed weights.
-    activation_quantizer: str = "lloyd_max"
+    # backend; CUDA runs it as an INT8 GEMM against the packed weights. "auto"
+    # (default) resolves to "absmax_int8" at 8 bits, where CUDA has no Lloyd-Max
+    # INT8 GEMM, and to "lloyd_max" below. Loaded artifacts without the field
+    # are read as "lloyd_max".
+    activation_quantizer: str = "auto"
     weight_pack_dtype: str = "uint8"
     target_policy: str = "auto"
     # Layer-classification revision. 1 detects AdaLN projections by module-name
@@ -114,7 +118,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     # activation codebooks. Lloyd-Max codes shrink a unit vector by that factor
     # (0.9905 per side at 4 bits, 0.9655 at 3, 0.8826 at 2), which scales an
     # aligned output by its product; for uncorrelated weight and input rows the
-    # uncorrected output is already the conditional mean.
+    # uncorrected output is already the conditional mean. On Z-Image it raised
+    # LPIPS against BF16 at W2A4 and lowered it at no tested width, so it stays off.
     output_gain_correction: bool = False
     modules_to_convert: list[str] = field(default_factory=list)
     modules_to_use_adaln: list[str] = field(default_factory=list)
@@ -171,14 +176,18 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("rotation_rounds must be 1, 2 or 'auto'")
         if self.codebook != "lloyd_max":
             raise ValueError("only Lloyd-Max codebooks are implemented")
-        if self.codebook_version not in {1, 2}:
-            raise ValueError("codebook_version must be 1 or 2")
+        if self.codebook_version not in {1, 2, 3}:
+            raise ValueError("codebook_version must be 1, 2 or 3")
         if self.codebook_dtype.lower() not in _SUPPORTED_CODEBOOK_DTYPES:
             raise ValueError("codebook_dtype must be 'float32'")
         if self.row_norm_dtype.lower() not in _SUPPORTED_ROW_NORM_DTYPES:
             raise ValueError("row_norm_dtype must be 'bfloat16'")
         if self.activation_norm_dtype.lower() not in _SUPPORTED_ACTIVATION_NORM_DTYPES:
             raise ValueError("activation_norm_dtype must be 'float32'")
+        if self.activation_quantizer == "auto":
+            self.activation_quantizer = (
+                "absmax_int8" if self.activation_bits == 8 else "lloyd_max"
+            )
         if self.activation_quantizer not in _SUPPORTED_ACTIVATION_QUANTIZERS:
             raise ValueError(
                 "activation_quantizer must be one of "
@@ -284,4 +293,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
         # Artifacts written before parent-class AdaLN detection were classified
         # by module-name tokens only.
         values.setdefault("target_policy_version", 1)
+        # Artifacts written before these options existed used the paper's single
+        # RPBH round and Lloyd-Max activation codes.
+        values.setdefault("rotation_rounds", 1)
+        values.setdefault("activation_quantizer", "lloyd_max")
         return cls(**values)

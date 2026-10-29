@@ -20,10 +20,11 @@ The implementation is clean-room and Apache-2.0 licensed.
 - Model-specific policies for paper-sensitive AdaLN and output-layer handling.
 - Optional GPTQ rounding (`orbitquant.gptq`): calibrated codes in the same codebook and
   artifact format, for models that lose too much with nearest rounding.
-- Optional quality knobs outside the paper recipe: a second RPBH round for narrow
-  Hadamard blocks, per-token absmax INT8 activations (`recipe("w4a8")`), MSE-fitted
-  AdaLN scales, a Lloyd-Max gain correction, and BF16 side columns for massive
-  activation channels (see [Quality options](#quality-options-opt-in)).
+- Measured defaults on top of the paper recipe: a second RPBH round where the paper's
+  Hadamard block is narrower than 512, and per-token absmax INT8 activations at 8 bits;
+  `recipe(name, paper=True)` restores the paper fields. Opt-in knobs: MSE-fitted AdaLN
+  scales, a Lloyd-Max gain correction, and BF16 side columns for massive activation
+  channels (see [Quality options](#quality-options)).
 - Compact `safetensors` artifacts and Hugging Face `save_pretrained()` /
   `from_pretrained()` integration.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
@@ -100,27 +101,52 @@ On the MOSS-Image 4-bit transformer, calibrated on 10 prompts at 12 sampling ste
 LPIPS of 8 generated images against BF16 fell from 0.371 (nearest rounding) to 0.209; 6-bit
 nearest rounding gives 0.166.
 
-## Quality options (opt-in)
+## Quality options
 
-Every option below defaults to the paper recipe and is stored in the artifact config.
+The paper recipe is the baseline. A field defaults to another value only where that value
+measured better in quality, speed or memory; every value is stored in the artifact config.
+`recipe(name, paper=True)` and `orbitquant.recipes.PAPER_FIELDS` restore the paper fields
+(`rotation_rounds=1`, `activation_quantizer="lloyd_max"`, `output_gain_correction=False`).
+Artifacts saved before a default changed load with the value they were quantized with.
 
 | Field | Values | Effect | Runtime cost |
 | --- | --- | --- | --- |
-| `rotation_rounds` | `1` (paper), `2`, `"auto"` | An independent first RPBH round in front of the paper round. The paper block `h` is the largest power of two dividing `d`: `d = 3360` gets `h = 32`, `d = 3840` and `d = 8960` get `h = 256`, so one round spreads an outlier over few coordinates. `"auto"` adds the round where `h < 512`. | One extra RPBH pass per activation, done in PyTorch: on an RTX 4090 it adds 0.7-0.8 ms per call at 256 tokens and 2.6-3.4 ms at 4096 tokens for `d = 3072`/`3840` (shared across Q/K/V of one input); not available on the fused block runtime. |
-| `activation_quantizer` | `"lloyd_max"` (paper), `"absmax_int8"` | With `activation_bits=8`, per-token absmax INT8 of the rotated input, the numerics of the fused runtime's 8-bit activations. `recipe("w4a8")` selects it. No activation codebook is built or stored: exact 8-bit Lloyd-Max tables take minutes per width and do not converge for `d >= 7680`, so `"lloyd_max"` A8 fails on such inputs. | CUDA runs an INT8 GEMM against the packed W2/W4 weights, the same GEMM class as W4A4. |
+| `rotation_rounds` | `"auto"` (default), `1` (paper), `2` | An independent first RPBH round in front of the paper round. The paper block `h` is the largest power of two dividing `d`: `d = 3360` gets `h = 32`, `d = 3840` and `d = 8960` get `h = 256`, so one round spreads an outlier over few coordinates. `"auto"` adds the round where `h < 512`. | One extra RPBH pass per activation, shared across the projections of one input. CUDA runs it as one Triton kernel: on an RTX 4090 at `d = 3840` it adds 40-50 µs per call at 256 tokens and 70-75 µs at 4096 tokens (the PyTorch path added 0.5 ms and 3.4 ms). MPS runs it as a Metal kernel (+0.06-0.18 ms at 256 tokens, +1.4-1.6 ms at 4096 on an M2 Max). The fused runtime, Krea 2 and the ExecuTorch Vulkan export (blocks up to 1024) support it. |
+| `activation_quantizer` | `"auto"` (default), `"lloyd_max"` (paper), `"absmax_int8"` | `"auto"` resolves to `"absmax_int8"` at `activation_bits=8` and to `"lloyd_max"` below. `"absmax_int8"` is per-token absmax INT8 of the rotated input, the numerics of the fused runtime's 8-bit activations; the artifact stores no activation codebook. On Z-Image W4A8 it matched 8-bit Lloyd-Max under the same rotation (LPIPS 0.331 against 0.330, paired difference -0.007 to +0.007). Codebook version 3 builds 8-bit Lloyd-Max tables in about 0.1 s per width, including `d >= 7680`, where version 2 does not converge. | CUDA runs absmax A8 as an INT8 GEMM against the packed W2/W4 weights, the same GEMM class as W4A4. On an RTX 4090 at 4096 tokens an absmax W4A8 projection takes 3.4-6.6x less time than Lloyd-Max A8 (for example 1.01 ms against 6.71 ms with 12288 inputs and 3072 outputs). |
 | `adaln_scale` | `"absmax"` (paper implementation), `"mse"` | Per INT4 group, the BF16 scale with the lowest squared error from `absmax x [0.6, 1.15] / {7, 7.5, 8}`. | None: offline only, same packed format. Not recommended: it lowers the weight error but raised the AdaLN output error on 59 of 60 CogVideoX-2B projections (median 10x) and 17 of 32 Z-Image projections. |
-| `output_gain_correction` | `False`, `True` | Divides the BF16 row norms by `E<u,Q(u)>` of the weight and activation codebooks (`0.9905` per side at 4 bits, `0.8826` at 2). This helps outputs whose weight rows and inputs are aligned and hurts uncorrelated ones; compare generated samples before adopting it. | None. |
+| `output_gain_correction` | `False` (default, paper), `True` | Divides the BF16 row norms by `E<u,Q(u)>` of the weight and activation codebooks (`0.9905` per side at 4 bits, `0.8826` at 2). This helps outputs whose weight rows and inputs are aligned and hurts uncorrelated ones. On Z-Image it raised LPIPS against BF16 at W2A4 (+0.016, 95% interval +0.004 to +0.029, worse on 24 of 30 pairs) and did not lower it at W4A4, W4A8 or W3A3, so no setting enables it by default. | None. |
 | `outlier_channels` | `{module name: [channels]}` | Input channels kept out of the quantizer and applied as a BF16 side GEMM over their weight columns. `orbitquant.outliers.find_outlier_channels(model, run)` finds channels above `ratio x` the median token RMS from calibration forwards. | A `k`-column BF16 GEMM per projection; not available on the fused block runtime or in checkpoint-streaming conversion. |
 
 `outlier_channels` uses calibration forwards; the other options use no data.
 
-Measured on Z-Image-Turbo (1024², 10 steps, 10 prompts x 2 seeds, LPIPS against BF16 on an
-RTX 4090, 2026-10-29): W4A4 0.434, W4A4 + `rotation_rounds="auto"` 0.344 (better on 18 of 20
-pairs), W4A8 absmax 0.375, W4A8 absmax + `"auto"` 0.327, W3A3 0.535, W3A3 + `"auto"` 0.501.
-`output_gain_correction`, `adaln_scale="mse"` and `outlier_channels` changed LPIPS by less than
-the pair-to-pair spread (95% intervals include zero). `outlier_channels` cut the geometric-mean
-output error of the 34 Z-Image FFN `w2` projections (input peak at a median 35000x the token
-RMS) by 67%.
+Measured on Z-Image-Turbo (1024², 10 steps, 10 prompts x 3 seeds, LPIPS against BF16 with the
+`dequant_bf16` reference runtime on an RTX 4090, 2026-10-29; intervals are 95% paired
+bootstrap):
+
+| Bits | Paper fields | Defaults | Defaults minus paper | Pairs better |
+| --- | ---: | ---: | ---: | ---: |
+| W4A4 | 0.438 | 0.348 | -0.090 (-0.124 to -0.060) | 27 of 30 |
+| W2A4 | 0.643 | 0.632 | -0.011 (-0.029 to +0.012) | 22 of 30 |
+
+W4A8 with the default absmax INT8 activations reaches 0.331, 0.018 below the default W4A4
+(-0.032 to -0.004). W3A3 with the defaults reaches 0.505; an earlier 20-pair run measured 0.535
+with one round. W2A4 samples are visibly broken with either setting. `adaln_scale="mse"` and
+`outlier_channels` changed LPIPS by less than the pair-to-pair spread (95% intervals include
+zero). `outlier_channels` cut the geometric-mean output error of the 34 Z-Image FFN `w2`
+projections (input peak at a median 35000x the token RMS) by 67%.
+
+FLUX.1-dev keeps one round everywhere (every block is at least 1024), so its default W4A4 is the
+paper W4A4. On a GenEval subset (96 prompts, 16 per task, x 2 seeds, 1024², official evaluator,
+RTX 6000 Ada, 2026-10-29) it scored 0.641 against 0.615 for BF16 (+0.026, 95% paired interval
+-0.020 to +0.074), took 14.1 s per image instead of 21.5 s and peaked at 8.7 GiB instead of
+25.1 GiB. A partial W4A8 run (35 images, single- and two-object prompts only) lowered LPIPS
+against BF16 by 0.022 relative to W4A4 on the same images (-0.034 to -0.011).
+
+CogVideoX-2B (`d = 1920`, `h = 128`, so `"auto"` adds the round) shows no gain from it at W4A6:
+on 12 VBench prompts the default and paper settings differ by less than the pair-to-pair spread
+on all eight custom-input dimensions and on frame LPIPS against BF16 (0.339 against 0.326,
+-0.022 to +0.052), while the default took 7% longer (1656 s against 1547 s) and peaked
+1.2 GiB higher. Use `rotation_rounds=1` for such models when speed matters.
 
 ## Install
 
@@ -214,8 +240,9 @@ path instead of the much slower FP32 compatibility path. An explicit dtype is
 always honored, and on-the-fly source conversion keeps the source dtype.
 
 Named recipes are `w4a4`, `w3a3`, `w2a4`, `w2a3`, `w4a6`, and `w4a8` (absmax INT8
-activations). They create a normal `OrbitQuantConfig`, so every field can be
-overridden.
+activations). They create a normal `OrbitQuantConfig` with the library defaults, so
+every field can be overridden; `recipe(name, paper=True)` pins the paper fields listed under
+[Quality options](#quality-options).
 
 For an unknown architecture resolved to `target_policy="universal"`, W2 uses
 mixed-bit protection by default: out-of-block and the first/last four indexed
@@ -258,6 +285,28 @@ class. A linear inside an AdaLN norm (`AdaLayerNorm*`, `*NormZero*`,
 or patch embedder stays BF16, whatever the attribute is called. Configs saved
 before this rule carry no `target_policy_version` and load as version 1, the
 name-token classification they were quantized with.
+
+On the published transformer configs (built on the meta device, 2026-10-29) version 2
+classifies:
+
+| Model | Linears | OrbitQuant | AdaLN INT4 | BF16 | AdaLN INT4 under version 1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| FLUX.1-dev | 504 | 418 | 76 | 10 | 76 |
+| FLUX.1-schnell | 502 | 418 | 76 | 8 | 76 |
+| FLUX.2-dev | 203 | 192 | 3 | 8 | 3 |
+| Z-Image-Turbo | 276 | 238 | 32 | 6 | 32 |
+| Wan 2.1 T2V 1.3B | 306 | 300 | 0 | 6 | 0 |
+| CogVideoX-2B | 245 | 180 | 60 | 5 | 0 |
+| CogVideoX-5B | 341 | 252 | 84 | 5 | 0 |
+| HunyuanVideo | 547 | 440 | 80 | 27 | 0 |
+| SD3.5 Medium | 392 | 337 | 48 | 7 | 0 |
+| SD3.5 Large | 536 | 453 | 76 | 7 | 0 |
+| PixArt-Sigma XL | 286 | 280 | 1 | 5 | 0 |
+
+The modulation linears outside AdaLN INT4 are the final `norm_out.linear`
+(`AdaLayerNormContinuous`) and the two HunyuanVideo token-refiner `norm_out.linear`; they stay
+BF16. Wan 2.1 modulates through parameter tables and a shared time projection, so it has no
+per-block AdaLN linear.
 
 Qwen2.5-VL is supported by the universal policy, including W4A6 text and vision
 attention/FFN projections. Token embeddings, the language output head and the
@@ -660,8 +709,8 @@ The implementation follows the paper's shared data-agnostic basis:
 
 GPTQ rounding (`orbitquant.gptq`) is not part of the paper's method: it uses calibration data
 to choose codes within the same codebook and format. The default quantizer never calls it.
-The [quality options](#quality-options-opt-in) are also outside the paper recipe; their
-defaults keep it.
+The [quality options](#quality-options) are outside the paper recipe;
+`recipe(name, paper=True)` keeps it.
 
 The detailed requirement matrix is in
 [`docs/paper-methodology-audit.md`](docs/paper-methodology-audit.md).

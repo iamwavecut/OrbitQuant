@@ -11,8 +11,8 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_file, save_file
 
-_ALGORITHM_VERSION = 2
-_SUPPORTED_ALGORITHM_VERSIONS = {1, 2}
+_ALGORITHM_VERSION = 3
+_SUPPORTED_ALGORITHM_VERSIONS = {1, 2, 3}
 _DISABLE_CACHE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -340,7 +340,7 @@ def _regularized_incomplete_beta(a: float, b: float, x: float) -> float:
     return 1.0 - factor * _beta_continued_fraction(b, a, 1.0 - x) / b
 
 
-def _positive_coordinate_quantile(dim: int, probability: float) -> float:
+def _positive_coordinate_quantile(dim: float, probability: float) -> float:
     beta_b = (dim - 1) / 2
     lower = 0.0
     upper = 1.0
@@ -471,6 +471,122 @@ def _generate_exact_v2_codebook(dim: int, bits: int) -> LloydMaxCodebook:
     )
 
 
+def _positive_interval_mass(dim: int, left: float, right: float) -> float:
+    beta_b = (dim - 1) / 2
+    if right >= 1.0:
+        return 0.5 * _regularized_incomplete_beta(beta_b, 0.5, 1.0 - left * left)
+    return 0.5 * (
+        _regularized_incomplete_beta(0.5, beta_b, right * right)
+        - _regularized_incomplete_beta(0.5, beta_b, left * left)
+    )
+
+
+def _positive_density(dim: int, value: float) -> float:
+    if value >= 1.0:
+        return 0.0
+    beta_b = (dim - 1) / 2
+    log_normalization = math.lgamma(dim / 2) - 0.5 * math.log(math.pi) - math.lgamma(beta_b)
+    return math.exp(log_normalization + (beta_b - 1.0) * math.log1p(-(value * value)))
+
+
+def _centroid_residual(
+    dim: int, inner: list[float]
+) -> tuple[list[float], list[float], list[float]]:
+    edges = [0.0, *inner, 1.0]
+    centroids = [
+        _positive_interval_centroid(dim, edges[index], edges[index + 1])
+        for index in range(len(edges) - 1)
+    ]
+    residual = [
+        inner[index] - (centroids[index] + centroids[index + 1]) / 2
+        for index in range(len(inner))
+    ]
+    return edges, centroids, residual
+
+
+def _generate_newton_v3_codebook(dim: int, bits: int) -> LloydMaxCodebook:
+    """The v2 fixed point (exact f_d centroids and midpoint boundaries), found by Newton.
+
+    f_d is log-concave, so the Lloyd-Max quantizer is unique and v3 targets the same codes
+    as v2. v2's relaxed Lloyd iteration converges linearly: 8 bits take minutes and do not
+    converge for d >= 7680. The centroid c of [l, r] with mass m moves by f(l)(c - l)/m
+    and f(r)(r - c)/m, so the Jacobian of b_i - (c_i + c_(i+1))/2 is tridiagonal and
+    Newton converges in tens of steps from the Panter-Dite start (boundaries at
+    quantiles of f_d^(1/3), the same family at dim (d + 6) / 3). Where v2 stopped short
+    of the fixed point, the float32 tables differ from v2 by one ulp."""
+    positive_levels = 2**bits // 2
+    if positive_levels == 1:
+        positive_centroids = [_positive_interval_centroid(dim, 0.0, 1.0)]
+    else:
+        inner = [
+            _positive_coordinate_quantile((dim + 6) / 3, index / positive_levels)
+            for index in range(1, positive_levels)
+        ]
+        edges, positive_centroids, residual = _centroid_residual(dim, inner)
+        norm = max(abs(value) for value in residual)
+        count = len(inner)
+        for _ in range(200):
+            moves_left, moves_right = [], []
+            for index, centroid in enumerate(positive_centroids):
+                left, right = edges[index], edges[index + 1]
+                mass = _positive_interval_mass(dim, left, right)
+                moves_left.append(_positive_density(dim, left) * (centroid - left) / mass)
+                moves_right.append(_positive_density(dim, right) * (right - centroid) / mass)
+            # Thomas algorithm on rows sub * b_(i-1) + diagonal * b_i + sup * b_(i+1).
+            factors, solved = [0.0] * count, [0.0] * count
+            for index in range(count):
+                sub = -moves_left[index] / 2 if index else 0.0
+                diagonal = 1.0 - (moves_right[index] + moves_left[index + 1]) / 2
+                denominator = diagonal - (sub * factors[index - 1] if index else 0.0)
+                if index < count - 1:
+                    factors[index] = -moves_right[index + 1] / 2 / denominator
+                previous_solved = solved[index - 1] if index else 0.0
+                solved[index] = (residual[index] - sub * previous_solved) / denominator
+            step = [0.0] * count
+            for index in reversed(range(count)):
+                following = step[index + 1] if index < count - 1 else 0.0
+                step[index] = solved[index] - factors[index] * following
+            scale = 1.0
+            while True:
+                candidate = [inner[index] - scale * step[index] for index in range(count)]
+                bounds = [0.0, *candidate, 1.0]
+                if all(bounds[index] < bounds[index + 1] for index in range(count + 1)):
+                    trial = _centroid_residual(dim, candidate)
+                    trial_norm = max(abs(value) for value in trial[2])
+                    if trial_norm < norm or scale < 1e-3:
+                        break
+                scale /= 2
+            largest_step = scale * max(abs(value) for value in step)
+            previous_norm = norm
+            inner = candidate
+            edges, positive_centroids, residual = trial
+            norm = trial_norm
+            if largest_step <= 4e-16 * inner[-1] or norm >= previous_norm:
+                break
+        # Interval masses near the tail are differences of CDFs close to 1, which puts the
+        # noise floor near 1e-12 of the boundary scale; 2**-32 keeps the residual 256 times
+        # below the float32 resolution of the tables.
+        if norm > 2.0**-32 * inner[-1]:
+            raise RuntimeError(
+                f"Lloyd-Max Newton solve did not converge for dim={dim}, bits={bits}: "
+                f"residual {norm:.3e}"
+            )
+
+    centroids = torch.tensor(
+        [-value for value in reversed(positive_centroids)] + positive_centroids,
+        dtype=torch.float64,
+        device="cpu",
+    )
+    boundaries = (centroids[:-1] + centroids[1:]) / 2
+    return LloydMaxCodebook(
+        dim=dim,
+        bits=bits,
+        centroids=centroids.to(torch.float32),
+        boundaries=boundaries.to(torch.float32),
+        algorithm_version=3,
+    )
+
+
 def _generate_codebook(
     dim: int, bits: int, algorithm_version: int = _ALGORITHM_VERSION
 ) -> LloydMaxCodebook:
@@ -487,6 +603,8 @@ def _generate_codebook(
         )
     if algorithm_version == 2:
         return _generate_exact_v2_codebook(dim, bits)
+    if algorithm_version == 3:
+        return _generate_newton_v3_codebook(dim, bits)
     raise ValueError(
         f"algorithm_version must be one of {sorted(_SUPPORTED_ALGORITHM_VERSIONS)}"
     )

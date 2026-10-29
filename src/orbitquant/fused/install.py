@@ -126,6 +126,8 @@ def fuse(
             modules[name] = group_cls.from_sources(
                 block, list(spec.sources), swiglu=spec.swiglu, activation_bits=widths.get(name)
             )
+            if group_cls is PackedGroup:
+                runtime.check_pre_rotation(_resolve(block, spec.sources[0].path))
         prepare = getattr(adapter, "prepare", None)
         if prepare is not None:
             prepare(block, kind)

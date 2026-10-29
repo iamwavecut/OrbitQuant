@@ -36,7 +36,7 @@ Other explicit modes are `native_packed_matmul`, `triton_packed_matmul`,
 | CUDA | Optimized packed inference | Native RPBH/quantization, chunked packed-weight decode plus CUTLASS INT8 matmul, direct packed CUDA MMA fallback, and generic Triton packed fallback |
 | MPS/Metal | Optimized packed inference | Native Metal packed matmul and Metal activation quantization stages |
 | CPU | Hardware-verified native source and CI wheel builds; wheel publication pending | Runtime ISA dispatch across scalar, AVX2/FMA, AVX-512/BF16, and ARM64 NEON; exact packed activation, packed low-bit matmul, and packed INT4 group-64 AdaLN |
-| Vulkan | Experimental source path; hardware-verified on AMD Cezanne/RADV Linux, Windows unverified | ExecuTorch whole-graph delegate adapter with exact packed W4A4 activation and matmul shaders |
+| Vulkan | Experimental source path; W4A4 hardware-verified on AMD Cezanne/RADV Linux, W4A8 verified on Mesa lavapipe only, Windows unverified | ExecuTorch whole-graph delegate adapter with exact packed W4A4 Lloyd-Max and W4A8 absmax INT8 activation and matmul shaders |
 | ROCm | Experimental source candidate; supported-hardware proof pending | Exact Triton activation, low-bit pack/unpack, packed matmul, weight quantization, and packed INT4 AdaLN; explicit-only |
 | XPU | Experimental source candidate; Intel hardware proof pending | Exact Triton activation, low-bit pack/unpack, packed matmul, weight quantization, and packed INT4 AdaLN on `torch.xpu`; explicit-only |
 
@@ -151,9 +151,11 @@ tuple. OrbitQuant rejects incompatible packages instead of loading them.
 The Vulkan path targets the ExecuTorch whole-graph delegate because desktop
 PyTorch does not expose a Vulkan tensor backend. It accepts exported FP16 or
 FP32 activations, keeps W4 weights and activation indices packed, and uses a
-256-entry exact pair-product LUT. It does not create an FP16/BF16 weight
-matrix. The source path currently implements W4A4 only and is not selected by
-`auto_fused`.
+256-entry exact pair-product LUT for W4A4. W4A8 with absmax INT8 activations
+packs four signed activation codes per word and accumulates INT8 code times
+FP32 weight centroid. Neither path creates an FP16/BF16 weight matrix. The
+source path implements W4A4 with Lloyd-Max activations and W4A8 with absmax
+INT8 activations and is not selected by `auto_fused`.
 
 Desktop Vulkan support requires an ExecuTorch source revision containing the
 June/July 2026 desktop delegate changes. The source below was verified at
@@ -195,12 +197,17 @@ cmake --build .local-artifacts/orbitquant-vulkan-build \
 ```
 
 `prepare_executorch_vulkan_w4a4_model()` converts already-loaded
-`OrbitQuantLinear` modules without requantizing or changing the artifact.
-`ExecuTorchVulkanW4A4Linear` and
-`register_executorch_vulkan_w4a4()` in
-`orbitquant.kernels.executorch_vulkan` provide the Python export boundary. The
-native package supplies token norm, RPBH/FWHT plus exact code assignment, and
-direct packed pair-LUT matmul dispatches.
+`OrbitQuantLinear` modules without requantizing or changing the artifact; it
+selects `ExecuTorchVulkanW4A4Linear` for A4 Lloyd-Max layers and
+`ExecuTorchVulkanW4A8Linear` for A8 absmax INT8 layers, and refuses other
+activation quantizers. `register_executorch_vulkan_w4a4()` and
+`register_executorch_vulkan_w4a8()` in `orbitquant.kernels.executorch_vulkan`
+provide the Python export boundary. A two-round artifact exports its
+pre-rotation, up to 1024-wide blocks, as a dense block-Hadamard matmul in
+front of the custom operator. For W4A4 the native package supplies token norm,
+RPBH/FWHT plus exact code assignment, and direct packed pair-LUT matmul
+dispatches. For W4A8 it supplies RPBH/FWHT with per-block absmax, per-token
+scale and INT8 packing, and a packed W4 by INT8 matmul with FP32 accumulation.
 
 The same build and an exported `.pte` were executed on an AMD Ryzen 5 5600G
 Cezanne integrated Radeon through Mesa 25.2.8 RADV, Vulkan 1.4.318, ExecuTorch
@@ -254,9 +261,22 @@ packed prepack times were 2.925/0.725 ms at 1536 and 10.454/2.273 ms at 3072,
 versus 5.645/2.101 ms and 17.969/8.692 ms for FP16 upload. No full floating
 weight is created by the packed delegate.
 
-The earlier llvmpipe run remains build and validation evidence only. Windows
-Vulkan and other AMD architectures are unverified, the path is W4A4-only, and
-it is not selected by `auto_fused`; these limitations keep Vulkan experimental.
+The W4A8 shaders were built at the same ExecuTorch commit with Vulkan SDK
+1.4.350.1 `glslc` on Ubuntu 24.04 and run on Mesa lavapipe, the CPU Vulkan
+driver, because the GPU container exposed no NVIDIA graphics capability. All
+12 C++ cases passed against the independent host reference: the seven W4A4
+cases above and five W4A8 cases covering FP32/FP16, bias/no-bias, a 9x24
+partial tile, and 2x1536 and 8x1536 DiT-width rows. The W4A8 cases use
+absolute and relative tolerances of 8e-3 for FP16 and 5e-4 for FP32 against an
+FP32 host reference. Python export of a
+W4A8 layer matches the PyTorch absmax layer within 1e-5 and places
+`orbitquant_vulkan.linear_w4a8_absmax` in the graph.
+
+The llvmpipe and lavapipe runs are build and correctness evidence only; their
+timings are not GPU performance. W4A8 has no RADV hardware run and no `.pte`
+runner run yet. Windows Vulkan and other AMD architectures are unverified, and
+the path is not selected by `auto_fused`; these limitations keep Vulkan
+experimental.
 
 Windows x86_64 source portability is covered by the path-filtered
 `Windows Vulkan build` workflow. At OrbitQuant commit `f41ae5e`, run

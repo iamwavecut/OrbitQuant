@@ -302,6 +302,94 @@ def test_lloyd_max_activation_codes_match_the_rotated_reference(dim):
     assert (codes != expected).float().mean().item() < 1e-3
 
 
+@pytest.mark.parametrize(
+    ("dim", "block_size"),
+    [(3360, "paper"), (3840, "paper"), (3072, 1024), (8192, 8192), (16384, 16384)],
+)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+def test_rpbh_rotator_matches_the_pytorch_rotation_bit_for_bit(dim, block_size, dtype):
+    _require_cuda()
+    from orbitquant.kernels import triton_activation as act
+    from orbitquant.rotations import get_rpbh_rotation
+
+    torch.manual_seed(9)
+    rotation = get_rpbh_rotation(dim=dim, seed=3, block_size=block_size)
+    x = torch.randn(2, 19, dim, device="cuda", dtype=dtype)
+    x[..., 7] *= 300  # a massive channel
+    expected = rotation.apply_to_activations(x.float()).to(dtype)
+    rotated = act.RPBHRotator(rotation, torch.device("cuda"))(x)
+    assert rotated.shape == x.shape and rotated.dtype == dtype
+    assert torch.equal(rotated, expected)
+
+
+@pytest.mark.parametrize("codebook_bits", [4, None])
+def test_activation_quantizer_applies_the_pre_rotation_after_the_prologue(codebook_bits):
+    _require_cuda()
+    from orbitquant.codebooks import get_codebook
+    from orbitquant.kernels import triton_activation as act
+    from orbitquant.rotations import get_pre_rotation, get_rpbh_rotation
+
+    torch.manual_seed(10)
+    dim = 3840
+    rotation = get_rpbh_rotation(dim=dim, seed=0, block_size="paper")
+    pre = get_pre_rotation(dim, seed=0, block_size="paper", rotation_rounds="auto")
+    codebook = None if codebook_bits is None else get_codebook(dim, codebook_bits, 3)
+    device = torch.device("cuda")
+    plain = act.ActivationQuantizer(rotation, codebook, 1e-10, device)
+    two_round = act.ActivationQuantizer(rotation, codebook, 1e-10, device, pre_rotation=pre)
+    x = torch.randn(23, dim, device="cuda", dtype=torch.bfloat16)
+    weight = torch.randn(dim, device="cuda", dtype=torch.bfloat16)
+    scale = torch.randn(dim, device="cuda", dtype=torch.bfloat16)
+    shift = torch.randn(dim, device="cuda", dtype=torch.bfloat16)
+    kwargs = dict(
+        prologue=act.PROLOGUE_NORM_MODULATE, norm_weight=weight, mod_scale=scale, mod_shift=shift
+    )
+
+    prologue, _ = plain(x, prologue_only=True, **kwargs)
+    expected_codes, expected_norms = plain(act.RPBHRotator(pre, device)(prologue))
+    codes, norms = two_round(x, **kwargs)
+    assert torch.equal(codes, expected_codes)
+    assert torch.equal(norms, expected_norms)
+    # BF16 groups reading the same input still get the unrotated prologue output.
+    assert torch.equal(two_round(x, prologue_only=True, **kwargs)[0], prologue)
+
+
+@pytest.mark.parametrize("activation_bits", [4, 8])
+def test_fused_two_round_projection_matches_the_per_layer_path(activation_bits):
+    _require_cuda()
+    from orbitquant.config import OrbitQuantConfig
+    from orbitquant.fused.groups import PackedGroup, RowSource
+    from orbitquant.fused.runtime import FusedRuntime
+    from orbitquant.layers import OrbitQuantLinear
+
+    torch.manual_seed(11)
+    config = OrbitQuantConfig(
+        rotation_rounds="auto",
+        activation_bits=activation_bits,
+        activation_quantizer="absmax_int8" if activation_bits == 8 else "lloyd_max",
+    )
+    root = torch.nn.Module()
+    root.proj = OrbitQuantLinear.from_linear(
+        torch.nn.Linear(3840, 512, bias=False).to(torch.bfloat16), config=config, module_name="p"
+    ).cuda()
+    assert root.proj.pre_rotation is not None
+    runtime = FusedRuntime.from_config(config)
+    group = PackedGroup.from_sources(root, [RowSource("proj")]).cuda()
+    runtime.check_pre_rotation(root.proj)
+    x = torch.randn(64, 3840, device="cuda", dtype=torch.bfloat16)
+    x[:, 11] *= 200
+    with torch.no_grad():
+        fused = runtime.linear(group, runtime.input(x, 3840))
+        reference = root.proj(x)
+    error = (fused.float() - reference.float()).norm() / reference.float().norm()
+    assert error.item() < 2e-2
+
+    with pytest.raises(ValueError, match="pre-rotation does not match"):
+        FusedRuntime.from_config(OrbitQuantConfig(rotation_rounds=1)).check_pre_rotation(
+            root.proj
+        )
+
+
 def test_krea2_batch_one_forward_runs_on_the_valid_text_rows():
     _require_cuda()
     from orbitquant.fused.families import krea2

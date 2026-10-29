@@ -97,7 +97,7 @@ def gptq_round(
     hessian: torch.Tensor,
     *,
     bits: int,
-    codebook_version: int = 2,
+    codebook_version: int = 3,
     damp: float = 0.01,
     block: int = 128,
     act_order: bool = True,

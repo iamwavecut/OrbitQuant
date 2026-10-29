@@ -219,6 +219,90 @@ def _rotated_chunks(
 
 
 @triton.jit
+def _rpbh_rotate_kernel(
+    x_ptr,
+    perm_ptr,
+    signs_ptr,
+    out_ptr,
+    D: tl.constexpr,
+    NUM_BLOCKS: tl.constexpr,
+    OB: tl.constexpr,
+    STAGES: tl.constexpr,
+    inv_sqrt_block,
+):
+    # One (row, RPBH block) per program, in FP32 like RPBHRotation.apply_to_activations; the
+    # store rounds to the output dtype once.
+    row_block = tl.program_id(0)
+    row = (row_block // NUM_BLOCKS).to(tl.int64)
+    block = row_block % NUM_BLOCKS
+    if OB <= _CHUNK:
+        cols = block * OB + tl.arange(0, OB)
+        src = tl.load(perm_ptr + cols).to(tl.int32)
+        signs = tl.load(signs_ptr + cols).to(tl.float32)
+        values = tl.load(x_ptr + row * D + src).to(tl.float32) * signs
+        values = _fwht(values, OB, STAGES) * inv_sqrt_block
+        tl.store(out_ptr + row * D + cols, values.to(out_ptr.dtype.element_ty))
+    else:
+        start = block * OB
+        v0, v1, v2, v3 = _rotated_chunks(
+            x_ptr,
+            perm_ptr,
+            signs_ptr,
+            row,
+            start,
+            1.0,
+            D,
+            OB // _CHUNK,
+            STAGES - _CHUNK_STAGES,
+            False,
+        )
+        out = out_ptr + row * D + start + tl.arange(0, _CHUNK)
+        tl.store(out, (v0 * inv_sqrt_block).to(out_ptr.dtype.element_ty))
+        tl.store(out + _CHUNK, (v1 * inv_sqrt_block).to(out_ptr.dtype.element_ty))
+        if OB // _CHUNK == 4:
+            tl.store(out + 2 * _CHUNK, (v2 * inv_sqrt_block).to(out_ptr.dtype.element_ty))
+            tl.store(out + 3 * _CHUNK, (v3 * inv_sqrt_block).to(out_ptr.dtype.element_ty))
+
+
+class RPBHRotator:
+    """Device constants of one RPBH rotation applied as a standalone activation transform.
+
+    ``rotation_rounds=2`` puts a first RPBH round in front of the paper round; this applies
+    that round to an input in one kernel (the same FP32 arithmetic and stage order as
+    ``RPBHRotation.apply_to_activations``, rounded to the input dtype once).
+    """
+
+    def __init__(self, rotation, device: torch.device):
+        self.dim = int(rotation.dim)
+        self.block = int(rotation.block_size)
+        self.num_blocks = int(rotation.num_blocks)
+        if self.block > 16384:
+            raise ValueError("fused RPBH rotation supports blocks up to 16384")
+        self.inv_sqrt_block = float(rotation.normalization)
+        self.perm = rotation.permutation.to(device=device, dtype=torch.int32).contiguous()
+        self.signs = rotation.signs.to(device=device, dtype=torch.int8).contiguous()
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        shape = x.shape
+        x = x.reshape(-1, self.dim).contiguous()
+        out = torch.empty_like(x)
+        if x.shape[0]:
+            _rpbh_rotate_kernel[(x.shape[0] * self.num_blocks,)](
+                x,
+                self.perm,
+                self.signs,
+                out,
+                D=self.dim,
+                NUM_BLOCKS=self.num_blocks,
+                OB=self.block,
+                STAGES=self.block.bit_length() - 1,
+                inv_sqrt_block=self.inv_sqrt_block,
+                num_warps=16 if self.block >= 8192 else 8 if self.block >= 512 else 4,
+            )
+        return out.reshape(shape)
+
+
+@triton.jit
 def _absmax_int8_store(values, q_ptr, row, start, scale, D: tl.constexpr):
     q = libdevice.rint(libdevice.div_rn(values, scale))
     q = tl.minimum(tl.maximum(q, -127.0), 127.0)
@@ -389,10 +473,12 @@ class ActivationQuantizer:
     Projections that share an input (Q/K/V/gate, gate/up) share one quantizer: the codes and
     token norms are identical, so they are produced once. Without a codebook the rotated input
     is quantized to INT8 with one absmax scale per token (8-bit activations) and the call
-    returns that scale instead of the token norm.
+    returns that scale instead of the token norm. ``pre_rotation`` is the first round of a
+    two-round RPBH (``rotation_rounds=2``): it rotates the prologue output before the codes.
     """
 
-    def __init__(self, rotation, codebook, eps: float, device: torch.device):
+    def __init__(self, rotation, codebook, eps: float, device: torch.device, pre_rotation=None):
+        self.pre_rotator = None if pre_rotation is None else RPBHRotator(pre_rotation, device)
         self.dim = int(rotation.dim)
         self.block = int(rotation.block_size)
         self.num_blocks = int(rotation.num_blocks)
@@ -437,6 +523,39 @@ class ActivationQuantizer:
         ``mod`` override its norm and modulation. With ``mod_index`` the modulation vectors are
         rows ``mod_index[row]`` of the ``mod_scale``/``mod_shift`` tables.
         """
+        fields = dict(
+            prologue=prologue,
+            norm=norm,
+            mod=mod,
+            x2=x2,
+            norm_weight=norm_weight,
+            mod_scale=mod_scale,
+            mod_shift=mod_shift,
+            mod_index=mod_index,
+            rms_eps=rms_eps,
+        )
+        if self.pre_rotator is None or prologue_only:
+            return self._quantize(x, prologue_only=prologue_only, **fields)
+        # The eager model rounds the prologue output to bf16, then the layer rotates it.
+        plain = prologue == PROLOGUE_NONE and norm in (None, NORM_NONE) and mod in (None, MOD_NONE)
+        y = x if plain else self._quantize(x, prologue_only=True, **fields)[0]
+        return self._quantize(self.pre_rotator(y))
+
+    def _quantize(
+        self,
+        x,
+        *,
+        prologue=PROLOGUE_NONE,
+        norm=None,
+        mod=None,
+        x2=None,
+        norm_weight=None,
+        mod_scale=None,
+        mod_shift=None,
+        mod_index=None,
+        rms_eps=1e-5,
+        prologue_only=False,
+    ):
         if x.dim() != 2 or x.stride(1) != 1:
             x = x.reshape(-1, self.dim).contiguous()
         rows = x.shape[0]

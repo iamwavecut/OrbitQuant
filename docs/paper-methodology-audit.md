@@ -69,7 +69,7 @@ Status legend:
 | Paper requirement | Current status | Evidence | Notes |
 | --- | --- | --- | --- |
 | No calibration data, prompt statistics, timestep ranges, or generated-image statistics are used to construct the quantizer. | Pass | `src/orbitquant/codebooks/lloyd_max.py`, `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/functional.py`, `src/orbitquant/layers.py`, `tests/test_kernels.py`, `tests/test_orbit_linear.py`, `tests/test_artifact_writer.py` | Codebooks depend on `(dim, bits, algorithm_version)`. Rotations depend on `(dim, seed, block_size)`. Activations use only runtime token norms, and serialized layer/artifact state excludes activation calibration/range tensors. |
-| One converged Lloyd-Max scalar codebook is built offline per input dimension and bit width. | Pass for codebook version 2 | `get_codebook(dim, bits, algorithm_version)` in `src/orbitquant/codebooks/lloyd_max.py`; `tests/test_codebooks.py`; `tests/test_paper_reference_oracle.py`; `tests/test_artifact_writer.py` | Version 2 evaluates the exact beta marginal and iterates to the Lloyd-Max centroid condition. Independent numerical quadrature checks the centroid condition at 2, 3, 4, and 6 bits. Version 1 remains read-only compatibility for existing packed indices. Persistent cache keys include algorithm version, dimension, bits, checksum, and structural validation. |
+| One converged Lloyd-Max scalar codebook is built offline per input dimension and bit width. | Pass for codebook versions 2 and 3 | `get_codebook(dim, bits, algorithm_version)` in `src/orbitquant/codebooks/lloyd_max.py`; `tests/test_codebooks.py`; `tests/test_paper_reference_oracle.py`; `tests/test_artifact_writer.py` | Version 2 evaluates the exact beta marginal and iterates to the Lloyd-Max centroid condition. Version 3, the default for new artifacts, solves the same fixed point with Newton steps on its tridiagonal Jacobian from a Panter-Dite start; it agrees with version 2 within one float32 ulp where version 2 converges (tested at 2, 4 and 6 bits up to `d = 3072`) and also converges at 8 bits for `d >= 7680`, where version 2 does not. Version 2 stays frozen because artifact validation compares stored tables with the declared version. Independent numerical quadrature checks the centroid condition at 2, 3, 4, and 6 bits. Version 1 remains read-only compatibility for existing packed indices. Persistent cache keys include algorithm version, dimension, bits, checksum, and structural validation. |
 | Lloyd-Max target distribution is the coordinate marginal of a random unit vector in dimension `d`. | Pass | `_coordinate_density()` in `src/orbitquant/codebooks/lloyd_max.py`; `tests/test_paper_reference_oracle.py` | The implementation uses the paper density up to normalization: `(1 - z^2)^((d - 3) / 2)` on `[-1, 1]`. The independent oracle integrates this density directly rather than calling the production incomplete-beta routines. |
 | Quantization uses nearest fixed centroids, with no zero-point, learned scale, per-channel range, or timestep/prompt range. | Pass | `LloydMaxCodebook.quantize_indices()` and `quantize()` in `src/orbitquant/codebooks/lloyd_max.py`; `tests/test_paper_reference_oracle.py` | Production uses `torch.bucketize` against midpoint boundaries. The independent Algorithm 1 oracle uses exhaustive absolute-distance `argmin` and obtains the same weight indices and layer outputs. |
 | RPBH uses uniform random permutation, Rademacher signs, per-block Walsh-Hadamard transform, and `1 / sqrt(block_size)` normalization. | Pass | `src/orbitquant/rotations/rpbh.py`, `src/orbitquant/rotations/fwht.py`, `tests/test_rpbh.py`, `tests/test_paper_reference_oracle.py` | The implementation applies permutation first, then signs, then block FWHT and normalization. The independent oracle constructs the dense matrix `P.T @ D @ H_block` from Equation (9) and checks the production transform and orthogonality. |
@@ -173,16 +173,19 @@ from a paper projection to an unrelated module fails the gate.
 
 ## Options Outside The Paper Recipe
 
-These config fields default to the paper recipe; a non-default value is a
-documented deviation recorded in the artifact config (and in the manifest for
-`rotation_rounds` and `activation_quantizer`).
+A non-paper value of these fields is a documented deviation recorded in the
+artifact config (and in the manifest for `rotation_rounds` and
+`activation_quantizer`). `rotation_rounds` and `activation_quantizer` default to
+`"auto"`, which deviates from the paper where it measured better; configs saved
+without the field load the paper value, and `recipe(name, paper=True)` pins the
+paper fields.
 
 | Field | Paper value | Deviation |
 | --- | --- | --- |
-| `rotation_rounds` | `1` | `2`/`"auto"` composes an independent RPBH (seed `rotation_seed + 0x9E3779B9`) in front of the paper rotation. The product is orthogonal, so Equations (4)-(8) hold in the composed basis; the first round is folded into the weights and applied to activations before the paper-round kernels. |
-| `activation_quantizer` | `"lloyd_max"` | `"absmax_int8"` replaces Equation (7)'s 8-bit codebook with per-token absmax INT8 of the rotated input. The artifact then carries no activation codebook. The exact 8-bit Lloyd-Max generator (`codebooks/lloyd_max.py`, tolerance `1e-13`, `6 * 4**8` iterations) does not converge for `d = 7680`, `10240` (measured 2026-10-29), so paper-recipe A8 is unavailable on those widths. |
+| `rotation_rounds` | `1` | Default `"auto"` (a second round where the paper block is below 512; on Z-Image-Turbo W4A4 it lowered LPIPS against BF16 from 0.438 to 0.348, better on 27 of 30 prompt/seed pairs); `2`/`"auto"` composes an independent RPBH (seed `rotation_seed + 0x9E3779B9`) in front of the paper rotation. The product is orthogonal, so Equations (4)-(8) hold in the composed basis; the first round is folded into the weights and applied to activations before the paper-round kernels. |
+| `activation_quantizer` | `"lloyd_max"` | Default `"auto"`: `"absmax_int8"` at 8 bits, `"lloyd_max"` otherwise. `"absmax_int8"` replaces Equation (7)'s 8-bit codebook with per-token absmax INT8 of the rotated input. The artifact then carries no activation codebook. The version 2 generator (tolerance `1e-13`, `6 * 4**8` iterations) does not converge at 8 bits for `d = 7680`, `10240`; version 3 builds those tables, so paper-recipe A8 is available. |
 | `adaln_scale` | not fixed by the paper | `"mse"` replaces the absmax/7 implementation contract with a per-group squared-error scale search. It minimises the weight error, not the AdaLN output error; on 2026-10-29 it raised the output error on 59 of 60 CogVideoX-2B AdaLN projections. |
-| `output_gain_correction` | `False` | Divides the row norms of Equation (6) by the codebooks' retained energy `E<u,Q(u)>`. |
+| `output_gain_correction` | `False` | Divides the row norms of Equation (6) by the codebooks' retained energy `E<u,Q(u)>`. Stays off by default: on Z-Image-Turbo (30 prompt/seed pairs, 2026-10-29) it raised LPIPS against BF16 at W2A4 by 0.016 (95% interval +0.004 to +0.029) and lowered it at none of W4A4, W4A8, W3A3. |
 | `outlier_channels` | empty | Keeps listed input channels out of Equations (7)-(8); this uses calibration forwards, so it is not data-agnostic. |
 
 ## Native Setting Provenance
@@ -247,6 +250,17 @@ from compact summaries are rejected by the HF artifact audit.
 
 Full metric runs are required only before saying that an artifact reproduces
 the paper's GenEval or VBench numbers.
+
+Subset runs from 2026-10-29 (not full-benchmark reproductions):
+
+- FLUX.1-dev, GenEval subset of 96 prompts (16 per task) x 2 seeds, official
+  evaluator: BF16 0.615, W4A4 0.641 (paired difference +0.026, 95% interval
+  -0.020 to +0.074). The default W4A4 equals the paper W4A4 on FLUX because
+  every block is at least 1024.
+- CogVideoX-2B, 12 VBench prompts, eight custom-input dimensions: paper W4A6
+  and default W4A6 (`rotation_rounds="auto"` adds a round at `d = 1920`)
+  differ by less than the pair-to-pair spread on every dimension and on frame
+  LPIPS against BF16; the default took 7% longer. W4A4 was not run.
 
 Automatic coverage outside the paper models does not imply that W4A4 or another
 profile preserves task quality. Real GPT-2 and DeiT checks confirm that loading,

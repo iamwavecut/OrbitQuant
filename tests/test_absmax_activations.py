@@ -95,10 +95,13 @@ def test_absmax_int8_activations_are_closer_than_four_bit_codes():
 
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS required")
 def test_absmax_int8_runs_on_mps_with_reference_numerics():
+    from orbitquant.kernels.native_packed_matmul import load_native_packed_matmul_kernel
+
     try:
-        import orbitquant_packed_matmul
+        # Attaches the provisioned prebuilt variant, as the runtime does.
+        orbitquant_packed_matmul = load_native_packed_matmul_kernel()
     except Exception:
-        pytest.skip("native packed matmul kernel package is not importable")
+        pytest.skip("native packed matmul kernel package is not available")
     if not orbitquant_packed_matmul.supports_device("mps"):
         pytest.skip("the importable native packed matmul variant has no MPS backend")
     torch.manual_seed(0)

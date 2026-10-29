@@ -252,10 +252,12 @@ def benchmark_orbit_linear(
         return source(x)
 
     def activation_quant() -> torch.Tensor:
+        # The forward applies the first round of a two-round rotation before quantization.
+        rotated = x if quantized.pre_rotation is None else quantized._pre_rotate(x)
         if quantized.activation_codebook is None:
-            return quantized._absmax_int8_activations(x)
+            return quantized._absmax_int8_activations(rotated)
         return quantize_activations_kernel(
-            x,
+            rotated,
             rotation=quantized.rotation,
             codebook=quantized.activation_codebook,
             eps=quantized.activation_eps,
