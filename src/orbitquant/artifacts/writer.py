@@ -54,6 +54,8 @@ def _codebook_tensors(model: torch.nn.Module) -> dict[str, torch.Tensor]:
         if not isinstance(module, OrbitQuantLinear):
             continue
         for codebook in (module.weight_codebook, module.activation_codebook):
+            if codebook is None:  # absmax INT8 activations carry no codebook
+                continue
             prefix = f"dim{codebook.dim}_bits{codebook.bits}"
             tensors[f"{prefix}.centroids"] = codebook.centroids.detach().cpu()
             tensors[f"{prefix}.boundaries"] = codebook.boundaries.detach().cpu()
@@ -73,6 +75,20 @@ def _rotation_tensors(model: torch.nn.Module) -> dict[str, torch.Tensor]:
         tensors[f"{prefix}.normalization"] = torch.tensor(
             [rotation.normalization], dtype=torch.float32
         )
+        pre_rotation = module.pre_rotation
+        if pre_rotation is not None:
+            prefix = (
+                f"pre_dim{pre_rotation.dim}_seed{pre_rotation.seed}"
+                f"_block{pre_rotation.block_size}"
+            )
+            tensors[f"{prefix}.permutation"] = pre_rotation.permutation.detach().cpu()
+            tensors[f"{prefix}.inverse_permutation"] = (
+                pre_rotation.inverse_permutation.detach().cpu()
+            )
+            tensors[f"{prefix}.signs"] = pre_rotation.signs.detach().cpu()
+            tensors[f"{prefix}.normalization"] = torch.tensor(
+                [pre_rotation.normalization], dtype=torch.float32
+            )
     return tensors
 
 

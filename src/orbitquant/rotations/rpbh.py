@@ -71,12 +71,21 @@ class RPBHRotation:
         object.__setattr__(self, "signs", signs)
         object.__setattr__(self, "normalization", 1.0 / math.sqrt(block_size))
 
-    def apply_to_activations(self, x: torch.Tensor) -> torch.Tensor:
+    def apply_to_activations(
+        self,
+        x: torch.Tensor,
+        *,
+        permutation: torch.Tensor | None = None,
+        signs: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """``permutation``/``signs`` are optional device copies of this rotation's tensors."""
         if x.shape[-1] != self.dim:
             raise ValueError(f"expected last dimension {self.dim}, got {x.shape[-1]}")
 
-        permutation = self.permutation.to(device=x.device)
-        signs = self.signs.to(device=x.device, dtype=x.dtype)
+        permutation = (self.permutation if permutation is None else permutation).to(
+            device=x.device
+        )
+        signs = (self.signs if signs is None else signs).to(device=x.device, dtype=x.dtype)
         y = x.index_select(dim=-1, index=permutation)
         y = y * signs
         y = y.reshape(*y.shape[:-1], self.num_blocks, self.block_size)
@@ -108,6 +117,45 @@ class RPBHRotation:
         if weight.shape[-1] != self.dim:
             raise ValueError(f"expected in_features {self.dim}, got {weight.shape[-1]}")
         return self.apply_inverse_to_activations(weight)
+
+
+# Two-round RPBH. The paper takes h as the largest power of two dividing d, so
+# d = 3360 gets h = 32 and one round spreads an outlier over only 32
+# coordinates. A first, independent RPBH round (seed offset below) mixes the
+# blocks before the paper round. The paper round stays the rotation that the
+# activation kernels consume: the first round is folded into the weights offline
+# and applied to the activations in front of those kernels. The product of two
+# RPBH rounds is orthogonal, so the codebook and the norm handling do not change.
+PRE_ROTATION_SEED_OFFSET = 0x9E3779B9
+# rotation_rounds="auto" adds the first round when the paper block is narrower
+# than this and narrower than the dimension.
+AUTO_TWO_ROUND_BELOW_BLOCK = 512
+_SUPPORTED_ROTATION_ROUNDS = (1, 2, "auto")
+
+
+def resolve_rotation_rounds(
+    dim: int, *, block_size: int | str = "paper", rotation_rounds: int | str = 1
+) -> int:
+    if rotation_rounds not in _SUPPORTED_ROTATION_ROUNDS or isinstance(rotation_rounds, bool):
+        raise ValueError("rotation_rounds must be 1, 2 or 'auto'")
+    if rotation_rounds != "auto":
+        return int(rotation_rounds)
+    block = _largest_power_of_two_divisor(dim) if block_size == "paper" else int(block_size)
+    return 2 if block < min(dim, AUTO_TWO_ROUND_BELOW_BLOCK) else 1
+
+
+def get_pre_rotation(
+    dim: int,
+    *,
+    seed: int = 0,
+    block_size: int | str = "paper",
+    rotation_rounds: int | str = 1,
+) -> RPBHRotation | None:
+    """First round of a two-round RPBH, or None for the single paper round."""
+    rounds = resolve_rotation_rounds(dim, block_size=block_size, rotation_rounds=rotation_rounds)
+    if rounds < 2:
+        return None
+    return get_rpbh_rotation(dim, seed + PRE_ROTATION_SEED_OFFSET, block_size)
 
 
 @lru_cache(maxsize=256)

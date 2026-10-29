@@ -208,7 +208,7 @@ VIDEO_PROMPTS = [item["prompt"] for item in VIDEO_VISUAL_PROMPTS]
 
 def default_prompt_payload(target_policy: str) -> dict[str, Any]:
     normalized_policy = target_policy.lower()
-    if normalized_policy == "wan":
+    if normalized_policy in {"wan", "cogvideox", "hunyuan_video"}:
         return {
             "prompt_pack": "video_visual_v1",
             "media_type": "video",

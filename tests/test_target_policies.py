@@ -413,3 +413,193 @@ def test_auto_policy_infers_z_image_and_wan_from_transformer_class_names():
     assert {decision.action for decision in wan_decisions.values()}.isdisjoint(
         {"adaln_int4_rtn"}
     )
+
+
+class AdaLayerNormZero(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = torch.nn.Linear(16, 96)
+
+
+class PixArtAlphaTextProjection(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear_1 = torch.nn.Linear(16, 16)
+
+
+class TinyParentClassNames(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.caption_projection = PixArtAlphaTextProjection()
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "norm2": AdaLayerNormZero(),
+                        "attn1": torch.nn.ModuleDict({"to_q": torch.nn.Linear(16, 16)}),
+                    }
+                )
+            ]
+        )
+
+
+def test_universal_policy_detects_adaln_and_embedders_by_parent_class():
+    decisions = classify_linear_modules(TinyParentClassNames(), OrbitQuantConfig())
+
+    assert decisions["transformer_blocks.0.norm2.linear"].action == "adaln_int4_rtn"
+    assert decisions["transformer_blocks.0.attn1.to_q"].action == "orbitquant"
+    assert decisions["caption_projection.linear_1"].action == "bf16_skip"
+
+
+def test_target_policy_version_1_keeps_name_token_classification_for_old_artifacts():
+    config = OrbitQuantConfig.from_dict({"weight_bits": 4, "activation_bits": 4})
+    decisions = classify_linear_modules(TinyParentClassNames(), config)
+
+    assert config.target_policy_version == 1
+    assert decisions["transformer_blocks.0.norm2.linear"].action == "orbitquant"
+    assert decisions["caption_projection.linear_1"].action == "orbitquant"
+
+
+def _tiny_cogvideox():
+    from diffusers import CogVideoXTransformer3DModel
+
+    return CogVideoXTransformer3DModel(
+        num_attention_heads=2,
+        attention_head_dim=8,
+        in_channels=4,
+        out_channels=4,
+        time_embed_dim=8,
+        text_embed_dim=16,
+        num_layers=1,
+        sample_width=8,
+        sample_height=8,
+        sample_frames=5,
+        patch_size=2,
+        temporal_compression_ratio=4,
+        max_text_seq_length=8,
+    )
+
+
+def test_cogvideox_policy_keeps_layernorm_zero_projections_at_int4_rtn():
+    pytest.importorskip("diffusers")
+    model = _tiny_cogvideox()
+    config = OrbitQuantConfig(target_policy="auto")
+
+    decisions = classify_linear_modules(model, config)
+
+    assert resolve_target_policy(model, config) == "cogvideox"
+    assert decisions["transformer_blocks.0.norm1.linear"].action == "adaln_int4_rtn"
+    assert decisions["transformer_blocks.0.norm2.linear"].action == "adaln_int4_rtn"
+    for name in (
+        "transformer_blocks.0.attn1.to_q",
+        "transformer_blocks.0.attn1.to_k",
+        "transformer_blocks.0.attn1.to_v",
+        "transformer_blocks.0.attn1.to_out.0",
+        "transformer_blocks.0.ff.net.0.proj",
+        "transformer_blocks.0.ff.net.2",
+    ):
+        assert decisions[name].action == "orbitquant"
+    for name in (
+        "patch_embed.text_proj",
+        "time_embedding.linear_1",
+        "time_embedding.linear_2",
+        "norm_out.linear",
+        "proj_out",
+    ):
+        assert decisions[name].action == "bf16_skip"
+
+
+def test_cogvideox_auto_policy_stays_universal_for_version_1_artifacts():
+    pytest.importorskip("diffusers")
+    model = _tiny_cogvideox()
+    config = OrbitQuantConfig.from_dict({"weight_bits": 4, "activation_bits": 4})
+
+    assert resolve_target_policy(model, config) == "universal"
+    decisions = classify_linear_modules(model, config)
+    assert decisions["transformer_blocks.0.norm1.linear"].action == "orbitquant"
+
+
+def test_hunyuan_video_policy_matches_current_diffusers_tiny_module_names():
+    pytest.importorskip("diffusers")
+    from diffusers import HunyuanVideoTransformer3DModel
+
+    model = HunyuanVideoTransformer3DModel(
+        in_channels=4,
+        out_channels=4,
+        num_attention_heads=2,
+        attention_head_dim=8,
+        num_layers=1,
+        num_single_layers=1,
+        num_refiner_layers=1,
+        patch_size=1,
+        patch_size_t=1,
+        text_embed_dim=16,
+        pooled_projection_dim=8,
+        rope_axes_dim=(2, 2, 4),
+    )
+    config = OrbitQuantConfig(target_policy="auto")
+
+    decisions = classify_linear_modules(model, config)
+
+    assert resolve_target_policy(model, config) == "hunyuan_video"
+    for name in (
+        "transformer_blocks.0.norm1.linear",
+        "transformer_blocks.0.norm1_context.linear",
+        "single_transformer_blocks.0.norm.linear",
+    ):
+        assert decisions[name].action == "adaln_int4_rtn"
+    for name in (
+        "transformer_blocks.0.attn.to_q",
+        "transformer_blocks.0.attn.add_k_proj",
+        "transformer_blocks.0.attn.to_add_out",
+        "transformer_blocks.0.ff_context.net.2",
+        "single_transformer_blocks.0.proj_mlp",
+        "single_transformer_blocks.0.proj_out",
+    ):
+        assert decisions[name].action == "orbitquant"
+    for name in (
+        "context_embedder.token_refiner.refiner_blocks.0.attn.to_q",
+        "time_text_embed.guidance_embedder.linear_1",
+        "norm_out.linear",
+        "proj_out",
+    ):
+        assert decisions[name].action == "bf16_skip"
+
+
+def test_universal_policy_keeps_sd3_and_pixart_modulation_at_int4_rtn():
+    pytest.importorskip("diffusers")
+    from diffusers import PixArtTransformer2DModel, SD3Transformer2DModel
+
+    sd3 = SD3Transformer2DModel(
+        sample_size=8,
+        patch_size=2,
+        in_channels=4,
+        num_layers=1,
+        attention_head_dim=8,
+        num_attention_heads=2,
+        joint_attention_dim=16,
+        caption_projection_dim=16,
+        pooled_projection_dim=8,
+        out_channels=4,
+    )
+    pixart = PixArtTransformer2DModel(
+        sample_size=8,
+        num_layers=1,
+        patch_size=2,
+        attention_head_dim=8,
+        num_attention_heads=2,
+        in_channels=4,
+        out_channels=4,
+        cross_attention_dim=16,
+        caption_channels=16,
+    )
+
+    sd3_decisions = classify_linear_modules(sd3, OrbitQuantConfig())
+    pixart_decisions = classify_linear_modules(pixart, OrbitQuantConfig())
+
+    assert sd3_decisions["transformer_blocks.0.norm1.linear"].action == "adaln_int4_rtn"
+    assert sd3_decisions["transformer_blocks.0.norm1_context.linear"].action == "adaln_int4_rtn"
+    assert sd3_decisions["norm_out.linear"].action == "bf16_skip"
+    assert pixart_decisions["adaln_single.linear"].action == "adaln_int4_rtn"
+    assert pixart_decisions["caption_projection.linear_1"].action == "bf16_skip"
+    assert pixart_decisions["transformer_blocks.0.attn2.to_k"].action == "orbitquant"

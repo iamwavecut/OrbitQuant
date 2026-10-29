@@ -41,14 +41,20 @@ _SUPPORTED_TARGET_POLICIES = {
     "flux2",
     "z_image",
     "wan",
+    "cogvideox",
+    "hunyuan_video",
     "kandinsky6",
 }
+_SUPPORTED_TARGET_POLICY_VERSIONS = {1, 2}
 _SUPPORTED_MODULE_DTYPES = {"bfloat16", "bf16", "float16", "fp16", "float32", "fp32"}
 _SUPPORTED_CODEBOOK_DTYPES = {"float32", "fp32"}
 _SUPPORTED_ROW_NORM_DTYPES = {"bfloat16", "bf16"}
 _SUPPORTED_ACTIVATION_NORM_DTYPES = {"float32", "fp32"}
 _SUPPORTED_WEIGHT_PACK_DTYPES = {"uint8"}
 _SUPPORTED_ADALN_POLICIES = {"int4_rtn"}
+_SUPPORTED_ACTIVATION_QUANTIZERS = {"lloyd_max", "absmax_int8"}
+_SUPPORTED_ADALN_SCALES = {"absmax", "mse"}
+_MAX_OUTLIER_CHANNELS = 64
 
 
 class _QuantMethodName(str):
@@ -72,20 +78,54 @@ class OrbitQuantConfig(QuantizationConfigMixin):
     rotation: str = "rpbh"
     rotation_seed: int = 0
     block_size: int | str = "paper"
+    # 1 is the paper's single RPBH round. 2 adds an independent first RPBH round
+    # in front of it on every projection; "auto" adds it only where the block is
+    # narrower than 512 (d = 3360 gives h = 32, d = 3840 gives h = 256). See
+    # orbitquant.rotations.rpbh. Not supported by the fused block runtime.
+    rotation_rounds: int | str = 1
     codebook: str = "lloyd_max"
     codebook_version: int = 2
     codebook_dtype: str = "float32"
     row_norm_dtype: str = "bfloat16"
     activation_norm_dtype: str = "float32"
     activation_eps: float = 1e-10
+    # "lloyd_max" is the paper's activation codebook. "absmax_int8" (8-bit
+    # activations only) quantizes the rotated input to INT8 with one absmax scale
+    # per token, the numerics of the fused runtime's 8-bit activations, on every
+    # backend; CUDA runs it as an INT8 GEMM against the packed weights.
+    activation_quantizer: str = "lloyd_max"
     weight_pack_dtype: str = "uint8"
     target_policy: str = "auto"
+    # Layer-classification revision. 1 detects AdaLN projections by module-name
+    # tokens only, which quantizes norm1/norm2.linear in CogVideoX, HunyuanVideo,
+    # SD3 and PixArt as OrbitQuant linears. 2 also detects them, and input
+    # embedders, by the class of the parent module, and resolves CogVideoX and
+    # HunyuanVideo to their own policies. Loaded artifacts without the field are
+    # read as 1 so their packed module set stays the one they were written with.
+    target_policy_version: int = 2
     adaln_policy: str = "int4_rtn"
     adaln_group_size: int = 64
+    # INT4 group scale of AdaLN weights. "absmax" is absmax / 7 (code -8 unused);
+    # "mse" picks, per group, the BF16 scale with the lowest squared error from
+    # absmax x [0.6, 1.15] / {7, 7.5, 8}, absmax / 7 included. Offline only: the
+    # packed format and the runtime are the same.
+    adaln_scale: str = "absmax"
+    # Opt-in: divide the BF16 row norms by E<u,Q(u)> of the weight and the
+    # activation codebooks. Lloyd-Max codes shrink a unit vector by that factor
+    # (0.9905 per side at 4 bits, 0.9655 at 3, 0.8826 at 2), which scales an
+    # aligned output by its product; for uncorrelated weight and input rows the
+    # uncorrected output is already the conditional mean.
+    output_gain_correction: bool = False
     modules_to_convert: list[str] = field(default_factory=list)
     modules_to_use_adaln: list[str] = field(default_factory=list)
     modules_to_not_convert: list[str] = field(default_factory=list)
     modules_dtype_dict: dict[str, list[str]] = field(default_factory=dict)
+    # Opt-in, calibration-derived: per exact module name, input channels kept out
+    # of the quantizer. A massive activation channel (hundreds of times the
+    # token RMS) dominates the per-token norm and leaves the other channels a
+    # few codebook levels; these columns run as a BF16 side GEMM instead. Find
+    # them with orbitquant.outliers.find_outlier_channels.
+    outlier_channels: dict[str, list[int]] = field(default_factory=dict)
     artifact_format_version: int = 1
     runtime_mode: str = "auto_fused"
     activation_kernel_backend: str = "auto"
@@ -127,6 +167,8 @@ class OrbitQuantConfig(QuantizationConfigMixin):
         self.quant_method = _QuantMethodName(self.quant_method)
         if self.rotation != "rpbh":
             raise ValueError("only RPBH rotation is implemented")
+        if self.rotation_rounds not in (1, 2, "auto") or isinstance(self.rotation_rounds, bool):
+            raise ValueError("rotation_rounds must be 1, 2 or 'auto'")
         if self.codebook != "lloyd_max":
             raise ValueError("only Lloyd-Max codebooks are implemented")
         if self.codebook_version not in {1, 2}:
@@ -137,6 +179,13 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             raise ValueError("row_norm_dtype must be 'bfloat16'")
         if self.activation_norm_dtype.lower() not in _SUPPORTED_ACTIVATION_NORM_DTYPES:
             raise ValueError("activation_norm_dtype must be 'float32'")
+        if self.activation_quantizer not in _SUPPORTED_ACTIVATION_QUANTIZERS:
+            raise ValueError(
+                "activation_quantizer must be one of "
+                f"{sorted(_SUPPORTED_ACTIVATION_QUANTIZERS)}"
+            )
+        if self.activation_quantizer == "absmax_int8" and self.activation_bits != 8:
+            raise ValueError("activation_quantizer='absmax_int8' requires activation_bits=8")
         if self.weight_pack_dtype.lower() not in _SUPPORTED_WEIGHT_PACK_DTYPES:
             raise ValueError("weight_pack_dtype must be 'uint8'")
         if self.adaln_policy not in _SUPPORTED_ADALN_POLICIES:
@@ -159,8 +208,17 @@ class OrbitQuantConfig(QuantizationConfigMixin):
                 raise ValueError(f"{field_name} must be positive")
         if self.target_policy not in _SUPPORTED_TARGET_POLICIES:
             raise ValueError(f"target_policy must be one of {sorted(_SUPPORTED_TARGET_POLICIES)}")
+        if self.target_policy_version not in _SUPPORTED_TARGET_POLICY_VERSIONS:
+            raise ValueError(
+                "target_policy_version must be one of "
+                f"{sorted(_SUPPORTED_TARGET_POLICY_VERSIONS)}"
+            )
         if self.adaln_group_size <= 0:
             raise ValueError("adaln_group_size must be positive")
+        if self.adaln_scale not in _SUPPORTED_ADALN_SCALES:
+            raise ValueError(f"adaln_scale must be one of {sorted(_SUPPORTED_ADALN_SCALES)}")
+        if not isinstance(self.output_gain_correction, bool):
+            raise ValueError("output_gain_correction must be a boolean")
         if not isinstance(self.w4a4_int8_weight_cache, bool):
             raise ValueError("w4a4_int8_weight_cache must be a boolean")
         if self.lowbit_boundary_protection != "auto":
@@ -178,6 +236,16 @@ class OrbitQuantConfig(QuantizationConfigMixin):
             self.lowbit_interior_protection, bool
         ):
             raise ValueError("lowbit_interior_protection must be 'auto' or a boolean")
+        normalized_outliers: dict[str, list[int]] = {}
+        for module_name, channels in self.outlier_channels.items():
+            values = sorted({int(channel) for channel in channels})
+            if not values or values[0] < 0 or len(values) > _MAX_OUTLIER_CHANNELS:
+                raise ValueError(
+                    "outlier_channels entries must list 1 to "
+                    f"{_MAX_OUTLIER_CHANNELS} non-negative channel indices"
+                )
+            normalized_outliers[str(module_name)] = values
+        self.outlier_channels = normalized_outliers
         normalized_dtype_dict: dict[str, list[str]] = {}
         for dtype_name, module_names in self.modules_dtype_dict.items():
             normalized_dtype = dtype_name.lower()
@@ -213,4 +281,7 @@ class OrbitQuantConfig(QuantizationConfigMixin):
         # Artifacts written before mixed-bit interior protection contain W2
         # payloads for every unprotected interior module.
         values.setdefault("lowbit_interior_protection", False)
+        # Artifacts written before parent-class AdaLN detection were classified
+        # by module-name tokens only.
+        values.setdefault("target_policy_version", 1)
         return cls(**values)

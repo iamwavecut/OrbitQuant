@@ -32,7 +32,7 @@ from torch import nn
 from orbitquant.codebooks.lloyd_max import get_codebook
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.packing import pack_lowbit
-from orbitquant.rotations.rpbh import get_rpbh_rotation
+from orbitquant.rotations.rpbh import get_pre_rotation, get_rpbh_rotation
 
 __all__ = [
     "HessianCollector",
@@ -192,14 +192,35 @@ class HessianCollector:
             rotation = get_rpbh_rotation(
                 dim=dim, seed=self.config.rotation_seed, block_size=self.config.block_size
             )
+            pre_rotation = get_pre_rotation(
+                dim,
+                seed=self.config.rotation_seed,
+                block_size=self.config.block_size,
+                rotation_rounds=self.config.rotation_rounds,
+            )
+            outliers = _group_outlier_channels(self.config, group)
             device = module.weight.device
             self._hessians[head] = torch.zeros(dim, dim, dtype=torch.float32, device=device)
             self.tokens[head] = 0
             for name in group:
                 self._owner[name] = head
 
-            def hook(_module, args, head=head, dim=dim, rotation=rotation):
-                x = rotation.apply_to_activations(args[0].reshape(-1, dim).to(torch.float32))
+            def hook(
+                _module,
+                args,
+                head=head,
+                dim=dim,
+                rotation=rotation,
+                pre_rotation=pre_rotation,
+                outliers=outliers,
+            ):
+                x = args[0].reshape(-1, dim).to(torch.float32)
+                if outliers is not None:
+                    # The quantized path sees the input with its outlier channels zeroed.
+                    x = x.index_fill(1, torch.tensor(outliers, device=x.device), 0)
+                if pre_rotation is not None:
+                    x = pre_rotation.apply_to_activations(x)
+                x = rotation.apply_to_activations(x)
                 with _full_fp32():
                     self._hessians[head].addmm_(x.T, x)
                 self.tokens[head] += x.shape[0]
@@ -218,6 +239,34 @@ class HessianCollector:
     def release(self, name: str) -> None:
         """Free the Hessian of ``name``'s group."""
         self._hessians.pop(self._owner[name], None)
+
+
+def _group_outlier_channels(config: OrbitQuantConfig, group: list[str]) -> list[int] | None:
+    """Outlier channels of a group sharing one input; every member must keep the same ones."""
+    channel_sets = {tuple(config.outlier_channels.get(name, ())) for name in group}
+    if len(channel_sets) != 1:
+        raise ValueError(f"group {group} mixes outlier_channels {sorted(channel_sets)}")
+    channels = channel_sets.pop()
+    return list(channels) or None
+
+
+def _quantized_columns(weight: torch.Tensor, outliers: list[int] | None) -> torch.Tensor:
+    if outliers is None:
+        return weight
+    return weight.index_fill(1, torch.tensor(outliers, device=weight.device), 0)
+
+
+def _to_quantization_basis(rotation, pre_rotation, weight: torch.Tensor) -> torch.Tensor:
+    if pre_rotation is not None:
+        weight = pre_rotation.apply_to_weight(weight)
+    return rotation.apply_to_weight(weight)
+
+
+def _from_quantization_basis(rotation, pre_rotation, weight: torch.Tensor) -> torch.Tensor:
+    weight = rotation.apply_inverse_to_weight(weight)
+    if pre_rotation is not None:
+        weight = pre_rotation.apply_inverse_to_weight(weight)
+    return weight
 
 
 def round_groups(
@@ -258,6 +307,13 @@ def round_groups(
         rotation = get_rpbh_rotation(
             dim=dim, seed=config.rotation_seed, block_size=config.block_size
         )
+        pre_rotation = get_pre_rotation(
+            dim,
+            seed=config.rotation_seed,
+            block_size=config.block_size,
+            rotation_rounds=config.rotation_rounds,
+        )
+
         codebook = get_codebook(dim, bits, config.codebook_version)
         # Per group: about five [cols, cols] (Hessian copies, Cholesky factors) and eight
         # [rows, cols] float32 work tensors; the batch also stays within half the free GPU memory.
@@ -271,10 +327,15 @@ def round_groups(
             H = torch.stack([hessians[item[0][0]] for item in chunk])
             weight = torch.stack(
                 [
-                    rotation.apply_to_weight(
+                    _to_quantization_basis(
+                        rotation,
+                        pre_rotation,
                         torch.cat(
                             [
-                                m.weight.detach().to(device=H.device, dtype=torch.float32)
+                                _quantized_columns(
+                                    m.weight.detach().to(device=H.device, dtype=torch.float32),
+                                    _group_outlier_channels(config, item[0]),
+                                )
                                 for m in item[1]
                             ]
                         )
@@ -313,8 +374,14 @@ def round_groups(
                         damping=float(used[g]),
                     )
                 if sequential:
-                    original = rotation.apply_inverse_to_weight(rounded)
+                    original = _from_quantization_basis(rotation, pre_rotation, rounded)
+                    outliers = _group_outlier_channels(config, group)
                     for module, part in zip(modules, original.split(sizes), strict=True):
+                        if outliers is not None:
+                            # Outlier columns stay at their source values (BF16 side GEMM).
+                            index = torch.tensor(outliers, device=part.device)
+                            source = module.weight.detach().to(part.device, part.dtype)
+                            part = part.index_copy(1, index, source.index_select(1, index))
                         module.weight.data = part.to(
                             device=module.weight.device, dtype=module.weight.dtype
                         )
@@ -341,9 +408,8 @@ def load_rounded_codes(model: nn.Module, codes: dict[str, RoundedCodes]) -> None
         if target.numel() != rounded.packed.numel():
             raise ValueError(f"{name}: packed size {rounded.packed.numel()} != {target.numel()}")
         target.data.copy_(rounded.packed.reshape(target.shape).to(target.device))
-        module.row_norms.data.copy_(
-            rounded.row_norms.to(module.row_norms.device, module.row_norms.dtype)
-        )
+        row_norms = rounded.row_norms.to(module.row_norms.device, torch.float32)
+        module.row_norms.data.copy_((row_norms * module.output_gain).to(module.row_norms.dtype))
         module.clear_dequantized_cache()
 
 

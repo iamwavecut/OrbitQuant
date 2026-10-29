@@ -12,11 +12,12 @@ from torch import nn
 from torch.nn import functional as F
 
 from orbitquant.codebooks import get_codebook
+from orbitquant.codebooks.lloyd_max import codebook_retained_energy
 from orbitquant.config import OrbitQuantConfig
 from orbitquant.kernels import quantize_activations_kernel, select_backend
 from orbitquant.linear_adapters import canonical_linear_weight, linear_module_spec
 from orbitquant.packing import pack_lowbit, unpack_lowbit
-from orbitquant.rotations import RPBHRotation, get_rpbh_rotation
+from orbitquant.rotations import RPBHRotation, get_pre_rotation, get_rpbh_rotation
 from orbitquant.streaming import accelerate_hook_offloads, iter_aligned_row_tiles
 
 _PACKED_MATMUL_PROBE_MISSING = object()
@@ -50,12 +51,16 @@ def _clear_shared_activation_cache() -> None:
     """Drop the current thread's last prepared activation."""
 
     _SHARED_ACTIVATION_CACHE.entry = None
+    _SHARED_ACTIVATION_CACHE.pre_rotation_entry = None
+    _SHARED_ACTIVATION_CACHE.outlier_entry = None
 
 
 def _get_or_create_shared_activation_quantization(
     x: torch.Tensor,
     signature: tuple[object, ...],
     factory: Callable[[], tuple[torch.Tensor, torch.Tensor]],
+    *,
+    slot: str = "entry",
 ) -> tuple[tuple[torch.Tensor, torch.Tensor], bool]:
     """Reuse an unchanged activation across consecutive quantized projections.
 
@@ -65,7 +70,7 @@ def _get_or_create_shared_activation_quantization(
     """
 
     if torch.is_grad_enabled():
-        _clear_shared_activation_cache()
+        setattr(_SHARED_ACTIVATION_CACHE, slot, None)
         return factory(), False
     try:
         version = x._version
@@ -74,17 +79,17 @@ def _get_or_create_shared_activation_quantization(
         # arbitrary projections could not be detected. The bounded projection helper owns
         # the complete sequence of pure forwards and clears its cache before returning.
         if getattr(_SHARED_ACTIVATION_CACHE, "projection_input", None) is not x:
-            _clear_shared_activation_cache()
+            setattr(_SHARED_ACTIVATION_CACHE, slot, None)
             return factory(), False
         version = None
     metadata = (tuple(x.shape), tuple(x.stride()), x.storage_offset(), x.dtype, x.device, version)
-    entry = getattr(_SHARED_ACTIVATION_CACHE, "entry", None)
+    entry = getattr(_SHARED_ACTIVATION_CACHE, slot, None)
     if entry is not None:
         input_ref, cached_signature, cached_metadata, prepared = entry
         if input_ref() is x and cached_signature == signature and cached_metadata == metadata:
             return prepared, True
     prepared = factory()
-    _SHARED_ACTIVATION_CACHE.entry = (weakref.ref(x), signature, metadata, prepared)
+    setattr(_SHARED_ACTIVATION_CACHE, slot, (weakref.ref(x), signature, metadata, prepared))
     return prepared, False
 
 
@@ -110,6 +115,8 @@ def project_shared_input(x: torch.Tensor, *projections: nn.Module) -> tuple[torc
         return tuple(layer(x) for layer in projections)
     previous_input = getattr(_SHARED_ACTIVATION_CACHE, "projection_input", None)
     previous_entry = getattr(_SHARED_ACTIVATION_CACHE, "entry", None)
+    previous_pre_rotation = getattr(_SHARED_ACTIVATION_CACHE, "pre_rotation_entry", None)
+    previous_outlier = getattr(_SHARED_ACTIVATION_CACHE, "outlier_entry", None)
     _SHARED_ACTIVATION_CACHE.projection_input = x
     _clear_shared_activation_cache()
     try:
@@ -117,6 +124,8 @@ def project_shared_input(x: torch.Tensor, *projections: nn.Module) -> tuple[torc
     finally:
         _SHARED_ACTIVATION_CACHE.projection_input = previous_input
         _SHARED_ACTIVATION_CACHE.entry = previous_entry
+        _SHARED_ACTIVATION_CACHE.pre_rotation_entry = previous_pre_rotation
+        _SHARED_ACTIVATION_CACHE.outlier_entry = previous_outlier
 
 
 def _compile_registry_lookup(handle: int):
@@ -245,8 +254,12 @@ def _quantize_weight_bounded(
     eps: float,
     row_tile_size: int,
     quantization_device: torch.device | None = None,
+    pre_rotation: RPBHRotation | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Quantize a matrix with workspace bounded by one aligned row tile."""
+    """Quantize a matrix with workspace bounded by one aligned row tile.
+
+    ``pre_rotation`` is the first round of a two-round RPBH; it is folded into each
+    row tile before the paper rotation."""
 
     if weight.ndim != 2:
         raise ValueError("weight must be a matrix")
@@ -272,6 +285,8 @@ def _quantize_weight_bounded(
         row_tile_size,
     ):
         tile = weight[row_start:row_end].to(device=work_device)
+        if pre_rotation is not None:
+            tile = pre_rotation.apply_to_weight(tile.to(torch.float32))
         if tile.device.type in {"cuda", "xpu"}:
             from orbitquant.kernels.triton_cuda import row_norms_with_triton
 
@@ -308,6 +323,7 @@ def _rotate_weight_bounded(
     rotation: RPBHRotation,
     row_tile_size: int,
     quantization_device: torch.device | None = None,
+    pre_rotation: RPBHRotation | None = None,
 ) -> torch.Tensor:
     output_device = weight.device
     work_device = output_device if quantization_device is None else quantization_device
@@ -319,10 +335,39 @@ def _rotate_weight_bounded(
         row_tile_size,
     ):
         tile = weight[row_start:row_end].to(device=work_device, dtype=torch.float32)
+        if pre_rotation is not None:
+            tile = pre_rotation.apply_to_weight(tile)
         rotated[row_start:row_end].copy_(
             rotation.apply_to_weight(tile).to(device=output_device)
         )
     return rotated
+
+
+def _outlier_tensors(
+    config: OrbitQuantConfig, module_name: str, in_features: int, *, device: torch.device
+) -> torch.Tensor | None:
+    channels = config.outlier_channels.get(module_name)
+    if not channels:
+        return None
+    if channels[-1] >= in_features:
+        raise ValueError(
+            f"{module_name}: outlier channel {channels[-1]} is outside {in_features} inputs"
+        )
+    return torch.tensor(channels, dtype=torch.long, device=device)
+
+
+def output_gain(config: OrbitQuantConfig, in_features: int) -> float:
+    """Row-norm factor of ``output_gain_correction``: 1 / (E<u,Q_w(u)> * E<u,Q_a(u)>)."""
+    if not config.output_gain_correction:
+        return 1.0
+    retained = codebook_retained_energy(
+        get_codebook(in_features, config.weight_bits, config.codebook_version)
+    )
+    if config.activation_quantizer == "lloyd_max":
+        retained *= codebook_retained_energy(
+            get_codebook(in_features, config.activation_bits, config.codebook_version)
+        )
+    return 1.0 / retained
 
 
 def _native_packed_matmul_load_error() -> Exception | None:
@@ -404,6 +449,8 @@ class OrbitQuantLinear(nn.Module):
         packed_weight_indices: torch.Tensor | None,
         row_norms: torch.Tensor | None,
         debug_weight: torch.Tensor | None,
+        outlier_channels: torch.Tensor | None = None,
+        outlier_weight: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         self.in_features = in_features
@@ -420,14 +467,27 @@ class OrbitQuantLinear(nn.Module):
         self.module_name = module_name
         self.source_weight_layout = source_weight_layout
         self.activation_eps = config.activation_eps
+        self.activation_quantizer = config.activation_quantizer
+        self.output_gain = output_gain(config, in_features)
         self.rotation = get_rpbh_rotation(
             dim=in_features, seed=config.rotation_seed, block_size=config.block_size
+        )
+        self.rotation_rounds = config.rotation_rounds
+        self.pre_rotation = get_pre_rotation(
+            in_features,
+            seed=config.rotation_seed,
+            block_size=config.block_size,
+            rotation_rounds=config.rotation_rounds,
         )
         self.weight_codebook = get_codebook(
             in_features, config.weight_bits, config.codebook_version
         )
-        self.activation_codebook = get_codebook(
-            in_features, config.activation_bits, config.codebook_version
+        # Absmax INT8 activations use no Lloyd-Max table; exact 8-bit tables also stop
+        # converging for wide inputs (d >= 7680), so none is built for them.
+        self.activation_codebook = (
+            None
+            if self.activation_quantizer == "absmax_int8"
+            else get_codebook(in_features, config.activation_bits, config.codebook_version)
         )
         constant_device = _first_available_device(
             packed_weight_indices,
@@ -448,13 +508,31 @@ class OrbitQuantLinear(nn.Module):
             persistent=False,
         )
         self.register_buffer(
+            "_pre_rotation_permutation",
+            None
+            if self.pre_rotation is None
+            else _clone_constant(self.pre_rotation.permutation, device=constant_device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_pre_rotation_signs",
+            None
+            if self.pre_rotation is None
+            else _clone_constant(self.pre_rotation.signs, device=constant_device),
+            persistent=False,
+        )
+        self.register_buffer(
             "_activation_codebook_centroids",
-            _clone_constant(self.activation_codebook.centroids, device=constant_device),
+            None
+            if self.activation_codebook is None
+            else _clone_constant(self.activation_codebook.centroids, device=constant_device),
             persistent=False,
         )
         self.register_buffer(
             "_activation_codebook_boundaries",
-            _clone_constant(self.activation_codebook.boundaries, device=constant_device),
+            None
+            if self.activation_codebook is None
+            else _clone_constant(self.activation_codebook.boundaries, device=constant_device),
             persistent=False,
         )
         self.register_buffer(
@@ -482,6 +560,18 @@ class OrbitQuantLinear(nn.Module):
             self.register_buffer("debug_weight", debug_weight)
         else:
             self.debug_weight = None
+        # Input channels kept out of the quantizer (config.outlier_channels): their
+        # columns of the source weight, a BF16 side GEMM on the raw channels.
+        if (outlier_channels is None) != (outlier_weight is None):
+            raise ValueError("outlier_channels and outlier_weight go together")
+        self.register_buffer("outlier_channels", outlier_channels)
+        self._outlier_signature = (
+            None if outlier_channels is None else tuple(outlier_channels.tolist())
+        )
+        if outlier_weight is None:
+            self.register_parameter("outlier_weight", None)
+        else:
+            self.outlier_weight = nn.Parameter(outlier_weight, requires_grad=False)
         self._dequantized_weight_cache: torch.Tensor | None = None
         self._dequantized_weight_cache_key: tuple[str, torch.dtype] | None = None
         self._int8_surrogate_cache: tuple[str, torch.Tensor, float, torch.Tensor, float] | None = (
@@ -490,6 +580,7 @@ class OrbitQuantLinear(nn.Module):
         self._runtime_probe_cache: dict[str, bool] = {}
         self._bias_cache: tuple[tuple[str, torch.dtype], torch.Tensor] | None = None
         self._int8_weight_cache: tuple[str, torch.Tensor] | None = None
+        self._absmax_quantizer: tuple[str, object] | None = None
         self._compile_handle = _compile_registry_register(self)
         self.last_effective_runtime_mode: str | None = None
         self.last_activation_kernel_backend: str | None = None
@@ -545,6 +636,17 @@ class OrbitQuantLinear(nn.Module):
         rotation = get_rpbh_rotation(
             dim=in_features, seed=config.rotation_seed, block_size=config.block_size
         )
+        pre_rotation = get_pre_rotation(
+            in_features,
+            seed=config.rotation_seed,
+            block_size=config.block_size,
+            rotation_rounds=config.rotation_rounds,
+        )
+        outliers = _outlier_tensors(config, module_name, in_features, device=weight.device)
+        outlier_weight = None
+        if outliers is not None:
+            outlier_weight = weight.index_select(1, outliers).to(torch.bfloat16).contiguous()
+            weight = weight.index_fill(1, outliers, 0)
 
         if config.runtime_mode == "debug_no_quant":
             rotated_weight = _rotate_weight_bounded(
@@ -552,6 +654,7 @@ class OrbitQuantLinear(nn.Module):
                 rotation=rotation,
                 row_tile_size=config.weight_row_tile_size,
                 quantization_device=quantization_device,
+                pre_rotation=pre_rotation,
             )
             return cls(
                 in_features=in_features,
@@ -563,6 +666,8 @@ class OrbitQuantLinear(nn.Module):
                 packed_weight_indices=None,
                 row_norms=None,
                 debug_weight=rotated_weight,
+                outlier_channels=outliers,
+                outlier_weight=outlier_weight,
             )
 
         codebook = get_codebook(in_features, config.weight_bits, config.codebook_version)
@@ -574,7 +679,11 @@ class OrbitQuantLinear(nn.Module):
             eps=config.activation_eps,
             row_tile_size=config.weight_row_tile_size,
             quantization_device=quantization_device,
+            pre_rotation=pre_rotation,
         )
+        gain = output_gain(config, in_features)
+        if gain != 1.0:
+            row_norms = (row_norms.to(torch.float32) * gain).to(row_norms.dtype)
 
         return cls(
             in_features=in_features,
@@ -586,6 +695,8 @@ class OrbitQuantLinear(nn.Module):
             packed_weight_indices=packed,
             row_norms=row_norms,
             debug_weight=None,
+            outlier_channels=outliers,
+            outlier_weight=outlier_weight,
         )
 
     @classmethod
@@ -624,6 +735,17 @@ class OrbitQuantLinear(nn.Module):
             row_norms = torch.empty(
                 spec.out_features, dtype=torch.bfloat16, device=layer.weight.device
             )
+        outliers = _outlier_tensors(
+            config, module_name, spec.in_features, device=layer.weight.device
+        )
+        outlier_weight = None
+        if outliers is not None:
+            outlier_weight = torch.empty(
+                spec.out_features,
+                outliers.numel(),
+                dtype=torch.bfloat16,
+                device=layer.weight.device,
+            )
         empty = cls(
             in_features=spec.in_features,
             out_features=spec.out_features,
@@ -634,6 +756,8 @@ class OrbitQuantLinear(nn.Module):
             packed_weight_indices=packed_weight_indices,
             row_norms=row_norms,
             debug_weight=debug_weight,
+            outlier_channels=outliers,
+            outlier_weight=outlier_weight,
         )
         # Hugging Face streaming loaders may replace non-persistent buffers while
         # moving an empty module skeleton out of meta initialization. Rebuild these
@@ -710,21 +834,29 @@ class OrbitQuantLinear(nn.Module):
             ("_rotation_permutation", self.rotation.permutation, torch.int32),
             ("_rotation_signs", self.rotation.signs, torch.int8),
             (
-                "_activation_codebook_centroids",
-                self.activation_codebook.centroids,
-                torch.float32,
-            ),
-            (
-                "_activation_codebook_boundaries",
-                self.activation_codebook.boundaries,
-                torch.float32,
-            ),
-            (
                 "_weight_codebook_centroids",
                 self.weight_codebook.centroids,
                 torch.float32,
             ),
         )
+        if self.activation_codebook is not None:
+            constants += (
+                (
+                    "_activation_codebook_centroids",
+                    self.activation_codebook.centroids,
+                    torch.float32,
+                ),
+                (
+                    "_activation_codebook_boundaries",
+                    self.activation_codebook.boundaries,
+                    torch.float32,
+                ),
+            )
+        if self.pre_rotation is not None:
+            constants += (
+                ("_pre_rotation_permutation", self.pre_rotation.permutation, torch.long),
+                ("_pre_rotation_signs", self.pre_rotation.signs, torch.int8),
+            )
         for name, source, dtype in constants:
             self._replace_registered_buffer_data(
                 name,
@@ -918,9 +1050,14 @@ class OrbitQuantLinear(nn.Module):
 
         from orbitquant.kernels.triton_cuda import fit_int8_centroid_surrogate
 
-        activation_codes, activation_scale = fit_int8_centroid_surrogate(
-            self.activation_codebook.centroids
-        )
+        if self.activation_quantizer == "absmax_int8":
+            # Absmax INT8 activations carry their own per-token scale; only the
+            # weight code table needs a surrogate (an 8-bit codebook has 256 levels).
+            activation_codes, activation_scale = torch.empty(0, dtype=torch.int8), 1.0
+        else:
+            activation_codes, activation_scale = fit_int8_centroid_surrogate(
+                self.activation_codebook.centroids
+            )
         weight_codes, weight_scale = fit_int8_centroid_surrogate(self.weight_codebook.centroids)
         activation_codes = activation_codes.to(device=device).contiguous()
         weight_codes = weight_codes.to(device=device).contiguous()
@@ -1166,6 +1303,125 @@ class OrbitQuantLinear(nn.Module):
         dequantized = weight.to(dtype=dtype)
         return _finish(dequantized)
 
+    def _absmax_int8_activations(self, x: torch.Tensor) -> torch.Tensor:
+        """Rotated input as per-token absmax INT8 values, the fused runtime's 8-bit numerics."""
+
+        def factory() -> torch.Tensor:
+            permutation = self._constant_buffer(
+                "_rotation_permutation", device=x.device, dtype=torch.int32
+            )
+            signs = self._constant_buffer("_rotation_signs", device=x.device, dtype=torch.int8)
+            rotated = self.rotation.apply_to_activations(
+                x.to(torch.float32), permutation=permutation.to(torch.long), signs=signs
+            )
+            scale = rotated.abs().amax(dim=-1, keepdim=True).clamp_min(1e-12) / 127.0
+            codes = torch.round(rotated / scale).clamp_(-127.0, 127.0)
+            return (codes * scale).to(x.dtype)
+
+        rotated, self.last_activation_cache_hit = _get_or_create_shared_activation_quantization(
+            x, ("absmax_int8", id(self.rotation)), factory
+        )
+        return rotated
+
+    def _absmax_int8_cuda_available(self, x: torch.Tensor, runtime_mode: str) -> bool:
+        if runtime_mode not in {"native_packed_matmul", "triton_packed_matmul"}:
+            return False
+        if not x.is_cuda or _torch_uses_hip() or x.dtype != torch.bfloat16:
+            return False
+        if self.weight_bits not in (2, 4) or self.packed_weight_indices is None:
+            return False
+        if self.in_features % 64 != 0 or self.out_features % 16 != 0:
+            return False
+        if self.rotation.block_size > 4096 and self.in_features not in (8192, 16384):
+            return False
+
+        def probe() -> bool:
+            try:
+                from orbitquant.kernels import triton_activation  # noqa: F401
+            except (ImportError, RuntimeError):
+                return False
+            return True
+
+        return self._cached_runtime_probe("triton_absmax_int8", probe)
+
+    def _absmax_int8_cuda_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """INT8 GEMM of absmax INT8 activations against the packed W2/W4 weight codes."""
+        from orbitquant.kernels import triton_activation
+        from orbitquant.kernels.triton_cuda import (
+            matmul_int8_activations_packed_lowbit_fused_with_triton,
+            matmul_int8_activations_packed_w4_with_int_mm,
+        )
+
+        device_key = str(x.device)
+        if self._absmax_quantizer is None or self._absmax_quantizer[0] != device_key:
+            quantizer = triton_activation.ActivationQuantizer(
+                self.rotation, None, self.activation_eps, x.device
+            )
+            self._absmax_quantizer = (device_key, quantizer)
+        quantizer = self._absmax_quantizer[1]
+        rows_x = x.reshape(-1, self.in_features)
+        (codes, token_scales), self.last_activation_cache_hit = (
+            _get_or_create_shared_activation_quantization(
+                x, ("triton_absmax_int8", id(self.rotation)), lambda: quantizer(rows_x)
+            )
+        )
+        _, _, weight_codes, weight_scale = self._int8_surrogate_constants(x.device)
+        bias = self._bias_for(x.device, x.dtype)
+        self.last_activation_kernel_backend = "triton_cuda_absmax_int8"
+        self.last_native_int8_activation_enabled = True
+        rows = rows_x.shape[0]
+        if self.weight_bits == 2 or rows < _W4A4_FUSED_MAX_ROWS:
+            output = matmul_int8_activations_packed_lowbit_fused_with_triton(
+                codes,
+                self.packed_weight_indices,
+                token_scales,
+                self.row_norms,
+                weight_codes,
+                weight_bits=self.weight_bits,
+                activation_scale=1.0,
+                weight_scale=weight_scale,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                bias=bias,
+                output_dtype=x.dtype,
+            )
+        else:
+            output = matmul_int8_activations_packed_w4_with_int_mm(
+                codes,
+                self.packed_weight_indices,
+                token_scales,
+                self.row_norms,
+                weight_codes,
+                activation_scale=1.0,
+                weight_scale=weight_scale,
+                out_features=self.out_features,
+                in_features=self.in_features,
+                bias=bias,
+                output_dtype=x.dtype,
+                chunk_out_features=(
+                    2048 if rows >= 2048 and self.out_features >= 8192 else None
+                ),
+                decoded_weight=self._int8_weight_for(x.device),
+            )
+        return output.reshape(*x.shape[:-1], self.out_features)
+
+    def _pre_rotate(self, x: torch.Tensor) -> torch.Tensor:
+        """First RPBH round of a two-round rotation, shared across projections of one input."""
+        rotation = self.pre_rotation
+
+        def factory() -> torch.Tensor:
+            rotated = rotation.apply_to_activations(
+                x.to(torch.float32),
+                permutation=self._pre_rotation_permutation,
+                signs=self._pre_rotation_signs,
+            )
+            return rotated.to(x.dtype)
+
+        rotated, _ = _get_or_create_shared_activation_quantization(
+            x, ("pre_rotation", id(rotation)), factory, slot="pre_rotation_entry"
+        )
+        return rotated
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if torch.compiler.is_compiling():
             return torch.ops.orbitquant.packed_linear_forward(
@@ -1174,7 +1430,27 @@ class OrbitQuantLinear(nn.Module):
         return self._forward_impl(x)
 
     def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
+        if self.outlier_channels is None:
+            return self._forward_quantized(x)
+        channels = self.outlier_channels.to(device=x.device)
+        side = F.linear(
+            x.index_select(-1, channels),
+            self.outlier_weight.to(device=x.device, dtype=x.dtype),
+        )
+
+        def factory() -> torch.Tensor:
+            return x.index_fill(-1, channels, 0)
+
+        # Q/K/V of one input keep the same channels out; split the input once.
+        main, _ = _get_or_create_shared_activation_quantization(
+            x, ("outlier_split", self._outlier_signature), factory, slot="outlier_entry"
+        )
+        return self._forward_quantized(main) + side
+
+    def _forward_quantized(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_derived_constants(x.device)
+        if self.pre_rotation is not None:
+            x = self._pre_rotate(x)
         runtime_mode = (
             self._resolve_auto_fused_runtime(x)
             if self.runtime_mode == "auto_fused"
@@ -1478,7 +1754,17 @@ class OrbitQuantLinear(nn.Module):
                 weight_k_major=False,
             )
 
-        if runtime_mode == "debug_no_quant":
+        absmax_int8 = self.activation_quantizer == "absmax_int8" and runtime_mode not in {
+            "debug_no_quant",
+            "debug_no_activation_quant",
+        }
+        if absmax_int8 and self._absmax_int8_cuda_available(x, runtime_mode):
+            return self._absmax_int8_cuda_forward(x)
+
+        if absmax_int8:
+            self.last_activation_kernel_backend = "torch_absmax_int8"
+            rotated_x = self._absmax_int8_activations(x)
+        elif runtime_mode == "debug_no_quant":
             self.last_activation_kernel_backend = None
             rotated_x = self.rotation.apply_to_activations(x.to(torch.float32)).to(x.dtype)
         elif runtime_mode == "debug_no_activation_quant":

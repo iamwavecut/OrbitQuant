@@ -18,8 +18,10 @@ _BIT_SETTING_RE = re.compile(r"^W(?P<weight>\d+)A(?P<activation>\d+)$")
 _TARGET_POLICY_BY_SUITE = {
     "flux2-native": "flux2",
     "flux1-schnell-native": "flux",
+    "flux1-dev-native": "flux",
     "z-image-native": "z_image",
     "wan-native": "wan",
+    "cogvideox-native": "cogvideox",
 }
 
 

@@ -28,14 +28,17 @@ def test_cli_native_plan_lists_full_target_bit_matrix_without_range_smoke(
 
     payload = json.loads(capsys.readouterr().out)
     jobs = payload["jobs"]
-    assert payload["job_count"] == 14
+    assert payload["job_count"] == 20
     assert {job["suite"] for job in jobs} == {
         "flux2-native",
         "flux1-schnell-native",
+        "flux1-dev-native",
         "z-image-native",
         "wan-native",
+        "cogvideox-native",
     }
     assert sum(1 for job in jobs if job["suite"] == "wan-native") == 2
+    assert sum(1 for job in jobs if job["suite"] == "cogvideox-native") == 2
     assert {job["runtime_mode"] for job in jobs} == {runtime_mode}
     wan_w4a6 = next(
         job for job in jobs if job["suite"] == "wan-native" and job["bit_setting"] == "W4A6"
@@ -72,7 +75,7 @@ def test_cli_native_plan_defaults_to_auto_fused_runtime(capsys, tmp_path):
 
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["job_count"] == 14
+    assert payload["job_count"] == 20
     assert {job["runtime_mode"] for job in payload["jobs"]} == {"auto_fused"}
 
 

@@ -33,8 +33,8 @@ dimensions.
 
 This is an implementation-conformance claim, not an empirical reproduction
 claim. The paper's GenEval and VBench tables are not reproduced by this gate.
-FLUX.1-dev and CogVideoX-2B are also outside the current release-evaluation
-suite. Reported paper scores, robustness across three rotation/sampling seeds,
+FLUX.1-dev and CogVideoX-2B have encoded native settings and pinned layer
+inventories, but no release evaluation. Reported paper scores, robustness across three rotation/sampling seeds,
 and the paper's full model comparison require their original evaluation
 protocols and remain unclaimed.
 
@@ -117,7 +117,15 @@ INT8-surrogate deviation remain governed by `docs/kernel-audit.md`.
 Paper-target policy coverage remains pattern-based and scoped to Diffusers
 transformer components. The separate `universal` policy is structural: it
 quantizes every registered linear-compatible module except embeddings,
-timestep modules, task/output heads, and explicit skips. Built-in adapters cover
+timestep modules, task/output heads, and explicit skips. With
+`target_policy_version=2` (the default for new quantizations) every policy also
+classifies a linear by the class of its parent module: a child of
+`AdaLayerNorm*`, `*NormZero*` or `*AdaNorm` is AdaLN INT4 RTN, and a child of a
+timestep embedding, text projection or patch embedder stays BF16. This keeps
+`norm1.linear`/`norm2.linear` of CogVideoX, HunyuanVideo, SD3 and PixArt
+`adaln_single.linear` on the Appendix B.2 AdaLN path. Artifacts without the
+field load as version 1, the name-token-only classification they were written
+with. Built-in adapters cover
 `torch.nn.Linear` and Hugging Face `Conv1D`; custom modules must register their
 weight layout and feature attributes. Inventory summaries are derived from config-based
 `orbitquant inspect-policy --suite ... --load-mode config --dtype bfloat16`
@@ -138,6 +146,8 @@ paper-target policies unless explicitly enabled.
 | FLUX.2 Klein | Double-stream attention, text-conditioning projections, FFN `linear_in` and `linear_out`, fused single-stream `to_qkv_mlp_proj`, `to_out`. | `double_stream_modulation_img`, `double_stream_modulation_txt`, `single_stream_modulation`. | `time_guidance_embed`, embedders, `norm_out`, final `proj_out`, text encoders, VAE. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `Flux2Transformer2DModel`. |
 | Z-Image-Turbo | `noise_refiner`, `context_refiner`, and `layers` attention projections and FFN `w1`, `w2`, `w3`. | Refiner and main-layer `adaLN_modulation`. | `all_x_embedder`, `t_embedder`, `cap_embedder`, final layer and final AdaLN modulation. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `ZImageTransformer2DModel`. |
 | Wan 2.1 | `blocks.*.attn1`, `blocks.*.attn2`, and `blocks.*.ffn` projections. | None expected for Wan 2.1-1.3B. | `condition_embedder`, time/text embedders, final `proj_out`, text encoder, VAE. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `WanTransformer3DModel`. |
+| CogVideoX | `transformer_blocks.*.attn1` `to_q`, `to_k`, `to_v`, `to_out` and FFN `ff`. | `norm1.linear`, `norm2.linear` (`CogVideoXLayerNormZero`). | `patch_embed`, `time_embedding`, `norm_out`, final `proj_out`, text encoder, VAE. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `CogVideoXTransformer3DModel`. |
+| HunyuanVideo | Double-stream attention, joint text projections `add_*`, `to_add_out`, FFN `ff`/`ff_context`, single-block `to_q`/`to_k`/`to_v`, `proj_mlp`, `proj_out`. | `norm1.linear`, `norm1_context.linear`, single-block `norm.linear`. | `context_embedder` token refiner, `time_text_embed`, `x_embedder`, `norm_out`, final `proj_out`. | `src/orbitquant/policies/generic_dit.py`; `tests/test_target_policies.py` instantiates `HunyuanVideoTransformer3DModel`. |
 
 The universal integration suite additionally covers BERT, GPT-2 `Conv1D`,
 Llama, T5 encoder-decoder, and ViT module inventories. It verifies quantize,
@@ -151,13 +161,29 @@ Inventory summary:
 | --- | --- | ---: | ---: | ---: | ---: |
 | `flux2-native` | `Flux2Transformer2DModel` | 109 | 100 | 3 | 6 |
 | `flux1-schnell-native` | `FluxTransformer2DModel` | 502 | 418 | 76 | 8 |
+| `flux1-dev-native` | `FluxTransformer2DModel` | 504 | 418 | 76 | 10 |
 | `z-image-native` | `ZImageTransformer2DModel` | 276 | 238 | 32 | 6 |
 | `wan-native` | `WanTransformer3DModel` | 306 | 300 | 0 | 6 |
+| `cogvideox-native` | `CogVideoXTransformer3DModel` | 245 | 180 | 60 | 5 |
 
 Artifact validation compares manifest `quantized_modules`, `adaln_modules`, and
 `skipped_modules` against the policy inventory. The paper gate pins exact
 module-list hashes in addition to aggregate counts, so a count-preserving swap
 from a paper projection to an unrelated module fails the gate.
+
+## Options Outside The Paper Recipe
+
+These config fields default to the paper recipe; a non-default value is a
+documented deviation recorded in the artifact config (and in the manifest for
+`rotation_rounds` and `activation_quantizer`).
+
+| Field | Paper value | Deviation |
+| --- | --- | --- |
+| `rotation_rounds` | `1` | `2`/`"auto"` composes an independent RPBH (seed `rotation_seed + 0x9E3779B9`) in front of the paper rotation. The product is orthogonal, so Equations (4)-(8) hold in the composed basis; the first round is folded into the weights and applied to activations before the paper-round kernels. |
+| `activation_quantizer` | `"lloyd_max"` | `"absmax_int8"` replaces Equation (7)'s 8-bit codebook with per-token absmax INT8 of the rotated input. The artifact then carries no activation codebook. The exact 8-bit Lloyd-Max generator (`codebooks/lloyd_max.py`, tolerance `1e-13`, `6 * 4**8` iterations) does not converge for `d = 7680`, `10240` (measured 2026-10-29), so paper-recipe A8 is unavailable on those widths. |
+| `adaln_scale` | not fixed by the paper | `"mse"` replaces the absmax/7 implementation contract with a per-group squared-error scale search. It minimises the weight error, not the AdaLN output error; on 2026-10-29 it raised the output error on 59 of 60 CogVideoX-2B AdaLN projections. |
+| `output_gain_correction` | `False` | Divides the row norms of Equation (6) by the codebooks' retained energy `E<u,Q(u)>`. |
+| `outlier_channels` | empty | Keeps listed input channels out of Equations (7)-(8); this uses calibration forwards, so it is not data-agnostic. |
 
 ## Native Setting Provenance
 
@@ -169,10 +195,10 @@ metrics; they do not by themselves claim GenEval or VBench scores.
 | Target | Paper source | Encoded suite | Encoded setting | Claim boundary |
 | --- | --- | --- | --- | --- |
 | FLUX.1-schnell | Appendix B.1 generation settings; Section 5.1 and supplementary low-bit settings | `flux1-schnell-native` | 1024x1024, 4 steps, guidance 0.0, W4A4/W3A3/W2A4/W2A3 | Paper target; GenEval metrics required before reproduction-score claims. |
-| FLUX.1-dev | Appendix B.1 generation settings; Section 5.1 | Not encoded in the current release suite | 50 steps, guidance 3.5, W4A4/W2A4 in the main table | Paper benchmark outside the current release scope; its GenEval results are not reproduced. |
+| FLUX.1-dev | Appendix B.1 generation settings; Section 5.1 and supplementary low-bit settings | `flux1-dev-native` | 1024x1024, 50 steps, guidance 3.5, W4A4/W3A3/W2A4/W2A3 | Paper target; GenEval metrics required before reproduction-score claims. The checkpoint is gated on Hugging Face, so the inventory gate needs an accepted license and token. |
 | Z-Image-Turbo | Appendix B.1 generation settings; Section 5.1 and supplementary low-bit settings | `z-image-native` | 1024x1024, 10 steps, guidance 0.0, W4A4/W3A3/W2A4/W2A3 | Paper target; GenEval metrics required before reproduction-score claims. |
 | Wan 2.1-1.3B | Appendix B.1 generation settings; Section 5.1 video bit settings | `wan-native` | 832x480, 81 frames, 50 steps, guidance 5.0, W4A6/W4A4 | Paper target; VBench metrics required before reproduction-score claims. |
-| CogVideoX-2B | Appendix B.1 generation settings; Section 5.1 | Not encoded in the current release suite | 720x480, 49 frames, 50 steps, guidance 6.0, W4A6/W4A4 | Paper benchmark outside the current release scope; its VBench results are not reproduced. |
+| CogVideoX-2B | Appendix B.1 generation settings; Section 5.1 video bit settings | `cogvideox-native` | 720x480, 49 frames, 50 steps, guidance 6.0, W4A6/W4A4 | Paper target; VBench metrics required before reproduction-score claims. |
 | FLUX.2 Klein | Additional non-paper target | `flux2-native` | 1024x1024, 4 steps, guidance 1.0, W4A4/W3A3/W2A4/W2A3 | Extra target using the same native-validation discipline; not a paper reproduction target. |
 
 ## Kernel And Runtime Evidence

@@ -81,6 +81,11 @@ class FusedRuntime:
 
     @classmethod
     def from_config(cls, config, *, attention: str = "int8") -> FusedRuntime:
+        if getattr(config, "rotation_rounds", 1) != 1:
+            raise ValueError(
+                "the fused runtime applies one RPBH round; rotation_rounds="
+                f"{config.rotation_rounds!r} needs the per-layer OrbitQuantLinear path"
+            )
         return cls(
             rotation_seed=config.rotation_seed,
             block_size=config.block_size,

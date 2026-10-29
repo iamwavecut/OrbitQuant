@@ -525,6 +525,13 @@ def dequantize_quantized_linear_modules(model: torch.nn.Module) -> torch.nn.Modu
             device = _first_tensor_device(module)
             rotated_weight = module._dequantize_weight(device=device, dtype=torch.float32)
             weight = module.rotation.apply_inverse_to_weight(rotated_weight)
+            if module.pre_rotation is not None:
+                weight = module.pre_rotation.apply_inverse_to_weight(weight)
+            if module.outlier_channels is not None:
+                channels = module.outlier_channels.to(weight.device)
+                weight = weight.index_copy(
+                    1, channels, module.outlier_weight.to(weight.device, weight.dtype)
+                )
             bias = None if module.bias is None else module.bias.detach()
             replacement = _frozen_linear_from_weight(
                 weight=weight,

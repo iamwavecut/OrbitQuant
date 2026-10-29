@@ -10,6 +10,13 @@ _RECIPES: dict[str, tuple[int, int]] = {
     "w3a3": (3, 3),
     "w4a4": (4, 4),
     "w4a6": (4, 6),
+    "w4a8": (4, 8),
+}
+# Recipe fields beyond the bit widths. W4A8 uses per-token absmax INT8
+# activations: every fast CUDA path is an INT8 GEMM, so 8-bit activations cost
+# no GEMM time over 4-bit ones.
+_RECIPE_FIELDS: dict[str, dict[str, Any]] = {
+    "w4a8": {"activation_quantizer": "absmax_int8"},
 }
 
 
@@ -25,6 +32,7 @@ def recipe(name: str, **overrides: Any) -> OrbitQuantConfig:
         "weight_bits": weight_bits,
         "activation_bits": activation_bits,
         "target_policy": "universal",
+        **_RECIPE_FIELDS.get(normalized_name, {}),
     }
     values.update(overrides)
     return OrbitQuantConfig(**values)

@@ -13,7 +13,8 @@ from orbitquant.artifacts.checksums import validate_checksums, validate_sha256su
 from orbitquant.artifacts.manifest import OrbitQuantManifest
 from orbitquant.codebooks import get_codebook
 from orbitquant.config import OrbitQuantConfig
-from orbitquant.rotations import get_rpbh_rotation
+from orbitquant.rotations import get_pre_rotation, get_rpbh_rotation
+from orbitquant.rotations.rpbh import PRE_ROTATION_SEED_OFFSET
 
 _REQUIRED_ARTIFACT_FILES = (
     "README.md",
@@ -33,7 +34,7 @@ _CODEBOOK_KEY_RE = re.compile(
     r"^dim(?P<dim>\d+)_bits(?P<bits>\d+)\.(?P<field>centroids|boundaries)$"
 )
 _ROTATION_KEY_RE = re.compile(
-    r"^dim(?P<dim>\d+)_seed(?P<seed>-?\d+)_block(?P<block>\d+)\."
+    r"^(?P<pre>pre_)?dim(?P<dim>\d+)_seed(?P<seed>-?\d+)_block(?P<block>\d+)\."
     r"(?P<field>permutation|inverse_permutation|signs|normalization)$"
 )
 
@@ -64,6 +65,8 @@ def _validate_config_manifest(config: OrbitQuantConfig, manifest: OrbitQuantMani
         "activation_kernel_backend": config.activation_kernel_backend,
         "activation_eps": config.activation_eps,
         "adaln_group_size": config.adaln_group_size,
+        "rotation_rounds": config.rotation_rounds,
+        "activation_quantizer": config.activation_quantizer,
     }
     mismatches = [
         mismatch
@@ -213,7 +216,7 @@ def _is_power_of_two(value: int) -> bool:
 def _validate_rotation_tensors(
     tensors: dict[str, torch.Tensor], *, config: OrbitQuantConfig
 ) -> set[int]:
-    grouped: dict[tuple[int, int, int], dict[str, torch.Tensor]] = {}
+    grouped: dict[tuple[bool, int, int, int], dict[str, torch.Tensor]] = {}
     unexpected: list[str] = []
     for name, tensor in tensors.items():
         match = _ROTATION_KEY_RE.match(name)
@@ -224,18 +227,20 @@ def _validate_rotation_tensors(
         seed = int(match.group("seed"))
         block = int(match.group("block"))
         field = match.group("field")
-        grouped.setdefault((dim, seed, block), {})[field] = tensor
+        grouped.setdefault((match.group("pre") is not None, dim, seed, block), {})[field] = tensor
     if unexpected:
         raise RuntimeError(f"artifact rotation tensor mismatch: unexpected={unexpected}")
     if not grouped:
         raise RuntimeError("artifact rotation tensor mismatch: no rotations found")
 
     dims: set[int] = set()
+    pre_dims: set[int] = set()
     mismatches: list[str] = []
-    for (dim, seed, block), fields in sorted(grouped.items()):
-        dims.add(dim)
-        prefix = f"dim{dim}_seed{seed}_block{block}"
-        if seed != config.rotation_seed:
+    for (pre, dim, seed, block), fields in sorted(grouped.items()):
+        (pre_dims if pre else dims).add(dim)
+        prefix = f"{'pre_' if pre else ''}dim{dim}_seed{seed}_block{block}"
+        expected_seed = config.rotation_seed + (PRE_ROTATION_SEED_OFFSET if pre else 0)
+        if seed != expected_seed:
             mismatches.append(f"{prefix}: unexpected rotation seed")
         if config.block_size != "paper" and block != config.block_size:
             mismatches.append(f"{prefix}: unexpected explicit block size")
@@ -279,6 +284,23 @@ def _validate_rotation_tensors(
             mismatches.append(f"{prefix}: inverse does not match runtime rotation")
         if not torch.equal(signs.to(torch.int8), expected_rotation.signs):
             mismatches.append(f"{prefix}: signs do not match runtime rotation")
+
+    expected_pre_dims = {
+        dim
+        for dim in dims
+        if get_pre_rotation(
+            dim,
+            seed=config.rotation_seed,
+            block_size=config.block_size,
+            rotation_rounds=config.rotation_rounds,
+        )
+        is not None
+    }
+    if pre_dims != expected_pre_dims:
+        mismatches.append(
+            f"first-round rotations for dims {sorted(pre_dims)}, expected "
+            f"{sorted(expected_pre_dims)} for rotation_rounds={config.rotation_rounds!r}"
+        )
 
     if mismatches:
         raise RuntimeError("artifact rotation tensor mismatch: " + "; ".join(mismatches))

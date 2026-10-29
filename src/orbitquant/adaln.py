@@ -35,11 +35,58 @@ def _quantize_adaln_weight_reference(
     return packed, scales
 
 
-def _quantize_adaln_weight(
+# Candidate INT4 scales of adaln_scale="mse": absmax x factor / divisor. Factor 1.0
+# with divisor 7 is the absmax / 7 default, so no group gets a larger error.
+_MSE_SCALE_FACTORS = tuple(0.6 + 0.025 * step for step in range(23))
+_MSE_SCALE_DIVISORS = (7.0, 7.5, 8.0)
+
+
+def _quantize_adaln_weight_mse(
     weight: torch.Tensor,
     *,
     group_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """INT4 codes with the per-group BF16 scale that minimizes the squared weight error."""
+    num_groups = (weight.shape[1] + group_size - 1) // group_size
+    padded = torch.zeros(
+        weight.shape[0],
+        num_groups * group_size,
+        dtype=torch.float32,
+        device=weight.device,
+    )
+    padded[:, : weight.shape[1]] = weight.to(torch.float32)
+    grouped = padded.reshape(weight.shape[0], num_groups, group_size)
+    absmax = grouped.abs().amax(dim=-1).clamp_min(1e-12)
+
+    def candidate(factor: float, divisor: float) -> tuple[torch.Tensor, torch.Tensor]:
+        # Scales are stored in BF16; codes and errors use the stored value.
+        scale = (absmax * (factor / divisor)).to(torch.bfloat16).to(torch.float32)
+        scale = scale.clamp_min(1e-12)
+        codes = torch.round(grouped / scale[..., None]).clamp(-8, 7)
+        error = (codes * scale[..., None] - grouped).square().sum(dim=-1)
+        return scale, error
+
+    best_scale, best_error = candidate(1.0, 7.0)
+    for divisor in _MSE_SCALE_DIVISORS:
+        for factor in _MSE_SCALE_FACTORS:
+            scale, error = candidate(factor, divisor)
+            better = error < best_error
+            best_scale = torch.where(better, scale, best_scale)
+            best_error = torch.where(better, error, best_error)
+    quantized_signed = torch.round(grouped / best_scale[..., None]).clamp(-8, 7).to(torch.int16)
+    quantized_unsigned = (quantized_signed + 8).to(torch.uint8)
+    packed = pack_lowbit(quantized_unsigned.flatten(), bits=4, validate=False)
+    return packed, best_scale
+
+
+def _quantize_adaln_weight(
+    weight: torch.Tensor,
+    *,
+    group_size: int,
+    scale_method: str = "absmax",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if scale_method == "mse":
+        return _quantize_adaln_weight_mse(weight, group_size=group_size)
     if weight.device.type == "xpu":
         try:
             from orbitquant.kernels.triton_cuda import quantize_adaln_weight_with_triton
@@ -65,6 +112,7 @@ def _quantize_adaln_weight_bounded(
     group_size: int,
     row_tile_size: int,
     quantization_device: torch.device | None = None,
+    scale_method: str = "absmax",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if weight.ndim != 2:
         raise ValueError("weight must be a matrix")
@@ -92,7 +140,9 @@ def _quantize_adaln_weight_bounded(
         row_tile_size,
     ):
         tile = weight[row_start:row_end].to(device=work_device)
-        packed_tile, scales = _quantize_adaln_weight(tile, group_size=group_size)
+        packed_tile, scales = _quantize_adaln_weight(
+            tile, group_size=group_size, scale_method=scale_method
+        )
         packed_end = packed_offset + packed_tile.numel()
         packed[packed_offset:packed_end].copy_(packed_tile.to(device=output_device))
         scales_output[row_start:row_end].copy_(
@@ -219,6 +269,7 @@ class RTNInt4Linear(nn.Module):
             group_size=group_size,
             row_tile_size=config.weight_row_tile_size,
             quantization_device=quantization_device,
+            scale_method=config.adaln_scale,
         )
         return cls(
             in_features=in_features,

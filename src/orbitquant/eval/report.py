@@ -16,8 +16,10 @@ _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _MAX_COMPARISON_MATRIX_ROWS = 10
 _PAPER_TARGETS = {
     "black-forest-labs/FLUX.1-schnell",
+    "black-forest-labs/FLUX.1-dev",
     "Tongyi-MAI/Z-Image-Turbo",
     "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "zai-org/CogVideoX-2b",
 }
 _PERF_METRICS = {
     "generated_frames",
@@ -35,20 +37,24 @@ _GENEVAL_REQUIRED_METRICS = (
     "geneval_per_task_position",
     "geneval_per_task_color_attr",
 )
+_VBENCH_REQUIRED_METRICS = (
+    "vbench_imaging_quality",
+    "vbench_aesthetic_quality",
+    "vbench_motion_smoothness",
+    "vbench_dynamic_degree",
+    "vbench_background_consistency",
+    "vbench_subject_consistency",
+    "vbench_scene",
+    "vbench_overall_consistency",
+)
 _REQUIRED_METRICS_BY_SUITE = {
     "flux1-schnell-native": _GENEVAL_REQUIRED_METRICS,
+    "flux1-dev-native": _GENEVAL_REQUIRED_METRICS,
     "z-image-native": _GENEVAL_REQUIRED_METRICS,
-    "wan-native": (
-        "vbench_imaging_quality",
-        "vbench_aesthetic_quality",
-        "vbench_motion_smoothness",
-        "vbench_dynamic_degree",
-        "vbench_background_consistency",
-        "vbench_subject_consistency",
-        "vbench_scene",
-        "vbench_overall_consistency",
-    ),
+    "wan-native": _VBENCH_REQUIRED_METRICS,
+    "cogvideox-native": _VBENCH_REQUIRED_METRICS,
 }
+_VIDEO_POLICIES = {"wan", "cogvideox", "hunyuan_video"}
 _SUITE_BY_MODEL_ID = {suite.model_id: suite for suite in list_native_suites()}
 
 
@@ -86,7 +92,7 @@ def _target_group(model_id: str) -> str:
 def _metric_family(row: dict[str, Any]) -> str:
     suite = row.get("suite")
     target_policy = row.get("target_policy")
-    if suite == "wan-native" or target_policy == "wan":
+    if suite in {"wan-native", "cogvideox-native"} or target_policy in _VIDEO_POLICIES:
         return "video"
     return "image"
 
