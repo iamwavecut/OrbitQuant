@@ -22,6 +22,10 @@ class OrbitQuantManifest:
     activation_kernel_backend: str
     activation_eps: float = 1e-10
     adaln_group_size: int = 64
+    # RPBH rounds (orbitquant.rotations.rpbh); written only when not the paper's 1.
+    rotation_rounds: int | str = 1
+    # Written only when not the paper's Lloyd-Max activation codebook.
+    activation_quantizer: str = "lloyd_max"
     quantization_device: str = "unknown"
     weight_quantization_backend: str = "unknown"
     quantization_staging_mode: str = "unknown"
@@ -69,6 +73,8 @@ class OrbitQuantManifest:
             activation_kernel_backend=config.activation_kernel_backend,
             activation_eps=config.activation_eps,
             adaln_group_size=config.adaln_group_size,
+            rotation_rounds=config.rotation_rounds,
+            activation_quantizer=config.activation_quantizer,
             quantization_device=quantization_device,
             weight_quantization_backend=weight_quantization_backend,
             quantization_staging_mode=quantization_staging_mode,
@@ -94,8 +100,14 @@ class OrbitQuantManifest:
             "rotation_seed": self.rotation_seed,
             "block_size": self.block_size,
             "block_size_policy": self.block_size_policy,
+            **({"rotation_rounds": self.rotation_rounds} if self.rotation_rounds != 1 else {}),
             "codebook": "lloyd_max",
             "codebook_version": self.codebook_version,
+            **(
+                {"activation_quantizer": self.activation_quantizer}
+                if self.activation_quantizer != "lloyd_max"
+                else {}
+            ),
             "row_norm_dtype": "bfloat16",
             "runtime_mode": self.runtime_mode,
             "activation_kernel_backend": self.activation_kernel_backend,
@@ -133,6 +145,8 @@ class OrbitQuantManifest:
             activation_kernel_backend=data.get("activation_kernel_backend", "auto"),
             activation_eps=float(data.get("activation_eps", 1e-10)),
             adaln_group_size=int(data.get("adaln_group_size", 64)),
+            rotation_rounds=data.get("rotation_rounds", 1),
+            activation_quantizer=data.get("activation_quantizer", "lloyd_max"),
             quantization_device=data.get("quantization_device", "unknown"),
             weight_quantization_backend=data.get("weight_quantization_backend", "unknown"),
             quantization_staging_mode=data.get("quantization_staging_mode", "unknown"),

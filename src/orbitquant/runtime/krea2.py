@@ -76,6 +76,8 @@ _ATTENTION_BACKENDS = {
 
 
 def _codes_and_alpha(layer: OrbitQuantLinear) -> tuple[torch.Tensor, float]:
+    if layer.activation_codebook is None:
+        raise ValueError("the Krea 2 runtime requires Lloyd-Max activation codebooks")
     _, act_scale = fit_int8_centroid_surrogate(layer.activation_codebook.centroids)
     codes, w_scale = fit_int8_centroid_surrogate(layer.weight_codebook.centroids)
     return codes, float(act_scale * w_scale)

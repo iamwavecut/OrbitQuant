@@ -229,6 +229,16 @@ class PackedGroup(nn.Module):
         for layer in layers:
             if not isinstance(layer, OrbitQuantLinear) or layer.packed_weight_indices is None:
                 raise ValueError("packed groups need loaded OrbitQuant projections")
+            if layer.outlier_channels is not None:
+                raise ValueError(
+                    "the fused runtime quantizes every input channel; projections with "
+                    "outlier_channels run on the per-layer OrbitQuantLinear path"
+                )
+            if layer.pre_rotation is not None:
+                raise ValueError(
+                    "the fused runtime applies one RPBH round; projections quantized with "
+                    "rotation_rounds=2 run on the per-layer OrbitQuantLinear path"
+                )
             if signature(layer) != signature(first):
                 raise ValueError("projections of one group must share width and rotation")
         segments = cls.source_segments(layers, sources, swiglu=swiglu)

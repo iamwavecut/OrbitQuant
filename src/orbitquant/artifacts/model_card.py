@@ -113,6 +113,7 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
         output_name = {
             "black-forest-labs/FLUX.2-klein-4B": "flux2-klein-orbitquant.png",
             "black-forest-labs/FLUX.1-schnell": "flux1-schnell-orbitquant.png",
+            "black-forest-labs/FLUX.1-dev": "flux1-dev-orbitquant.png",
             "Tongyi-MAI/Z-Image-Turbo": "z-image-orbitquant.png",
         }.get(source_model_id, "orbitquant.png")
         lines.extend(
@@ -131,6 +132,10 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
         return "\n".join(lines)
 
     export_fps = suite.export_fps or 16
+    video_name = {
+        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": "wan-orbitquant.mp4",
+        "zai-org/CogVideoX-2b": "cogvideox-orbitquant.mp4",
+    }.get(source_model_id, "orbitquant.mp4")
     lines.extend(
         [
             "frames = pipe(",
@@ -141,7 +146,7 @@ def _usage_snippet(source_model_id: str, bits: str) -> str:
             f"    num_inference_steps={suite.steps},",
             f"    guidance_scale={suite.guidance},",
             ").frames[0]",
-            f'export_to_video(frames, "wan-orbitquant.mp4", fps={export_fps})',
+            f'export_to_video(frames, "{video_name}", fps={export_fps})',
             "```",
         ]
     )
@@ -385,6 +390,7 @@ def _comparison_prompt_section(
         {
             "flux2-native": "flux2",
             "flux1-schnell-native": "flux",
+            "flux1-dev-native": "flux",
             "z-image-native": "z_image",
         }[suite.name]
     )

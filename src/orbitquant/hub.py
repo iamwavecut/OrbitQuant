@@ -69,19 +69,22 @@ _GENEVAL_REQUIRED_METRICS = (
     "geneval_per_task_position",
     "geneval_per_task_color_attr",
 )
+_VBENCH_REQUIRED_METRICS = (
+    "vbench_imaging_quality",
+    "vbench_aesthetic_quality",
+    "vbench_motion_smoothness",
+    "vbench_dynamic_degree",
+    "vbench_background_consistency",
+    "vbench_subject_consistency",
+    "vbench_scene",
+    "vbench_overall_consistency",
+)
 _REQUIRED_METRICS_BY_SUITE = {
     "flux1-schnell-native": _GENEVAL_REQUIRED_METRICS,
+    "flux1-dev-native": _GENEVAL_REQUIRED_METRICS,
     "z-image-native": _GENEVAL_REQUIRED_METRICS,
-    "wan-native": (
-        "vbench_imaging_quality",
-        "vbench_aesthetic_quality",
-        "vbench_motion_smoothness",
-        "vbench_dynamic_degree",
-        "vbench_background_consistency",
-        "vbench_subject_consistency",
-        "vbench_scene",
-        "vbench_overall_consistency",
-    ),
+    "wan-native": _VBENCH_REQUIRED_METRICS,
+    "cogvideox-native": _VBENCH_REQUIRED_METRICS,
 }
 _COMPACT_RAW_EVAL_ASSET_MARKERS = ("_geneval-", "_vbench-")
 _COMPACT_REPORT_ROOT = "reports/"
@@ -1791,6 +1794,8 @@ def repair_hf_artifact_metadata(
         rotation_seed=manifest.rotation_seed,
         block_size=manifest.block_size,
         block_size_policy=manifest.block_size_policy,
+        rotation_rounds=manifest.rotation_rounds,
+        activation_quantizer=manifest.activation_quantizer,
         codebook_version=manifest.codebook_version,
         target_policy=manifest.target_policy,
         runtime_mode=manifest.runtime_mode,

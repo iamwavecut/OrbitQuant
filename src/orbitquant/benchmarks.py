@@ -252,6 +252,8 @@ def benchmark_orbit_linear(
         return source(x)
 
     def activation_quant() -> torch.Tensor:
+        if quantized.activation_codebook is None:
+            return quantized._absmax_int8_activations(x)
         return quantize_activations_kernel(
             x,
             rotation=quantized.rotation,

@@ -68,6 +68,8 @@ def repair_artifact_metadata(
         rotation_seed=manifest.rotation_seed,
         block_size=manifest.block_size,
         block_size_policy=manifest.block_size_policy,
+        rotation_rounds=manifest.rotation_rounds,
+        activation_quantizer=manifest.activation_quantizer,
         codebook_version=manifest.codebook_version,
         target_policy=manifest.target_policy,
         runtime_mode=manifest.runtime_mode,

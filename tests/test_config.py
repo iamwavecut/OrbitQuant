@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from orbitquant import recipe
 from orbitquant.config import OrbitQuantConfig
 
@@ -69,6 +71,23 @@ def test_orbit_quant_config_reads_unversioned_artifacts_as_legacy_codebooks():
     restored = OrbitQuantConfig.from_dict({"weight_bits": 4, "activation_bits": 4})
 
     assert restored.codebook_version == 1
+
+
+def test_orbit_quant_config_defaults_to_parent_class_policy_version():
+    assert OrbitQuantConfig().target_policy_version == 2
+    restored = OrbitQuantConfig.from_dict(OrbitQuantConfig().to_dict())
+    assert restored.target_policy_version == 2
+
+
+def test_orbit_quant_config_reads_unversioned_artifacts_as_name_token_policy():
+    restored = OrbitQuantConfig.from_dict({"weight_bits": 4, "activation_bits": 4})
+
+    assert restored.target_policy_version == 1
+
+
+def test_orbit_quant_config_rejects_unknown_policy_version():
+    with pytest.raises(ValueError, match="target_policy_version"):
+        OrbitQuantConfig(target_policy_version=3)
 
 
 def test_orbit_quant_config_defaults_to_auto_fused_runtime_mode():

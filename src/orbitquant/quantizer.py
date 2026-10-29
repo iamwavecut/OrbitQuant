@@ -21,7 +21,14 @@ from orbitquant.modeling import (
     quantize_linear_modules,
 )
 
-_ORBITQUANT_STATE_TENSORS = {"packed_weight_indices", "row_norms", "debug_weight", "bias"}
+_ORBITQUANT_STATE_TENSORS = {
+    "packed_weight_indices",
+    "row_norms",
+    "debug_weight",
+    "bias",
+    "outlier_channels",
+    "outlier_weight",
+}
 _RTN_INT4_STATE_TENSORS = {"packed_weight", "scales", "bias"}
 _MISSING = object()
 
@@ -505,6 +512,14 @@ class OrbitQuantizer(*_hf_base_classes()):
             and not self._transformers_streaming_quantization
             and bool(self._diffusers_checkpoint_files)
         )
+        if self.quantization_config.outlier_channels and (
+            self._transformers_streaming_quantization or self._diffusers_streaming_quantization
+        ):
+            raise ValueError(
+                "outlier_channels needs post-load quantization (orbitquant.quantize_model) or "
+                "a pre-quantized artifact; checkpoint-streaming conversion writes only the "
+                "packed weight tensors"
+            )
         self._transformers_orbit_module_names = []
         self._transformers_orbit_module_bits = {}
         self._transformers_adaln_module_names = []

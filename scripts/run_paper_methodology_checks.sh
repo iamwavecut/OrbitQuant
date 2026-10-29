@@ -22,7 +22,7 @@ EOF
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${ORBITQUANT_PAPER_AUDIT_DIR:-"$ROOT_DIR/reports/paper-methodology"}"
-SUITES="${ORBITQUANT_PAPER_AUDIT_SUITES:-flux2-native flux1-schnell-native z-image-native wan-native}"
+SUITES="${ORBITQUANT_PAPER_AUDIT_SUITES:-flux2-native flux1-schnell-native flux1-dev-native z-image-native wan-native cogvideox-native}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -101,14 +101,18 @@ suites = sys.argv[3:]
 expected_component_classes = {
     "flux2-native": "Flux2Transformer2DModel",
     "flux1-schnell-native": "FluxTransformer2DModel",
+    "flux1-dev-native": "FluxTransformer2DModel",
     "z-image-native": "ZImageTransformer2DModel",
     "wan-native": "WanTransformer3DModel",
+    "cogvideox-native": "CogVideoXTransformer3DModel",
 }
 expected_policies = {
     "flux2-native": "flux2",
     "flux1-schnell-native": "flux",
+    "flux1-dev-native": "flux",
     "z-image-native": "z_image",
     "wan-native": "wan",
+    "cogvideox-native": "cogvideox",
 }
 expected_counts = {
     "flux2-native": {
@@ -123,6 +127,12 @@ expected_counts = {
         "adaln_int4_rtn": 76,
         "bf16_skip": 8,
     },
+    "flux1-dev-native": {
+        "linear_module_count": 504,
+        "orbitquant": 418,
+        "adaln_int4_rtn": 76,
+        "bf16_skip": 10,
+    },
     "z-image-native": {
         "linear_module_count": 276,
         "orbitquant": 238,
@@ -134,6 +144,12 @@ expected_counts = {
         "orbitquant": 300,
         "adaln_int4_rtn": 0,
         "bf16_skip": 6,
+    },
+    "cogvideox-native": {
+        "linear_module_count": 245,
+        "orbitquant": 180,
+        "adaln_int4_rtn": 60,
+        "bf16_skip": 5,
     },
 }
 expected_module_list_hashes = {
@@ -147,6 +163,11 @@ expected_module_list_hashes = {
         "adaln_modules": "d8f0d8f0716341fc7b618c0cd87e2ef1f8ec699d1071f47922150b54a4d497bd",
         "skipped_modules": "3980cd68701b61ea2bd8af052f78014c7f6d4d63a16012664917ffca46b1f0e3",
     },
+    "flux1-dev-native": {
+        "quantized_modules": "7327a220588353bbaf8b5697326b278da40c8c79f617479fc55e55c6966f2563",
+        "adaln_modules": "d8f0d8f0716341fc7b618c0cd87e2ef1f8ec699d1071f47922150b54a4d497bd",
+        "skipped_modules": "198261bae99f92d79f6130774723d8c3aab277b1b8a232fe252772523338b83b",
+    },
     "z-image-native": {
         "quantized_modules": "3d43a43b2cd1369e10d3bc88bca11ef9960d8189d101dedaadfd79242539b526",
         "adaln_modules": "e9cb615912b15212a065255dc35d08559b4277f2e381287107dbe35e6e4e4a59",
@@ -156,6 +177,11 @@ expected_module_list_hashes = {
         "quantized_modules": "3110e1ac320e60bc85f1e0556a982c222af93e604a624bce24ff1cd6efa69c00",
         "adaln_modules": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "skipped_modules": "f0a09fe0938a413a1321bf49bb9de450f3232ca4b77e989c1c5b037e0ff8fec5",
+    },
+    "cogvideox-native": {
+        "quantized_modules": "5f328ee0aa0d57fe732a6e3822bfcff65fedbf0f5ad9ffe5c0785e0162174b0b",
+        "adaln_modules": "01f9d768bbe3431b4f47b5d3d3875ae5421542bf2861c870e19e589269c7cc50",
+        "skipped_modules": "07ec62ad588558c88151d70068f785b8591c896cbfbc373d5eafdb1ee0750fdf",
     },
 }
 

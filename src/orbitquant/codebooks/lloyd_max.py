@@ -382,6 +382,29 @@ def _positive_interval_centroid(dim: int, left: float, right: float) -> float:
     return moment / mass
 
 
+def _coordinate_cdf(dim: int, value: float) -> float:
+    if value <= -1.0:
+        return 0.0
+    if value >= 1.0:
+        return 1.0
+    half = 0.5 * _regularized_incomplete_beta(0.5, (dim - 1) / 2, value * value)
+    return 0.5 + half if value >= 0.0 else 0.5 - half
+
+
+def codebook_retained_energy(codebook: LloydMaxCodebook) -> float:
+    """``E||Q(u)||^2`` for a uniform unit vector ``u`` on the sphere of ``codebook.dim``.
+
+    With centroid-condition codes this equals ``E<u, Q(u)>`` and ``1 - D``: a quantized
+    dot product of two aligned unit vectors is shrunk by this factor on each side."""
+    centroids = codebook.centroids.to(torch.float64).tolist()
+    edges = [-1.0, *codebook.boundaries.to(torch.float64).tolist(), 1.0]
+    total = 0.0
+    for centroid, left, right in zip(centroids, edges[:-1], edges[1:], strict=True):
+        mass = _coordinate_cdf(codebook.dim, right) - _coordinate_cdf(codebook.dim, left)
+        total += mass * centroid * centroid
+    return codebook.dim * total
+
+
 def _generate_exact_v2_codebook(dim: int, bits: int) -> LloydMaxCodebook:
     levels = 2**bits
     positive_levels = levels // 2

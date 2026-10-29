@@ -20,6 +20,10 @@ The implementation is clean-room and Apache-2.0 licensed.
 - Model-specific policies for paper-sensitive AdaLN and output-layer handling.
 - Optional GPTQ rounding (`orbitquant.gptq`): calibrated codes in the same codebook and
   artifact format, for models that lose too much with nearest rounding.
+- Optional quality knobs outside the paper recipe: a second RPBH round for narrow
+  Hadamard blocks, per-token absmax INT8 activations (`recipe("w4a8")`), MSE-fitted
+  AdaLN scales, a Lloyd-Max gain correction, and BF16 side columns for massive
+  activation channels (see [Quality options](#quality-options-opt-in)).
 - Compact `safetensors` artifacts and Hugging Face `save_pretrained()` /
   `from_pretrained()` integration.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
@@ -95,6 +99,28 @@ load_rounded_codes(model, codes)
 On the MOSS-Image 4-bit transformer, calibrated on 10 prompts at 12 sampling steps, the mean
 LPIPS of 8 generated images against BF16 fell from 0.371 (nearest rounding) to 0.209; 6-bit
 nearest rounding gives 0.166.
+
+## Quality options (opt-in)
+
+Every option below defaults to the paper recipe and is stored in the artifact config.
+
+| Field | Values | Effect | Runtime cost |
+| --- | --- | --- | --- |
+| `rotation_rounds` | `1` (paper), `2`, `"auto"` | An independent first RPBH round in front of the paper round. The paper block `h` is the largest power of two dividing `d`: `d = 3360` gets `h = 32`, `d = 3840` and `d = 8960` get `h = 256`, so one round spreads an outlier over few coordinates. `"auto"` adds the round where `h < 512`. | One extra RPBH pass per activation, done in PyTorch: on an RTX 4090 it adds 0.7-0.8 ms per call at 256 tokens and 2.6-3.4 ms at 4096 tokens for `d = 3072`/`3840` (shared across Q/K/V of one input); not available on the fused block runtime. |
+| `activation_quantizer` | `"lloyd_max"` (paper), `"absmax_int8"` | With `activation_bits=8`, per-token absmax INT8 of the rotated input, the numerics of the fused runtime's 8-bit activations. `recipe("w4a8")` selects it. No activation codebook is built or stored: exact 8-bit Lloyd-Max tables take minutes per width and do not converge for `d >= 7680`, so `"lloyd_max"` A8 fails on such inputs. | CUDA runs an INT8 GEMM against the packed W2/W4 weights, the same GEMM class as W4A4. |
+| `adaln_scale` | `"absmax"` (paper implementation), `"mse"` | Per INT4 group, the BF16 scale with the lowest squared error from `absmax x [0.6, 1.15] / {7, 7.5, 8}`. | None: offline only, same packed format. Not recommended: it lowers the weight error but raised the AdaLN output error on 59 of 60 CogVideoX-2B projections (median 10x) and 17 of 32 Z-Image projections. |
+| `output_gain_correction` | `False`, `True` | Divides the BF16 row norms by `E<u,Q(u)>` of the weight and activation codebooks (`0.9905` per side at 4 bits, `0.8826` at 2). This helps outputs whose weight rows and inputs are aligned and hurts uncorrelated ones; compare generated samples before adopting it. | None. |
+| `outlier_channels` | `{module name: [channels]}` | Input channels kept out of the quantizer and applied as a BF16 side GEMM over their weight columns. `orbitquant.outliers.find_outlier_channels(model, run)` finds channels above `ratio x` the median token RMS from calibration forwards. | A `k`-column BF16 GEMM per projection; not available on the fused block runtime or in checkpoint-streaming conversion. |
+
+`outlier_channels` uses calibration forwards; the other options use no data.
+
+Measured on Z-Image-Turbo (1024², 10 steps, 10 prompts x 2 seeds, LPIPS against BF16 on an
+RTX 4090, 2026-10-29): W4A4 0.434, W4A4 + `rotation_rounds="auto"` 0.344 (better on 18 of 20
+pairs), W4A8 absmax 0.375, W4A8 absmax + `"auto"` 0.327, W3A3 0.535, W3A3 + `"auto"` 0.501.
+`output_gain_correction`, `adaln_scale="mse"` and `outlier_channels` changed LPIPS by less than
+the pair-to-pair spread (95% intervals include zero). `outlier_channels` cut the geometric-mean
+output error of the 34 Z-Image FFN `w2` projections (input peak at a median 35000x the token
+RMS) by 67%.
 
 ## Install
 
@@ -187,8 +213,9 @@ BF16 when no dtype is supplied. This keeps activations on the packed W4A4 CUDA
 path instead of the much slower FP32 compatibility path. An explicit dtype is
 always honored, and on-the-fly source conversion keeps the source dtype.
 
-Named recipes are `w4a4`, `w3a3`, `w2a4`, `w2a3`, and `w4a6`. They create a
-normal `OrbitQuantConfig`, so every field can be overridden.
+Named recipes are `w4a4`, `w3a3`, `w2a4`, `w2a3`, `w4a6`, and `w4a8` (absmax INT8
+activations). They create a normal `OrbitQuantConfig`, so every field can be
+overridden.
 
 For an unknown architecture resolved to `target_policy="universal"`, W2 uses
 mixed-bit protection by default: out-of-block and the first/last four indexed
@@ -226,7 +253,11 @@ print(report["unsupported_linear_modules"])
 The universal policy quantizes every registered linear-compatible module except
 known embeddings, timestep modules, task/output heads, and explicit skips. It
 does not depend on names such as `layers`, `blocks`, or a particular model
-class.
+class. A linear inside an AdaLN norm (`AdaLayerNorm*`, `*NormZero*`,
+`*AdaNorm`) uses the INT4 RTN AdaLN path, and a linear inside a timestep, text
+or patch embedder stays BF16, whatever the attribute is called. Configs saved
+before this rule carry no `target_policy_version` and load as version 1, the
+name-token classification they were quantized with.
 
 Qwen2.5-VL is supported by the universal policy, including W4A6 text and vision
 attention/FFN projections. Token embeddings, the language output head and the
@@ -629,6 +660,8 @@ The implementation follows the paper's shared data-agnostic basis:
 
 GPTQ rounding (`orbitquant.gptq`) is not part of the paper's method: it uses calibration data
 to choose codes within the same codebook and format. The default quantizer never calls it.
+The [quality options](#quality-options-opt-in) are also outside the paper recipe; their
+defaults keep it.
 
 The detailed requirement matrix is in
 [`docs/paper-methodology-audit.md`](docs/paper-methodology-audit.md).

@@ -79,6 +79,15 @@ _BLOCK_TOKENS = (
 
 _MODULATION_TOKENS = ("adaln", "modulation")
 
+# Lowercased parent-module class-name fragments (target_policy_version >= 2).
+# A Linear inside AdaLayerNorm*, *NormZero* (CogVideoXLayerNormZero,
+# LuminaRMSNormZero) or *AdaNorm (HunyuanVideoAdaNorm) produces a dynamic
+# scale/shift/gate, whatever the norm attribute is called.
+_MODULATION_PARENT_CLASS_TOKENS = ("adalayernorm", "normzero", "adanorm")
+# Timestep, caption and patch embedders stay BF16 (paper Appendix B.2) even
+# where their attribute name carries no embed token (PixArt caption_projection).
+_EMBEDDING_PARENT_CLASS_TOKENS = ("timestepembedding", "textprojection", "patchembed")
+
 
 @dataclass(frozen=True)
 class PolicyRules:
@@ -92,6 +101,8 @@ class PolicyRules:
     numeric_scope: bool = False
     quantize_all_supported: bool = False
     fp32_skip_tokens: tuple[str, ...] = ()
+    modulation_parent_class_tokens: tuple[str, ...] = _MODULATION_PARENT_CLASS_TOKENS
+    embedding_parent_class_tokens: tuple[str, ...] = _EMBEDDING_PARENT_CLASS_TOKENS
 
 
 _POLICY_RULES: dict[str, PolicyRules] = {
@@ -152,6 +163,31 @@ _POLICY_RULES: dict[str, PolicyRules] = {
             "w1",
             "w2",
             "w3",
+        ),
+    ),
+    "cogvideox": PolicyRules(
+        block_tokens=("transformer_blocks",),
+        modulation_tokens=("norm1", "norm2"),
+        modulation_scopes=("transformer_blocks",),
+        projection_tokens=("attn1", "to_q", "to_k", "to_v", "to_out", "ff"),
+    ),
+    "hunyuan_video": PolicyRules(
+        block_tokens=("transformer_blocks", "single_transformer_blocks"),
+        modulation_tokens=("norm1_context", "norm1", ".norm.linear"),
+        modulation_scopes=("transformer_blocks", "single_transformer_blocks"),
+        projection_tokens=(
+            "to_q",
+            "to_k",
+            "to_v",
+            "to_out",
+            "add_q_proj",
+            "add_k_proj",
+            "add_v_proj",
+            "to_add_out",
+            "proj_mlp",
+            "proj_out",
+            "ff",
+            "ff_context",
         ),
     ),
     "wan": PolicyRules(
@@ -232,6 +268,11 @@ def resolve_target_policy(model: torch.nn.Module, config: OrbitQuantConfig) -> s
         return "z_image"
     if "wantransformer" in class_name or class_name.startswith("wan"):
         return "wan"
+    if config.target_policy_version >= 2:
+        if class_name.startswith("cogvideoxtransformer"):
+            return "cogvideox"
+        if class_name == "hunyuanvideotransformer3dmodel":
+            return "hunyuan_video"
     if "flux" in class_name:
         return "flux"
     return "universal"
@@ -252,6 +293,14 @@ def _is_scoped_modulation(lowered: str, rules: PolicyRules) -> bool:
         lowered,
         rules.modulation_tokens,
     )
+
+
+def _parent_class_name(name: str, modules: dict[str, torch.nn.Module]) -> str:
+    parent_name, separator, _ = name.rpartition(".")
+    if not separator:
+        return ""
+    parent = modules.get(parent_name)
+    return "" if parent is None else type(parent).__name__.lower()
 
 
 def _is_transformer_projection(lowered: str, rules: PolicyRules) -> bool:
@@ -276,11 +325,14 @@ def classify_linear_modules(
     explicit_adaln = tuple(config.modules_to_use_adaln)
     explicit_skips = tuple(config.modules_to_not_convert)
     rules = _policy_rules(model, config)
+    modules = dict(model.named_modules())
+    class_rules = config.target_policy_version >= 2
 
-    for name, module in model.named_modules():
+    for name, module in modules.items():
         if not is_linear_module(module):
             continue
         lowered = name.lower()
+        parent_class = _parent_class_name(name, modules) if class_rules else ""
         dtype_override = _dtype_override_for_module(name, config)
         if dtype_override is not None:
             decisions[name] = PolicyDecision(
@@ -298,7 +350,9 @@ def classify_linear_modules(
                 "precision-sensitive timestep or modulation projection",
                 dtype="float32",
             )
-        elif _contains_any(lowered, rules.hard_skip_tokens):
+        elif _contains_any(lowered, rules.hard_skip_tokens) or (
+            parent_class and _contains_any(parent_class, rules.embedding_parent_class_tokens)
+        ):
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "embedding, timestep, or non-denoiser module"
             )
@@ -320,7 +374,14 @@ def classify_linear_modules(
             decisions[name] = PolicyDecision(
                 name, "bf16_skip", "non-transformer or boundary module"
             )
-        elif _is_top_level_modulation(lowered, rules) or _is_scoped_modulation(lowered, rules):
+        elif (
+            _is_top_level_modulation(lowered, rules)
+            or _is_scoped_modulation(lowered, rules)
+            or (
+                parent_class
+                and _contains_any(parent_class, rules.modulation_parent_class_tokens)
+            )
+        ):
             decisions[name] = PolicyDecision(
                 name, "adaln_int4_rtn", "dynamic modulation projection"
             )
