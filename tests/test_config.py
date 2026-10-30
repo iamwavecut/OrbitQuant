@@ -64,7 +64,7 @@ def test_orbit_quant_config_default_epsilon_matches_paper_equation():
 
 
 def test_orbit_quant_config_defaults_to_converged_codebook_version():
-    assert OrbitQuantConfig().codebook_version == 2
+    assert OrbitQuantConfig().codebook_version == 3
 
 
 def test_orbit_quant_config_reads_unversioned_artifacts_as_legacy_codebooks():
@@ -219,3 +219,31 @@ def test_orbit_quant_config_rejects_unimplemented_serialized_knobs():
             assert next(iter(kwargs)) in str(exc)
         else:
             raise AssertionError(f"unsupported OrbitQuantConfig kwargs accepted: {kwargs}")
+
+
+def test_defaults_take_the_measured_improvements_over_the_paper():
+    config = OrbitQuantConfig()
+    assert config.rotation_rounds == "auto"
+    assert config.codebook_version == 3
+    assert config.activation_quantizer == "lloyd_max"
+    assert OrbitQuantConfig(activation_bits=8).activation_quantizer == "absmax_int8"
+    assert OrbitQuantConfig(activation_bits=6).activation_quantizer == "lloyd_max"
+
+
+def test_artifacts_without_the_new_fields_load_with_the_paper_values():
+    restored = OrbitQuantConfig.from_dict({"weight_bits": 4, "activation_bits": 8})
+    assert restored.rotation_rounds == 1
+    assert restored.activation_quantizer == "lloyd_max"
+    round_trip = OrbitQuantConfig.from_dict(OrbitQuantConfig(activation_bits=8).to_dict())
+    assert round_trip.rotation_rounds == "auto"
+    assert round_trip.activation_quantizer == "absmax_int8"
+
+
+def test_paper_recipe_is_the_paper_method():
+    from orbitquant import recipe
+
+    paper = recipe("w4a8", paper=True)
+    assert (paper.rotation_rounds, paper.activation_quantizer) == (1, "lloyd_max")
+    assert paper.output_gain_correction is False
+    assert recipe("w4a8").activation_quantizer == "absmax_int8"
+    assert recipe("w4a4").rotation_rounds == "auto"

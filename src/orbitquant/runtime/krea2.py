@@ -76,9 +76,12 @@ _ATTENTION_BACKENDS = {
 
 
 def _codes_and_alpha(layer: OrbitQuantLinear) -> tuple[torch.Tensor, float]:
-    if layer.activation_codebook is None:
-        raise ValueError("the Krea 2 runtime requires Lloyd-Max activation codebooks")
-    _, act_scale = fit_int8_centroid_surrogate(layer.activation_codebook.centroids)
+    if layer.outlier_channels is not None:
+        raise ValueError("outlier_channels run on the per-layer OrbitQuantLinear path")
+    # Absmax INT8 activations carry their absolute scale per token: a_scale = 1.
+    act_scale = 1.0
+    if layer.activation_codebook is not None:
+        _, act_scale = fit_int8_centroid_surrogate(layer.activation_codebook.centroids)
     codes, w_scale = fit_int8_centroid_surrogate(layer.weight_codebook.centroids)
     return codes, float(act_scale * w_scale)
 
@@ -238,7 +241,10 @@ class FusedKrea2Blocks(nn.Module):
         first = blocks[0].attn.to_q
         # Plain attribute, not a submodule: only the RPBH/codebook constants are needed.
         self.__dict__["act_spec"] = types.SimpleNamespace(
-            rotation=first.rotation, codebook=first.activation_codebook, eps=first.activation_eps
+            rotation=first.rotation,
+            pre_rotation=first.pre_rotation,
+            codebook=first.activation_codebook,
+            eps=first.activation_eps,
         )
         self.down_mode = down
         self.attention = _ATTENTION_BACKENDS[attention]
@@ -275,7 +281,7 @@ class FusedKrea2Blocks(nn.Module):
         if self._quantizer is None or self._buffers_[0].device != device:
             spec = self.act_spec
             self._quantizer = act.ActivationQuantizer(
-                spec.rotation, spec.codebook, spec.eps, device
+                spec.rotation, spec.codebook, spec.eps, device, pre_rotation=spec.pre_rotation
             )
             count = 2 if self.prefetch else 1
             self._buffers_ = [

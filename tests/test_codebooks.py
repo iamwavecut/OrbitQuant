@@ -1,3 +1,6 @@
+import time
+
+import pytest
 import torch
 from safetensors.torch import load_file, save_file
 
@@ -126,6 +129,47 @@ def test_v2_codebook_satisfies_lloyd_max_centroid_condition(monkeypatch):
     )
 
     torch.testing.assert_close(positive, conditional_means, atol=1e-7, rtol=0)
+
+
+def _float32_ulps(left, right):
+    return int((left.view(torch.int32) - right.view(torch.int32)).abs().max())
+
+
+@pytest.mark.parametrize(("dim", "bits"), [(64, 4), (128, 2), (3072, 4), (128, 6)])
+def test_v3_newton_codebook_reaches_the_v2_fixed_point(monkeypatch, dim, bits):
+    monkeypatch.setenv("ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE", "1")
+    clear_codebook_cache()
+    v2 = get_codebook(dim=dim, bits=bits, algorithm_version=2)
+    v3 = get_codebook(dim=dim, bits=bits, algorithm_version=3)
+
+    # v2 stops its linear iteration short of the fixed point by up to one float32 ulp.
+    assert v3.algorithm_version == 3
+    assert _float32_ulps(v3.centroids, v2.centroids) <= 1
+    assert _float32_ulps(v3.boundaries, v2.boundaries) <= 1
+
+
+def test_v3_builds_eight_bit_codebooks_where_v2_does_not_converge(monkeypatch):
+    # v2 needs 393216 iterations and still fails for d = 7680 at 8 bits.
+    monkeypatch.setenv("ORBITQUANT_DISABLE_CODEBOOK_DISK_CACHE", "1")
+    clear_codebook_cache()
+    dim = 7680
+    start = time.perf_counter()
+    codebook = get_codebook(dim=dim, bits=8, algorithm_version=3)
+    elapsed = time.perf_counter() - start
+
+    positive = codebook.centroids[codebook.centroids.numel() // 2 :].double()
+    edges = [0.0, *((positive[:-1] + positive[1:]) / 2).tolist(), 1.0]
+    conditional_means = torch.tensor(
+        [
+            lloyd_max_module._positive_interval_centroid(dim, edges[index], edges[index + 1])
+            for index in range(positive.numel())
+        ],
+        dtype=torch.float64,
+    )
+    assert codebook.centroids.numel() == 256
+    # Two float32 epsilons: the stored tables are float32 roundings of the fixed point.
+    torch.testing.assert_close(positive, conditional_means, atol=0, rtol=2 * 2**-23)
+    assert elapsed < 10.0
 
 
 def test_lloyd_max_quantization_error_decreases_with_bits():

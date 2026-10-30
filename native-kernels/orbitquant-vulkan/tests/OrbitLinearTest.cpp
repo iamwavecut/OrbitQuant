@@ -186,6 +186,90 @@ TestCase make_test_case(
   return test_case;
 }
 
+TestCase make_w4a8_test_case(
+    const TestShape shape,
+    const vkapi::ScalarType input_dtype,
+    const bool has_bias) {
+  const std::string dtype_name =
+      input_dtype == vkapi::kHalf ? "f16" : "f32";
+  TestCase test_case(
+      std::string("w4a8_") + shape.name + "_" + dtype_name +
+      (has_bias ? "_bias" : "_no_bias"));
+  test_case.set_operator_name("orbitquant_vulkan.linear_w4a8_absmax.default");
+  const float tolerance = input_dtype == vkapi::kHalf ? 8.0e-3f : 5.0e-4f;
+  test_case.set_abs_tolerance(tolerance);
+  test_case.set_rel_tolerance(tolerance);
+  test_case.set_op_invocations_per_execute(1);
+
+  // Unnormalized inputs with one large channel: absmax INT8 keeps the token scale.
+  ValueSpec input =
+      tensor_spec({shape.rows, shape.input_dim}, input_dtype, false);
+  for (int32_t row = 0; row < shape.rows; ++row) {
+    for (int32_t k = 0; k < shape.input_dim; ++k) {
+      float value = std::sin(float(row * 19 + k * 7) * 0.13f) * (1.0f + row);
+      if (k == 5) {
+        value *= 40.0f;
+      }
+      const int32_t index = row * shape.input_dim + k;
+      if (input_dtype == vkapi::kHalf) {
+        input.get_half_data()[index] = float_to_half(value);
+      } else {
+        input.get_float_data()[index] = value;
+      }
+    }
+  }
+
+  ValueSpec packed_weight =
+      tensor_spec({shape.outputs, shape.input_dim / 2}, vkapi::kByte, true);
+  for (int32_t n = 0; n < shape.outputs; ++n) {
+    for (int32_t k = 0; k < shape.input_dim; k += 2) {
+      const uint8_t low = static_cast<uint8_t>((n * 3 + k * 5) & 15);
+      const uint8_t high =
+          static_cast<uint8_t>((n * 3 + (k + 1) * 5) & 15);
+      packed_weight.get_uint8_data()[n * (shape.input_dim / 2) + k / 2] =
+          static_cast<uint8_t>(low | (high << 4));
+    }
+  }
+
+  ValueSpec row_norms = tensor_spec({shape.outputs}, vkapi::kFloat, true);
+  for (int32_t n = 0; n < shape.outputs; ++n) {
+    row_norms.get_float_data()[n] = 0.55f + float(n % 17) * 0.007f;
+  }
+
+  ValueSpec permutation = tensor_spec({shape.input_dim}, vkapi::kInt, true);
+  ValueSpec signs = tensor_spec({shape.input_dim}, vkapi::kInt, true);
+  for (int32_t k = 0; k < shape.input_dim; ++k) {
+    permutation.get_int32_data()[k] = (k * 5) % shape.input_dim;
+    signs.get_int32_data()[k] = (k % 3 == 0) ? -1 : 1;
+  }
+
+  ValueSpec weight_centroids = tensor_spec({16}, vkapi::kFloat, true);
+  for (int32_t index = 0; index < 16; ++index) {
+    weight_centroids.get_float_data()[index] = -0.9f + float(index) * 0.12f;
+  }
+
+  ValueSpec bias = tensor_spec({shape.outputs}, vkapi::kFloat, true);
+  if (has_bias) {
+    for (int32_t n = 0; n < shape.outputs; ++n) {
+      bias.get_float_data()[n] = float(n - 3) * 0.025f;
+    }
+  } else {
+    bias.set_none(true);
+  }
+
+  test_case.add_input_spec(input);
+  test_case.add_input_spec(packed_weight);
+  test_case.add_input_spec(row_norms);
+  test_case.add_input_spec(permutation);
+  test_case.add_input_spec(signs);
+  test_case.add_input_spec(weight_centroids);
+  test_case.add_input_spec(ValueSpec(shape.block_size));
+  test_case.add_input_spec(bias);
+  test_case.add_output_spec(
+      tensor_spec({shape.rows, shape.outputs}, input_dtype, false));
+  return test_case;
+}
+
 TestCase make_fp16_linear_test_case(const TestShape shape) {
   TestCase test_case(std::string("fp16_linear_") + shape.name);
   test_case.set_operator_name("aten.linear.default");
@@ -236,6 +320,11 @@ std::vector<TestCase> generate_test_cases() {
       make_test_case(kDit1536Shape, vkapi::kFloat, false),
       make_test_case(kTiledPartialShape, vkapi::kHalf, true),
       make_test_case(kDit1536TiledShape, vkapi::kHalf, true),
+      make_w4a8_test_case(kSmallShape, vkapi::kFloat, false),
+      make_w4a8_test_case(kSmallShape, vkapi::kHalf, true),
+      make_w4a8_test_case(kDit1536Shape, vkapi::kFloat, true),
+      make_w4a8_test_case(kTiledPartialShape, vkapi::kHalf, false),
+      make_w4a8_test_case(kDit1536TiledShape, vkapi::kHalf, true),
   };
   if (profile_enabled()) {
     const std::string filter = profile_case_filter();
@@ -291,6 +380,78 @@ void fwht(std::vector<float>& values, const int32_t block_size) {
   }
 }
 
+// Mirrors the shaders: FP32 rotation in the same butterfly order, the per-token
+// absmax scale, round-half-to-even INT8 codes and FP32 accumulation.
+void reference_compute_w4a8(TestCase& test_case) {
+  const ValueSpec& input_spec = test_case.inputs().at(0);
+  const auto& packed_weight = test_case.inputs().at(1).get_uint8_data();
+  const auto& row_norms = test_case.inputs().at(2).get_float_data();
+  const auto& permutation = test_case.inputs().at(3).get_int32_data();
+  const auto& signs = test_case.inputs().at(4).get_int32_data();
+  const auto& centroids = test_case.inputs().at(5).get_float_data();
+  const int32_t block_size = test_case.inputs().at(6).get_int_value();
+  const ValueSpec& bias_spec = test_case.inputs().at(7);
+  const auto& bias = bias_spec.get_float_data();
+  const int32_t M = static_cast<int32_t>(input_spec.get_tensor_sizes().at(0));
+  const int32_t K = static_cast<int32_t>(input_spec.get_tensor_sizes().at(1));
+  const int32_t N = static_cast<int32_t>(row_norms.size());
+  auto& output = test_case.outputs().at(0).get_ref_float_data();
+  output.assign(M * N, 0.0f);
+
+  const auto input_value = [&input_spec](const int32_t index) {
+    if (input_spec.dtype == vkapi::kHalf) {
+      return half_to_float(input_spec.get_half_data().at(index));
+    }
+    return input_spec.get_float_data().at(index);
+  };
+
+  const float inv_sqrt_block = 1.0f / std::sqrt(float(block_size));
+  std::vector<int32_t> codes(M * K);
+  std::vector<float> scales(M);
+  for (int32_t row = 0; row < M; ++row) {
+    std::vector<float> rotated(K);
+    float largest = 0.0f;
+    for (int32_t block = 0; block < K / block_size; ++block) {
+      std::vector<float> values(block_size);
+      for (int32_t k = 0; k < block_size; ++k) {
+        const int32_t rotated_index = block * block_size + k;
+        values[k] = input_value(row * K + permutation[rotated_index]) *
+            float(signs[rotated_index]);
+      }
+      fwht(values, block_size);
+      for (int32_t k = 0; k < block_size; ++k) {
+        const float value = values[k] * inv_sqrt_block;
+        rotated[block * block_size + k] = value;
+        largest = std::max(largest, std::fabs(value));
+      }
+    }
+    const float scale = std::max(largest, 1.0e-12f) / 127.0f;
+    scales[row] = scale;
+    for (int32_t k = 0; k < K; ++k) {
+      const float code = std::nearbyint(rotated[k] / scale);
+      codes[row * K + k] =
+          static_cast<int32_t>(std::min(127.0f, std::max(-127.0f, code)));
+    }
+  }
+
+  for (int32_t row = 0; row < M; ++row) {
+    for (int32_t n = 0; n < N; ++n) {
+      float accumulator = 0.0f;
+      for (int32_t k = 0; k < K; ++k) {
+        const uint8_t packed = packed_weight[n * (K / 2) + k / 2];
+        const uint8_t weight_code =
+            (k & 1) == 0 ? packed & 15 : (packed >> 4) & 15;
+        accumulator += float(codes[row * K + k]) * centroids[weight_code];
+      }
+      float value = accumulator * scales[row] * row_norms[n];
+      if (!bias_spec.is_none()) {
+        value += bias[n];
+      }
+      output[row * N + n] = value;
+    }
+  }
+}
+
 void reference_compute(TestCase& test_case) {
   if (test_case.operator_name() == "aten.linear.default") {
     const ValueSpec& input = test_case.inputs().at(0);
@@ -315,6 +476,12 @@ void reference_compute(TestCase& test_case) {
         output[m * N + n] = accumulator;
       }
     }
+    return;
+  }
+
+  if (test_case.operator_name() ==
+      "orbitquant_vulkan.linear_w4a8_absmax.default") {
+    reference_compute_w4a8(test_case);
     return;
   }
 
@@ -413,7 +580,7 @@ int main() {
   const TestResult result = execute_test_cases(
       generate_test_cases,
       flop_count,
-      "OrbitQuant exact W4A4",
+      "OrbitQuant W4A4 and W4A8",
       profile ? 10 : 1,
       profile ? 31 : 3,
       reference_compute);

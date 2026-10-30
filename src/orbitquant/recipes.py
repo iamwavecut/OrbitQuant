@@ -20,8 +20,20 @@ _RECIPE_FIELDS: dict[str, dict[str, Any]] = {
 }
 
 
-def recipe(name: str, **overrides: Any) -> OrbitQuantConfig:
-    """Create a universal OrbitQuant config from a named bit profile."""
+# The paper's method (arXiv 2607.02461) where the defaults go beyond it: one RPBH round,
+# Lloyd-Max activation codes at every width, no output gain correction.
+PAPER_FIELDS: dict[str, Any] = {
+    "rotation_rounds": 1,
+    "activation_quantizer": "lloyd_max",
+    "output_gain_correction": False,
+}
+
+
+def recipe(name: str, *, paper: bool = False, **overrides: Any) -> OrbitQuantConfig:
+    """Create a universal OrbitQuant config from a named bit profile.
+
+    The defaults include the measured improvements over the paper; ``paper=True`` gives the
+    paper's method as the baseline to compare against."""
 
     normalized_name = name.lower().replace("-", "")
     try:
@@ -32,10 +44,10 @@ def recipe(name: str, **overrides: Any) -> OrbitQuantConfig:
         "weight_bits": weight_bits,
         "activation_bits": activation_bits,
         "target_policy": "universal",
-        **_RECIPE_FIELDS.get(normalized_name, {}),
+        **(PAPER_FIELDS if paper else _RECIPE_FIELDS.get(normalized_name, {})),
     }
     values.update(overrides)
     return OrbitQuantConfig(**values)
 
 
-__all__ = ["recipe"]
+__all__ = ["PAPER_FIELDS", "recipe"]

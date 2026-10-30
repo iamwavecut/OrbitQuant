@@ -114,7 +114,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert model_index["weight_quantization_backend"] == summary.weight_quantization_backend
     assert model_index["quantization_staging_mode"] == summary.quantization_staging_mode
     assert model_index["activation_eps"] == 1e-10
-    assert model_index["codebook_version"] == 2
+    assert model_index["codebook_version"] == 3
     assert "README.md" in {path.name for path in tmp_path.iterdir()}
     assert "model_index.json" in {path.name for path in tmp_path.iterdir()}
     assert "SHA256SUMS" in {path.name for path in tmp_path.iterdir()}
@@ -168,7 +168,7 @@ def test_save_orbitquant_artifact_writes_manifest_readme_weights_and_checksums(t
     assert any("量子轨道" in item["prompt"] for item in prompts["prompts"])
     assert benchmark_summary["status"] == "not_run"
     assert benchmark_summary["source_model_id"] == "example/model"
-    assert benchmark_summary["codebook_version"] == 2
+    assert benchmark_summary["codebook_version"] == 3
     assert benchmark_summary["quantization_device"] == summary.quantization_device
     assert benchmark_summary["weight_quantization_backend"] == summary.weight_quantization_backend
     assert benchmark_summary["quantization_staging_mode"] == summary.quantization_staging_mode
@@ -283,6 +283,11 @@ def test_saved_artifact_contains_no_activation_calibration_state_and_deduplicate
         "dim8_seed0_block4.normalization",
         "dim8_seed0_block4.permutation",
         "dim8_seed0_block4.signs",
+        # rotation_rounds="auto": a 4-wide block gets the first RPBH round.
+        "pre_dim8_seed2654435769_block4.inverse_permutation",
+        "pre_dim8_seed2654435769_block4.normalization",
+        "pre_dim8_seed2654435769_block4.permutation",
+        "pre_dim8_seed2654435769_block4.signs",
     }
 
 
@@ -689,7 +694,7 @@ def test_validate_orbitquant_artifact_rejects_wrong_versioned_codebook(tmp_path)
     try:
         validate_orbitquant_artifact(tmp_path)
     except RuntimeError as exc:
-        assert "do not match codebook version 2" in str(exc)
+        assert "do not match codebook version 3" in str(exc)
     else:
         raise AssertionError("validator accepted centroids from a different algorithm")
 

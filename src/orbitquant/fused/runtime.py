@@ -24,7 +24,7 @@ from orbitquant.fused.groups import Bf16Group, Int8Group, PackedGroup
 from orbitquant.kernels import triton_activation as act
 from orbitquant.kernels import triton_int8_gemm as gemm
 from orbitquant.kernels.triton_attention import int8_attention_with_triton
-from orbitquant.rotations import get_rpbh_rotation
+from orbitquant.rotations import get_pre_rotation, get_rpbh_rotation
 
 ATTENTION_BACKENDS = ("int8", "flash", "cudnn", "sdpa")
 
@@ -68,11 +68,13 @@ class FusedRuntime:
         codebook_version: int,
         activation_eps: float,
         attention: str = "int8",
+        rotation_rounds: int | str = 1,
     ):
         if attention not in ATTENTION_BACKENDS:
             raise ValueError(f"unknown attention backend {attention!r}")
         self.rotation_seed = rotation_seed
         self.block_size = block_size
+        self.rotation_rounds = rotation_rounds
         self.codebook_version = codebook_version
         self.activation_eps = activation_eps
         self.attention_backend = attention
@@ -81,17 +83,13 @@ class FusedRuntime:
 
     @classmethod
     def from_config(cls, config, *, attention: str = "int8") -> FusedRuntime:
-        if getattr(config, "rotation_rounds", 1) != 1:
-            raise ValueError(
-                "the fused runtime applies one RPBH round; rotation_rounds="
-                f"{config.rotation_rounds!r} needs the per-layer OrbitQuantLinear path"
-            )
         return cls(
             rotation_seed=config.rotation_seed,
             block_size=config.block_size,
             codebook_version=config.codebook_version,
             activation_eps=config.activation_eps,
             attention=attention,
+            rotation_rounds=getattr(config, "rotation_rounds", 1),
         )
 
     def quantizer(self, width: int, bits: int, device: torch.device) -> act.ActivationQuantizer:
@@ -103,9 +101,41 @@ class FusedRuntime:
             )
             # 8-bit activations are per-token absmax INT8 of the rotated input, no codebook.
             codebook = None if bits == 8 else get_codebook(width, bits, self.codebook_version)
-            quantizer = act.ActivationQuantizer(rotation, codebook, self.activation_eps, device)
+            pre_rotation = get_pre_rotation(
+                width,
+                seed=self.rotation_seed,
+                block_size=self.block_size,
+                rotation_rounds=self.rotation_rounds,
+            )
+            quantizer = act.ActivationQuantizer(
+                rotation, codebook, self.activation_eps, device, pre_rotation=pre_rotation
+            )
             self._quantizers[key] = quantizer
         return quantizer
+
+    def check_pre_rotation(self, layer) -> None:
+        """Refuse a projection whose first RPBH round is not the one this runtime applies to
+        its width: its weights would meet differently rotated activations."""
+        expected = get_pre_rotation(
+            layer.in_features,
+            seed=self.rotation_seed,
+            block_size=self.block_size,
+            rotation_rounds=self.rotation_rounds,
+        )
+        actual = layer.pre_rotation
+        if expected is None and actual is None:
+            return
+        if (
+            expected is None
+            or actual is None
+            or expected.block_size != actual.block_size
+            or not torch.equal(expected.permutation, actual.permutation)
+            or not torch.equal(expected.signs, actual.signs)
+        ):
+            raise ValueError(
+                "the projection's rotation_rounds pre-rotation does not match the runtime "
+                f"config (rotation_rounds={self.rotation_rounds!r})"
+            )
 
     def release(self) -> None:
         """Drop device buffers before the weights leave the GPU."""
