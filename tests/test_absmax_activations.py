@@ -201,3 +201,31 @@ def test_cuda_absmax_int8_gemm_matches_the_reference(weight_bits, rows):
     # The GEMM uses the INT8 surrogate of the weight centroids (docs/kernel-audit.md).
     error = (output - expected).pow(2).sum() / expected.pow(2).sum()
     assert float(error) < 2e-3
+
+
+@pytest.mark.skipif(not _cuda_triton_available(), reason="CUDA with Triton required")
+@pytest.mark.parametrize("in_features", [3840, 9536])
+def test_cuda_absmax_int8_layer_applies_the_pre_rotation_once(in_features):
+    torch.manual_seed(1)
+    config = OrbitQuantConfig(
+        runtime_mode="triton_packed_matmul",
+        activation_bits=8,
+        activation_quantizer="absmax_int8",
+        rotation_rounds="auto",
+    )
+    linear = torch.nn.Linear(in_features, 256).to(torch.bfloat16)
+    layer = OrbitQuantLinear.from_linear(linear, config=config, module_name="p").to("cuda")
+    assert layer.pre_rotation is not None
+    x = torch.randn(80, in_features, device="cuda", dtype=torch.bfloat16)
+    x[:, 11] *= 200
+
+    with torch.no_grad():
+        output = layer(x)
+        assert layer.last_activation_kernel_backend == "triton_cuda_absmax_int8"
+        # v0.16 order: the first round as its own pass, then the one-round quantizer.
+        rotated = layer._pre_rotate(x)
+        layer.pre_rotation = None
+        layer._absmax_quantizer = None
+        expected = layer(rotated)
+
+    assert torch.equal(output, expected)

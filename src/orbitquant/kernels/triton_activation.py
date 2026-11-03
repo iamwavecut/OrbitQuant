@@ -218,6 +218,59 @@ def _rotated_chunks(
     return v0, v1, v2, v3
 
 
+# tl.gather (Triton >= 3.2) permutes a register tensor through shared memory. The row kernels
+# use it for rows up to GATHER_MAX_ROW wide (a 16384-wide bf16 row takes 32 KiB).
+HAS_GATHER = hasattr(tl, "gather")
+GATHER_MAX_ROW = 16384
+
+
+def _row_warps(row_width: int) -> int:
+    # Measured on an RTX 5090 for one row per program.
+    return 16 if row_width >= 16384 else 8 if row_width >= 8192 else 4
+
+
+def _absmax_warps(row_width: int, block: int, pre_rotate: bool) -> int:
+    # Measured on an RTX 5090 for the absmax row kernel: rows up to 2048 wide run 14-18% faster
+    # on 2 warps than on 4, 256-wide RPBH blocks 6-31% faster on 4 warps than on 8 or 16, and
+    # their pre-round on 4096-wide rows 10% faster on 2.
+    if row_width <= 2048:
+        return 2
+    if block == 256:
+        return 2 if pre_rotate and row_width <= 4096 else 4
+    return _row_warps(row_width)
+
+
+@triton.jit
+def _signed_gather(row, perm_ptr, signs_ptr, cols, mask):
+    # ``row[perm] * signs`` in FP32 for a row held in registers, zero past D.
+    src = tl.load(perm_ptr + cols, mask=mask, other=0).to(tl.int32)
+    signs = tl.load(signs_ptr + cols, mask=mask, other=0).to(tl.float32)
+    return tl.where(mask, tl.gather(row, src, 0).to(tl.float32) * signs, 0.0)
+
+
+@triton.jit
+def _rpbh_rotate_rows_kernel(
+    x_ptr,
+    perm_ptr,
+    signs_ptr,
+    out_ptr,
+    D: tl.constexpr,
+    DP2: tl.constexpr,
+    STAGES: tl.constexpr,
+    inv_sqrt_block,
+):
+    # One row per program, permuted in shared memory: narrow blocks make the per-block programs
+    # below tiny (0.37 ms vs 0.10 ms for 4096 rows of 149 64-wide blocks on an RTX 5090). Same
+    # FP32 arithmetic and stage order.
+    row = tl.program_id(0).to(tl.int64)
+    cols = tl.arange(0, DP2)
+    mask = cols < D
+    values = tl.load(x_ptr + row * D + cols, mask=mask, other=0.0)
+    values = _signed_gather(values, perm_ptr, signs_ptr, cols, mask)
+    values = _fwht(values, DP2, STAGES) * inv_sqrt_block
+    tl.store(out_ptr + row * D + cols, values.to(out_ptr.dtype.element_ty), mask=mask)
+
+
 @triton.jit
 def _rpbh_rotate_kernel(
     x_ptr,
@@ -281,12 +334,28 @@ class RPBHRotator:
         self.inv_sqrt_block = float(rotation.normalization)
         self.perm = rotation.permutation.to(device=device, dtype=torch.int32).contiguous()
         self.signs = rotation.signs.to(device=device, dtype=torch.int8).contiguous()
+        # The blocks below 512 that rotation_rounds="auto" adds a round for.
+        self.row_width = triton.next_power_of_2(self.dim)
+        self.rows_kernel = HAS_GATHER and self.block < 512 and self.row_width <= GATHER_MAX_ROW
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x = x.reshape(-1, self.dim).contiguous()
         out = torch.empty_like(x)
-        if x.shape[0]:
+        # The shared-memory copy of a row stays within that of a 16384-wide bf16 row.
+        if x.shape[0] and self.rows_kernel and self.row_width * x.element_size() <= 32768:
+            _rpbh_rotate_rows_kernel[(x.shape[0],)](
+                x,
+                self.perm,
+                self.signs,
+                out,
+                D=self.dim,
+                DP2=self.row_width,
+                STAGES=self.block.bit_length() - 1,
+                inv_sqrt_block=self.inv_sqrt_block,
+                num_warps=_row_warps(self.row_width),
+            )
+        elif x.shape[0]:
             _rpbh_rotate_kernel[(x.shape[0] * self.num_blocks,)](
                 x,
                 self.perm,
@@ -314,24 +383,42 @@ def _rpbh_absmax_int8_kernel(
     y_ptr,
     perm_ptr,
     signs_ptr,
+    pre_perm_ptr,
+    pre_signs_ptr,
     q_ptr,
     scale_ptr,
+    y_stride,
     D: tl.constexpr,
     DP2: tl.constexpr,
     STAGES: tl.constexpr,
+    PRE_STAGES: tl.constexpr,
     CHUNKS: tl.constexpr,
     inv_sqrt_block,
+    pre_inv_sqrt_block,
+    PRE: tl.constexpr,
+    GATHER: tl.constexpr,
 ):
     # One row per program: the INT8 scale needs the absolute maximum of the whole rotated row.
     # D is a multiple of the RPBH block, so the butterflies of the padded row never pair a
     # channel with another block. Blocks wider than a chunk imply D == DP2 (no padding).
+    # GATHER loads the row coalesced and permutes it in shared memory instead of loading
+    # scattered elements. PRE (requires GATHER) applies the first round of a two-round RPBH in
+    # front of the paper round, in FP32 and rounded to bf16 once like RPBHRotator's output.
     row = tl.program_id(0).to(tl.int64)
+    base = y_ptr + row * y_stride
     if CHUNKS == 1:
         cols = tl.arange(0, DP2)
         mask = cols < D
-        src = tl.load(perm_ptr + cols, mask=mask, other=0).to(tl.int32)
-        signs = tl.load(signs_ptr + cols, mask=mask, other=0).to(tl.float32)
-        values = tl.load(y_ptr + row * D + src, mask=mask, other=0.0).to(tl.float32) * signs
+        if GATHER:
+            values = tl.load(base + cols, mask=mask, other=0.0)
+            if PRE:
+                values = _signed_gather(values, pre_perm_ptr, pre_signs_ptr, cols, mask)
+                values = (_fwht(values, DP2, PRE_STAGES) * pre_inv_sqrt_block).to(tl.bfloat16)
+            values = _signed_gather(values, perm_ptr, signs_ptr, cols, mask)
+        else:
+            src = tl.load(perm_ptr + cols, mask=mask, other=0).to(tl.int32)
+            signs = tl.load(signs_ptr + cols, mask=mask, other=0).to(tl.float32)
+            values = tl.load(base + src, mask=mask, other=0.0).to(tl.float32) * signs
         values = _fwht(values, DP2, STAGES) * inv_sqrt_block
         scale = libdevice.div_rn(tl.maximum(tl.max(tl.abs(values), axis=0), 1e-12), 127.0)
         q = libdevice.rint(libdevice.div_rn(values, scale))
@@ -339,7 +426,7 @@ def _rpbh_absmax_int8_kernel(
         tl.store(q_ptr + row * D + cols, q.to(tl.int8), mask=mask)
     else:
         v0, v1, v2, v3 = _rotated_chunks(
-            y_ptr, perm_ptr, signs_ptr, row, 0, 1.0, D, CHUNKS, STAGES - _CHUNK_STAGES, False
+            base, perm_ptr, signs_ptr, 0, 0, 1.0, D, CHUNKS, STAGES - _CHUNK_STAGES, False
         )
         v0 *= inv_sqrt_block
         v1 *= inv_sqrt_block
@@ -475,6 +562,8 @@ class ActivationQuantizer:
     is quantized to INT8 with one absmax scale per token (8-bit activations) and the call
     returns that scale instead of the token norm. ``pre_rotation`` is the first round of a
     two-round RPBH (``rotation_rounds=2``): it rotates the prologue output before the codes.
+    The absmax kernel applies it in the same pass where the padded row is at most
+    ``GATHER_MAX_ROW`` wide (``fused_pre_rotation``); otherwise ``RPBHRotator`` runs in front.
     """
 
     def __init__(self, rotation, codebook, eps: float, device: torch.device, pre_rotation=None):
@@ -489,12 +578,23 @@ class ActivationQuantizer:
         self.perm = rotation.permutation.to(device=device, dtype=torch.int32).contiguous()
         self.signs = rotation.signs.to(device=device, dtype=torch.int8).contiguous()
         self.absmax = codebook is None
+        self.fused_pre_rotation = False
         if self.absmax:
             if self.block > FWHT_CHUNK and self.dim not in (2 * FWHT_CHUNK, 4 * FWHT_CHUNK):
                 raise ValueError(
                     "8-bit activations with RPBH blocks above 4096 need an 8192 or 16384 wide input"
                 )
             self.levels, self.scale = 256, 1.0
+            self.gather = (
+                HAS_GATHER
+                and self.block <= FWHT_CHUNK
+                and triton.next_power_of_2(self.dim) <= GATHER_MAX_ROW
+            )
+            self.fused_pre_rotation = (
+                self.pre_rotator is not None
+                and self.gather
+                and self.pre_rotator.block <= FWHT_CHUNK
+            )
             return
         self.bounds = codebook.boundaries.to(device=device, dtype=torch.float32).contiguous()
         self.levels = int(codebook.centroids.numel())
@@ -536,8 +636,11 @@ class ActivationQuantizer:
         )
         if self.pre_rotator is None or prologue_only:
             return self._quantize(x, prologue_only=prologue_only, **fields)
-        # The eager model rounds the prologue output to bf16, then the layer rotates it.
+        # The eager model rounds the prologue output to bf16, then the layer rotates it. The
+        # fused kernel reads that bf16 output; RPBHRotator keeps a plain wider input's dtype.
         plain = prologue == PROLOGUE_NONE and norm in (None, NORM_NONE) and mod in (None, MOD_NONE)
+        if self.fused_pre_rotation and (not plain or x.dtype == torch.bfloat16):
+            return self._quantize(x, pre_rotate=True, **fields)
         y = x if plain else self._quantize(x, prologue_only=True, **fields)[0]
         return self._quantize(self.pre_rotator(y))
 
@@ -555,6 +658,7 @@ class ActivationQuantizer:
         mod_index=None,
         rms_eps=1e-5,
         prologue_only=False,
+        pre_rotate=False,
     ):
         if x.dim() != 2 or x.stride(1) != 1:
             x = x.reshape(-1, self.dim).contiguous()
@@ -568,6 +672,11 @@ class ActivationQuantizer:
             norm_mode = norm
         if mod is not None:
             mod_mode = mod
+        plain = not multiply and norm_mode == NORM_NONE and mod_mode == MOD_NONE
+        if self.absmax and plain and not prologue_only and x.dtype == torch.bfloat16:
+            # The absmax kernel reads a plain bf16 row at any row stride; the token norms of a
+            # prologue pass would only be overwritten by the scales.
+            return self._absmax(x, pre_rotate)
         if x2 is not None and (x2.dim() != 2 or x2.stride(1) != 1):
             x2 = x2.reshape(rows, self.dim).contiguous()
         if mod_mode != MOD_NONE:
@@ -577,12 +686,7 @@ class ActivationQuantizer:
                 mod_shift = mod_shift.reshape(-1, self.dim).contiguous()
         # Without a prologue a bf16 input row is its own prologue output; only norms are written.
         passthrough = (
-            not multiply
-            and norm_mode == NORM_NONE
-            and mod_mode == MOD_NONE
-            and not prologue_only
-            and x.dtype == torch.bfloat16
-            and x.stride(0) == self.dim
+            plain and not prologue_only and x.dtype == torch.bfloat16 and x.stride(0) == self.dim
         )
         y = x
         if not passthrough:
@@ -619,21 +723,8 @@ class ActivationQuantizer:
         if prologue_only:
             return y, norms
         if self.absmax:
-            row_width = triton.next_power_of_2(self.dim)
-            _rpbh_absmax_int8_kernel[(rows,)](
-                y,
-                self.perm,
-                self.signs,
-                q,
-                norms,
-                D=self.dim,
-                DP2=row_width,
-                STAGES=self.block.bit_length() - 1,
-                CHUNKS=row_width // FWHT_CHUNK if self.block > FWHT_CHUNK else 1,
-                inv_sqrt_block=self.inv_sqrt_block,
-                num_warps=16 if row_width >= 16384 else 8,
-            )
-            return q, norms
+            # The scales overwrite the token norms.
+            return self._absmax(y, pre_rotate, q, norms)
         _rpbh_int8_kernel[(rows * self.num_blocks,)](
             y,
             norms,
@@ -652,6 +743,45 @@ class ActivationQuantizer:
             num_warps=16 if self.block >= 8192 else 8 if self.block >= 512 else 4,
         )
         return q, norms
+
+    def _absmax(self, y, pre_rotate, q=None, scales=None):
+        """INT8 codes and per-token scales of a bf16 ``[rows, dim]`` row view (unit column
+        stride), with the first RPBH round in front when ``pre_rotate``."""
+        rows = y.shape[0]
+        if q is None:
+            q = torch.empty((rows, self.dim), device=y.device, dtype=torch.int8)
+            scales = torch.empty(rows, device=y.device, dtype=torch.float32)
+        if rows == 0:
+            return q, scales
+        pre = self.pre_rotator if pre_rotate else None
+        row_width = triton.next_power_of_2(self.dim)
+        _rpbh_absmax_int8_kernel[(rows,)](
+            y,
+            self.perm,
+            self.signs,
+            self.perm if pre is None else pre.perm,
+            self.signs if pre is None else pre.signs,
+            q,
+            scales,
+            y.stride(0),
+            D=self.dim,
+            DP2=row_width,
+            STAGES=self.block.bit_length() - 1,
+            PRE_STAGES=0 if pre is None else pre.block.bit_length() - 1,
+            CHUNKS=row_width // FWHT_CHUNK if self.block > FWHT_CHUNK else 1,
+            inv_sqrt_block=self.inv_sqrt_block,
+            pre_inv_sqrt_block=1.0 if pre is None else pre.inv_sqrt_block,
+            PRE=pre is not None,
+            GATHER=self.gather,
+            num_warps=(
+                _absmax_warps(row_width, self.block, pre is not None)
+                if self.gather
+                else 16
+                if row_width >= 16384
+                else 8
+            ),
+        )
+        return q, scales
 
 
 @triton.jit
