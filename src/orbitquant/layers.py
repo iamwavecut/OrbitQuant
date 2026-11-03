@@ -1346,7 +1346,8 @@ class OrbitQuantLinear(nn.Module):
         return self._cached_runtime_probe("triton_absmax_int8", probe)
 
     def _absmax_int8_cuda_forward(self, x: torch.Tensor) -> torch.Tensor:
-        """INT8 GEMM of absmax INT8 activations against the packed W2/W4 weight codes."""
+        """INT8 GEMM of absmax INT8 activations against the packed W2/W4 weight codes. ``x`` is
+        the unrotated input: the quantizer applies both RPBH rounds."""
         from orbitquant.kernels import triton_activation
         from orbitquant.kernels.triton_cuda import (
             matmul_int8_activations_packed_lowbit_fused_with_triton,
@@ -1356,14 +1357,15 @@ class OrbitQuantLinear(nn.Module):
         device_key = str(x.device)
         if self._absmax_quantizer is None or self._absmax_quantizer[0] != device_key:
             quantizer = triton_activation.ActivationQuantizer(
-                self.rotation, None, self.activation_eps, x.device
+                self.rotation, None, self.activation_eps, x.device, pre_rotation=self.pre_rotation
             )
             self._absmax_quantizer = (device_key, quantizer)
         quantizer = self._absmax_quantizer[1]
         rows_x = x.reshape(-1, self.in_features)
+        signature = ("triton_absmax_int8", id(self.rotation), id(self.pre_rotation))
         (codes, token_scales), self.last_activation_cache_hit = (
             _get_or_create_shared_activation_quantization(
-                x, ("triton_absmax_int8", id(self.rotation)), lambda: quantizer(rows_x)
+                x, signature, lambda: quantizer(rows_x)
             )
         )
         _, _, weight_codes, weight_scale = self._int8_surrogate_constants(x.device)
@@ -1492,8 +1494,6 @@ class OrbitQuantLinear(nn.Module):
 
     def _forward_quantized(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_derived_constants(x.device)
-        if self.pre_rotation is not None:
-            x = self._pre_rotate(x)
         runtime_mode = (
             self._resolve_auto_fused_runtime(x)
             if self.runtime_mode == "auto_fused"
@@ -1510,6 +1510,16 @@ class OrbitQuantLinear(nn.Module):
             self._validate_triton_packed_matmul_input(x)
         elif runtime_mode == "native_packed_matmul":
             self._validate_native_packed_matmul_input(x)
+
+        absmax_int8 = self.activation_quantizer == "absmax_int8" and runtime_mode not in {
+            "debug_no_quant",
+            "debug_no_activation_quant",
+        }
+        if absmax_int8 and self._absmax_int8_cuda_available(x, runtime_mode):
+            # The INT8 activation kernel applies the first RPBH round itself.
+            return self._absmax_int8_cuda_forward(x)
+        if self.pre_rotation is not None:
+            x = self._pre_rotate(x)
 
         if runtime_mode == "native_packed_matmul" and self._fused_w2a4_available(x):
             activation_constants = self._activation_kernel_constant_tensors(x.device)
@@ -1796,13 +1806,6 @@ class OrbitQuantLinear(nn.Module):
                 async_packed=capability[0] >= 8,
                 weight_k_major=False,
             )
-
-        absmax_int8 = self.activation_quantizer == "absmax_int8" and runtime_mode not in {
-            "debug_no_quant",
-            "debug_no_activation_quant",
-        }
-        if absmax_int8 and self._absmax_int8_cuda_available(x, runtime_mode):
-            return self._absmax_int8_cuda_forward(x)
 
         if absmax_int8:
             self.last_activation_kernel_backend = "torch_absmax_int8"

@@ -262,8 +262,20 @@ def test_mixed_width_group_is_one_gemm_matching_its_projections():
     assert torch.equal(again, fused)
 
 
-@pytest.mark.parametrize("dim", [3360, 13568, 6144, 8192, 16384])
-def test_absmax_int8_activations_match_rotated_reference(dim):
+def _absmax_reference(rotation, x):
+    """Per-token absmax INT8 of the FP32 rotation with the kernel's numerics: IEEE divisions
+    (tensor by tensor; PyTorch multiplies by the reciprocal of a Python scalar) and round half
+    to even."""
+    rotated = rotation.apply_to_activations(x.float())
+    peak = rotated.abs().amax(-1).clamp_min(1e-12)
+    scales = peak / torch.full_like(peak, 127.0)
+    codes = torch.round(rotated / scales[:, None]).clamp(-127, 127).to(torch.int8)
+    return codes, scales
+
+
+@pytest.mark.parametrize("dim", [1920, 3360, 13568, 6144, 8192, 16384])
+@pytest.mark.parametrize("strided", [False, True])
+def test_absmax_int8_activations_match_rotated_reference(dim, strided):
     _require_cuda()
     from orbitquant.kernels import triton_activation as act
     from orbitquant.rotations import get_rpbh_rotation
@@ -271,15 +283,12 @@ def test_absmax_int8_activations_match_rotated_reference(dim):
     torch.manual_seed(7)
     rotation = get_rpbh_rotation(dim=dim, seed=0, block_size="paper")
     quantizer = act.ActivationQuantizer(rotation, None, 1e-10, torch.device("cuda"))
-    x = torch.randn(37, dim, device="cuda", dtype=torch.bfloat16)
+    x = torch.randn(37, dim + 64 * strided, device="cuda", dtype=torch.bfloat16)[:, :dim]
     x[:, 5] *= 40  # an outlier channel
     codes, scales = quantizer(x)
-    rotated = rotation.apply_to_activations(x.float())
-    expected_scales = rotated.abs().amax(-1) / 127
-    torch.testing.assert_close(scales, expected_scales, rtol=1e-5, atol=0)
-    expected = torch.round(rotated / expected_scales[:, None]).clamp(-127, 127)
-    assert (codes.float() - expected).abs().max().item() <= 1
-    assert (codes.float() != expected).float().mean().item() < 1e-3
+    expected_codes, expected_scales = _absmax_reference(rotation, x)
+    assert torch.equal(scales, expected_scales)
+    assert torch.equal(codes, expected_codes)
 
 
 @pytest.mark.parametrize("dim", [3360, 8192, 16384])
@@ -304,7 +313,14 @@ def test_lloyd_max_activation_codes_match_the_rotated_reference(dim):
 
 @pytest.mark.parametrize(
     ("dim", "block_size"),
-    [(3360, "paper"), (3840, "paper"), (3072, 1024), (8192, 8192), (16384, 16384)],
+    [
+        (3360, "paper"),
+        (3840, "paper"),
+        (9536, "paper"),
+        (3072, 1024),
+        (8192, 8192),
+        (16384, 16384),
+    ],
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
 def test_rpbh_rotator_matches_the_pytorch_rotation_bit_for_bit(dim, block_size, dtype):
@@ -352,6 +368,88 @@ def test_activation_quantizer_applies_the_pre_rotation_after_the_prologue(codebo
     assert torch.equal(norms, expected_norms)
     # BF16 groups reading the same input still get the unrotated prologue output.
     assert torch.equal(two_round(x, prologue_only=True, **kwargs)[0], prologue)
+
+
+def _prologue_case(case, rows, dim, device):
+    """An input with a massive channel and the quantizer arguments of one prologue variant."""
+    from orbitquant.kernels import triton_activation as act
+
+    def vector(spread=0.1, offset=0.0, count=None):
+        shape = (dim,) if count is None else (count, dim)
+        return (torch.randn(shape, device=device) * spread + offset).to(torch.bfloat16)
+
+    wide = torch.randn(rows, dim + 64, device=device, dtype=torch.bfloat16)
+    x = wide[:, :dim] if case == "strided" else wide[:, :dim].contiguous()
+    x[:, 3] *= 300
+    index = torch.randint(0, 3, (rows,), device=device, dtype=torch.int32)
+    kwargs = {
+        "plain": {},
+        "strided": {},
+        "fp32": {},
+        "norm_modulate": dict(
+            prologue=act.PROLOGUE_NORM_MODULATE,
+            norm_weight=vector(),
+            mod_scale=vector(),
+            mod_shift=vector(),
+        ),
+        "rms_scale_indexed": dict(
+            norm=act.NORM_RMS,
+            mod=act.MOD_SCALE,
+            mod_index=index,
+            norm_weight=vector(offset=1.0),
+            mod_scale=vector(0.2, 1.0, count=3),
+            rms_eps=1e-6,
+        ),
+        "rms_plain_shift_indexed": dict(
+            norm=act.NORM_RMS_PLAIN,
+            mod=act.MOD_SHIFT_SCALE,
+            mod_index=index,
+            mod_scale=vector(count=3),
+            mod_shift=vector(count=3),
+        ),
+        "layer_one_plus": dict(norm=act.NORM_LAYER, mod=act.MOD_ONE_PLUS_SCALE, mod_scale=vector()),
+        "rms_torch": dict(norm=act.NORM_RMS_TORCH, norm_weight=vector(offset=1.0)),
+        "multiply": dict(prologue=act.PROLOGUE_MULTIPLY, x2=vector(1.0, count=rows)),
+    }[case]
+    return (x.float() if case == "fp32" else x), kwargs
+
+
+@pytest.mark.parametrize("dim", [1920, 3840, 9536, 16640])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "plain",
+        "strided",
+        "fp32",
+        "norm_modulate",
+        "rms_scale_indexed",
+        "rms_plain_shift_indexed",
+        "layer_one_plus",
+        "rms_torch",
+        "multiply",
+    ],
+)
+def test_absmax_quantizer_fuses_the_pre_rotation_bit_for_bit(dim, case):
+    _require_cuda()
+    from orbitquant.kernels import triton_activation as act
+    from orbitquant.rotations import get_pre_rotation, get_rpbh_rotation
+
+    torch.manual_seed(12)
+    device = torch.device("cuda")
+    rotation = get_rpbh_rotation(dim=dim, seed=0, block_size="paper")
+    pre = get_pre_rotation(dim, seed=0, block_size="paper", rotation_rounds="auto")
+    one_round = act.ActivationQuantizer(rotation, None, 1e-10, device)
+    two_round = act.ActivationQuantizer(rotation, None, 1e-10, device, pre_rotation=pre)
+    # d = 16640 (h = 256) pads to a 32768-wide row: RPBHRotator runs in front of the kernel.
+    assert two_round.fused_pre_rotation == (act.HAS_GATHER and dim < 16384)
+    x, kwargs = _prologue_case(case, 45, dim, device)
+
+    # The v0.16 order: bf16 prologue output, RPBHRotator rounded to its dtype, one round.
+    prologue = x if not kwargs else one_round(x, prologue_only=True, **kwargs)[0]
+    expected_codes, expected_scales = one_round(act.RPBHRotator(pre, device)(prologue))
+    codes, scales = two_round(x, **kwargs)
+    assert torch.equal(scales, expected_scales)
+    assert torch.equal(codes, expected_codes)
 
 
 @pytest.mark.parametrize("activation_bits", [4, 8])
