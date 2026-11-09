@@ -252,3 +252,25 @@ def test_int8_attention_matches_its_quantization_and_fp32(seq):
     assert rel(out, emulated) < 5e-3
     # INT8 Q/K itself keeps these peaked scores within a few percent.
     assert rel(out, exact) < 5e-2
+
+
+def test_int8_attention_keeps_large_values_finite():
+    # Equal scores give every key of a tile p = 1, so one FP16 tile of P.V reaches 64 * |v|:
+    # 64 * 4000 overflows FP16 unless the values of that head are scaled down first.
+    _require_cuda()
+    from orbitquant.kernels import triton_attention as attention
+
+    torch.manual_seed(5)
+    seq = 1000
+    query = torch.zeros(1, seq, 4, 128, device="cuda", dtype=torch.bfloat16)
+    key = torch.randn(1, seq, 2, 128, device="cuda", dtype=torch.bfloat16)
+    value = torch.randn(1, seq, 2, 128, device="cuda", dtype=torch.bfloat16)
+    value[0, :, 0, 0] = 4000.0  # kv head 0 needs a scale; kv head 1 stays within V_LIMIT
+    out = attention.int8_attention_with_triton(query, key, value).float()
+    exact = torch.nn.functional.scaled_dot_product_attention(
+        *(t.transpose(1, 2).float() for t in (query, key, value)), enable_gqa=True
+    ).transpose(1, 2)
+    assert torch.isfinite(out).all()
+    torch.testing.assert_close(out[0, :, :2, 0], exact[0, :, :2, 0], rtol=2e-3, atol=0)
+    small, small_exact = out[0, :, 2:], exact[0, :, 2:]
+    assert ((small - small_exact).norm() / small_exact.norm()).item() < 5e-3

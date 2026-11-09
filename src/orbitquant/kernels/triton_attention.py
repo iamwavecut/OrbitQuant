@@ -11,7 +11,10 @@ rate, so FlashAttention-style BF16 kernels leave most of the tensor throughput u
 * The online softmax runs in FP32.
 * P and V are FP16; each ``BLOCK_N``-token tile of ``P @ V`` accumulates in FP16 and is added
   to an FP32 accumulator. V is converted once up front: converting each tile inside the loop
-  costs about 10% of the kernel time.
+  costs about 10% of the kernel time. A tile sum reaches ``BLOCK_N * max|v|``, so a head whose
+  values exceed ``V_LIMIT`` is divided by a power of two before the conversion and the output is
+  multiplied back. The power-of-two scale is exact: heads within the limit give the same bits as
+  without it, and the others no longer overflow FP16 (Vimoo 1.0 Lite reaches |v| = 7136).
 
 Tensors use the ``[batch=1, tokens, heads, head_dim]`` layout of DiT projections; rows may be
 strided (e.g. a column slice of a fused Q|K|V GEMM output). Keys and values may be a different
@@ -32,6 +35,8 @@ triton, tl = _load_triton()
 LOG2E = 1.4426950408889634
 BLOCK_Q = 128
 BLOCK_KV = 64
+# Largest |v| that a head keeps unscaled: BLOCK_KV * V_LIMIT = 32768 leaves FP16 headroom.
+V_LIMIT = 512.0
 
 
 @triton.jit
@@ -103,6 +108,7 @@ def _attention_kernel(
     v_ptr,
     q_scale_ptr,
     k_scale_ptr,
+    v_scale_ptr,
     o_ptr,
     seq,
     seq_kv,
@@ -149,7 +155,7 @@ def _attention_kernel(
         acc, l_i, m_i = _attention_tile(
             acc, l_i, m_i, q, qk_scale, k_ptrs, v_ptrs, seq_kv - full * BLOCK_N, True, BLOCK_N
         )
-    out = acc / l_i[:, None]
+    out = acc / l_i[:, None] * tl.load(v_scale_ptr + kv_head)
     o_rows = offs_m[:, None].to(tl.int64) * stride_or + head * stride_oh
     tl.store(
         o_ptr + o_rows + offs_d[None, :],
@@ -162,6 +168,14 @@ _attention = autotune(
     [triton.Config({}, num_warps=w, num_stages=s) for w in (4, 8) for s in (2, 3, 4)],
     ["GROUPS", "D", "BLOCK_M"],
 )(_attention_kernel)
+
+
+def _scaled_fp16_values(v):
+    """FP16 copy of ``[tokens, heads, dim]`` values whose heads stay within ``V_LIMIT``, and the
+    power-of-two factor of each head (1 for heads already within it)."""
+    peak = torch.linalg.vector_norm(v, ord=math.inf, dim=(0, 2), dtype=torch.float32)
+    scales = torch.exp2(torch.ceil(torch.log2(peak / V_LIMIT)).clamp_(min=0))
+    return (v / scales[:, None].to(v.dtype)).to(torch.float16), scales
 
 
 def _query_block(dim: int) -> int:
@@ -217,7 +231,7 @@ def int8_attention_with_triton(
     block_q = _query_block(dim)
     q_codes, q_scales = _quantize_blocks(q, block_q, sm_scale * LOG2E)
     k_codes, k_scales = _quantize_blocks(k, BLOCK_KV, 1.0, k.mean(dim=0, dtype=torch.float32))
-    v16 = v if v.dtype == torch.float16 else v.to(torch.float16)
+    v16, v_scales = _scaled_fp16_values(v)
     out = torch.empty((1, seq, heads, dim), device=q.device, dtype=query.dtype)
     o = out[0]
     _attention[(triton.cdiv(seq, block_q), heads)](
@@ -226,6 +240,7 @@ def int8_attention_with_triton(
         v16,
         q_scales,
         k_scales,
+        v_scales,
         o,
         seq,
         seq_kv,
