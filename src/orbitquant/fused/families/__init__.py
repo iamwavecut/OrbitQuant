@@ -28,6 +28,7 @@ _MODULES = (
     "flux3",
     "moss_image",
     "fibo2",
+    "vimoo",
 )
 
 

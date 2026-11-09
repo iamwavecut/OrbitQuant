@@ -111,6 +111,21 @@ def test_rounded_codes_load_into_the_quantized_model():
     )
 
 
+def test_projection_without_input_reports_zero_error():
+    # q and k output zero, so o never sees an input: its Hessian is zero and GPTQ zeroes its weight.
+    block = _Block()
+    with torch.no_grad():
+        block.q.weight.zero_()
+        block.k.weight.zero_()
+    config = _config()
+    groups = [["q", "k"], ["o"]]
+    with HessianCollector(block, groups, config) as hessians:
+        block(_calibration())
+    codes = round_groups(block, groups, hessians, config)
+    assert codes["o"].rtn_error == 0.0
+    assert codes["o"].gptq_error == 0.0
+
+
 def test_sequential_rounding_writes_rounded_weights_back():
     torch.manual_seed(0)
     block = _Block()
