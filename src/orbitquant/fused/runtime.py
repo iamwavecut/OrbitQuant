@@ -168,9 +168,15 @@ class FusedRuntime:
         gate: torch.Tensor | None = None,
         gate_index: torch.Tensor | None = None,
         sig_from: int = 0,
+        bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """``bias`` adds a vector kept outside the group (a projection whose bias the model
+        stores separately) instead of the group's own bias."""
+        if bias is not None and group.bias is not None:
+            raise ValueError("the group has its own bias")
+        bias = group.bias if bias is None else bias
         common = dict(
-            bias=group.bias,
+            bias=bias,
             out=out,
             col_offset=col_offset,
             epilogue=epilogue,
@@ -190,7 +196,7 @@ class FusedRuntime:
                 codes, group.q, scales, group.scales, scale_mode=1, **common
             )
         if isinstance(group, Bf16Group):
-            return _dense_epilogue(F.linear(source.dense(), group.weight, group.bias), **common)
+            return _dense_epilogue(F.linear(source.dense(), group.weight, bias), **common)
         raise TypeError(f"unknown fused group {type(group).__name__}")
 
     def attention(
@@ -243,6 +249,8 @@ def _dense_epilogue(
             y = (4.0 * torch.tanh(g / 4.0) * torch.sigmoid(g)) * (25.0 * torch.tanh(u / 25.0))
     elif epilogue == gemm.EPILOGUE_GELU_TANH:
         y = F.gelu(y, approximate="tanh")
+    elif epilogue == gemm.EPILOGUE_GELU_ERF:
+        y = F.gelu(y)
     elif epilogue == gemm.EPILOGUE_SIGMOID_TAIL:
         y = torch.cat([y[:, :sig_from], torch.sigmoid(y[:, sig_from:])], dim=1)
     elif epilogue == gemm.EPILOGUE_RESIDUAL_GATE:

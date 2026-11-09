@@ -87,9 +87,14 @@ def _inverse_factor(H: torch.Tensor, damp: float, attempts: int = 6):
 
 
 def _weighted_error(weight: torch.Tensor, approx: torch.Tensor, hessian: torch.Tensor) -> float:
+    """Output error of ``approx`` relative to the output of ``weight`` on the calibration inputs.
+    A projection whose inputs were all zero has no output to compare: its error is 0."""
     diff = weight - approx
     with _full_fp32():
-        return (torch.sum((diff @ hessian) * diff) / torch.sum((weight @ hessian) * weight)).item()
+        reference = torch.sum((weight @ hessian) * weight)
+        if reference == 0:
+            return 0.0
+        return (torch.sum((diff @ hessian) * diff) / reference).item()
 
 
 def gptq_round(

@@ -40,6 +40,7 @@ EPILOGUE_RESIDUAL_GATE = 2
 EPILOGUE_SIGMOID_TAIL = 3
 EPILOGUE_GELU_TANH = 4
 EPILOGUE_SITU = 5
+EPILOGUE_GELU_ERF = 6
 _PAIRED = (EPILOGUE_SWIGLU, EPILOGUE_SITU)
 
 # The SwiGLU epilogue pairs gate/up halves inside one N tile; weights packed for it interleave
@@ -186,11 +187,13 @@ def _int8_scaled_gemm_body(
         res = tl.load(res_ptr + rows + cols, mask=mask, other=0.0).to(tl.float32)
         out = res + _bf16(gate * _bf16(y))
         tl.store(out_ptr + rows + cols, out.to(out_ptr.dtype.element_ty), mask=mask)
-    elif EPILOGUE == 3 or EPILOGUE == 4:
+    elif EPILOGUE == 3 or EPILOGUE == 4 or EPILOGUE == 6:
         y = _bf16(y)
         if EPILOGUE == 4:
             inner = 0.7978845608028654 * (y + 0.044715 * y * y * y)
             y = 0.5 * y * (1.0 + libdevice.tanh(inner))
+        elif EPILOGUE == 6:
+            y = 0.5 * y * (1.0 + libdevice.erf(y * 0.7071067811865476))
         elif pid_n * BLOCK_N >= sig_from:
             y = libdevice.div_rn(1.0, 1.0 + libdevice.exp(-y))
         tl.store(
@@ -263,6 +266,8 @@ def matmul_int8_scaled_with_triton(
     if a.stride(1) != 1 or a.stride(0) != k or b.stride(1) != 1 or b.stride(0) != k:
         a = a.contiguous()
         b = b.contiguous()
+    if out.stride(-1) != 1:
+        raise ValueError("out must be row-major (unit column stride)")
     if residual is not None and residual.stride() != out.stride():
         raise ValueError("residual must share the output layout")
     a_scale = a_scale.to(torch.float32).contiguous()
