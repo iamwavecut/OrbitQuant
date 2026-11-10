@@ -30,7 +30,8 @@ The implementation is clean-room and Apache-2.0 licensed.
 - Packed-weight CUDA, Triton, and Metal inference paths that avoid a full
   dequantized weight matrix.
 - Fused transformer checkpoints for Krea 2, FLUX.2, Ideogram 4, Qwen-Image 2.1,
-  MiniMax-H3, Boogu-Image, FLUX.3 Klein, MOSS-Image, Fibo 2.0 and Vimoo 1.0
+  MiniMax-H3, MiniMax-H3-Image, Boogu-Image, FLUX.3 Klein, MOSS-Image, Fibo 2.0 and
+  Vimoo 1.0
   (`orbitquant.fused`): each block runs
   grouped INT8 GEMMs with norm/modulation prologues and SwiGLU/gated-residual
   epilogues plus an INT8 attention kernel, and the checkpoint stores only the
@@ -632,6 +633,7 @@ the same for an `orbitquant-v1` component artifact, and
 | Ideogram 4 | `Ideogram4Transformer2DModel` | sandwich-norm blocks with row-indexed modulation |
 | Qwen-Image 2.1 | `QwenImage21Transformer2DModel` | block-causal prefill and KV-cached decode |
 | MiniMax-H3 | `MiniMaxH3Transformer3DModel` | per-row (timestep, modality) AdaLN tables, partial rotate-half RoPE |
+| MiniMax-H3-Image | `MiniMaxH3ImageTransformer2DModel` | the MiniMax-H3 blocks; `minimax_h3.tabulate_modulation(model, timesteps)` replaces the per-block AdaLN projections and the timestep MLP with tables for a fixed timestep set (the six-step schedule drops 13.0B of the 33.1B parameters); a timestep outside the set raises `ValueError` |
 | Boogu-Image | `BooguImageTransformer2DModel` | refiner, single- and double-stream blocks; 8-bit activations |
 | FLUX.3 Klein | `flux3.dit.DiT` (Black Forest Labs' `flux3` package) | per-mode and single-stream blocks: Q\|K\|V, SwiGLU, gated residuals; one sample at a time |
 | MOSS-Image | `MOSSImageTransformer` (the model's `pipeline_moss_image.py`) | joint image/text blocks: RMSNorm and shared AdaLN prologues, Q\|K\|V, SiTU gate\|up, gated residuals; one sample at a time |
