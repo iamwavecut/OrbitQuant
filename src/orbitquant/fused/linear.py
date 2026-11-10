@@ -47,9 +47,15 @@ def fuse_linears(model: nn.Module, *, activation_bits: int = 8, config=None) -> 
 
     runtime = FusedRuntime.from_config(_quant_config(model, config), attention="sdpa")
     count = 0
-    for name, module in list(model.named_modules()):
-        if not isinstance(module, OrbitQuantLinear) or module.packed_weight_indices is None:
-            continue
+    # Names, not modules: a list of the modules would keep every replaced projection's packed
+    # weights alive until the end, so the device would hold the model twice.
+    names = [
+        name
+        for name, module in model.named_modules()
+        if isinstance(module, OrbitQuantLinear) and module.packed_weight_indices is not None
+    ]
+    for name in names:
+        module = model.get_submodule(name)
         holder = nn.Module()
         holder.proj = module
         group = PackedGroup.from_sources(
